@@ -1,0 +1,88 @@
+{
+  "procedure_id": "xin_giay_phep_xay_dung",
+  "domain": "dat_dai_nha_o_quy_hoach",
+  "name": "Xin giấy phép xây dựng",
+  "description": "Hướng dẫn chuẩn bị hồ sơ xin giấy phép xây dựng; thẩm quyền có thể ở xã hoặc cấp trên tùy quy mô.",
+  "xa_id": "xa_demo_001",
+  "version": "1.0.0",
+  "status": "draft",
+  "authority_level": "mixed",
+  "intent_examples": [
+    "Xin giấy phép xây dựng nhà",
+    "Làm GPXD",
+    "Muốn xây nhà cần giấy phép gì"
+  ],
+  "slots": {
+    "loai_cong_trinh": {
+      "type": "enum",
+      "enum_values": [
+        "nha_o_rieng_le",
+        "cong_trinh_khac"
+      ],
+      "question": "Công trình xin phép thuộc loại nào (nhà ở riêng lẻ hay công trình khác)?"
+    },
+    "co_dat_dung_ten": {
+      "type": "boolean",
+      "question": "Thửa đất xây dựng đã có giấy chứng nhận đứng tên người xin phép chưa?"
+    },
+    "nam_trong_khu_can_phep": {
+      "type": "boolean",
+      "question": "Khu vực xây dựng có thuộc trường hợp bắt buộc xin giấy phép theo hướng dẫn địa phương không? (nếu chưa rõ chọn chưa rõ và nhờ cán bộ xác nhận)"
+    },
+    "dien_tich_xay_dung": {
+      "type": "string",
+      "question": "Diện tích xây dựng dự kiến khoảng bao nhiêu (m2)?"
+    }
+  },
+  "required_slots": [
+    "loai_cong_trinh",
+    "co_dat_dung_ten"
+  ],
+  "conditional_slots": [
+    {
+      "when": {
+        "slot": "loai_cong_trinh",
+        "equals": "nha_o_rieng_le"
+      },
+      "require": [
+        "dien_tich_xay_dung"
+      ]
+    }
+  ],
+  "ask_policy": {
+    "ask_mode": "all_missing",
+    "completion_policy": "all_required_slots",
+    "allow_direct_answer_if_no_required_slots": true
+  },
+  "guidance": {
+    "summary": "Chuẩn bị hồ sơ xin giấy phép xây dựng theo loại công trình và nộp tại bộ phận tiếp nhận; một số trường hợp xã tiếp nhận rồi chuyển cấp huyện.",
+    "checklist": [
+      "Đơn đề nghị cấp giấy phép xây dựng",
+      "Giấy tờ về quyền sử dụng đất (GCN hoặc giấy tờ hợp pháp tương đương)",
+      "Bản vẽ thiết kế xây dựng theo quy định",
+      "Giấy tờ tùy thân của chủ đầu tư/người được ủy quyền"
+    ],
+    "where_to_submit": "Bộ phận tiếp nhận UBND xã (tiếp nhận/hướng dẫn; thẩm quyền cấp phép có thể thuộc huyện tùy quy mô)",
+    "notes": [
+      "Không phải mọi trường hợp nhà ở riêng lẻ đều phải xin GPXD — cần xác nhận theo quy hoạch/địa bàn xã.",
+      "Nếu đất chưa đúng tên hoặc tranh chấp, hồ sơ có thể bị từ chối/yêu cầu bổ sung.",
+      "Seed tạm — bắt buộc đối chiếu quy định quy hoạch và thẩm quyền địa phương trước prod."
+    ],
+    "fee_hint": "Theo mức phí/lệ phí cấp phép xây dựng hiện hành.",
+    "processing_time_hint": "Thời hạn giải quyết theo quy định từng cấp thẩm quyền; hỏi quầy để biết ngày hẹn trả."
+  },
+  "citations": [
+    {
+      "doc_id": "seed_xin_gpxd_v1",
+      "title": "Hướng dẫn xin giấy phép xây dựng (manual seed)",
+      "source_type": "manual_seed",
+      "effective_date": "2026-01-01",
+      "issuer": "Seed Phase 0 — chờ văn bản xã/huyện thay thế"
+    }
+  ],
+  "metadata": {
+    "priority": "P0",
+    "seeded_at": "2026-08-04",
+    "needs_official_pdf": true
+  }
+}

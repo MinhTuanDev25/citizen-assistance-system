@@ -1,0 +1,64 @@
+{
+  "procedure_id": "chung_thuc_ban_sao",
+  "domain": "ho_tich_chung_thuc",
+  "name": "Chứng thực bản sao",
+  "description": "Hướng dẫn chứng thực bản sao từ bản chính tại UBND xã.",
+  "xa_id": "xa_demo_001",
+  "version": "1.0.0",
+  "status": "draft",
+  "authority_level": "xa",
+  "intent_examples": [
+    "Tôi muốn chứng thực bằng đại học",
+    "Chứng thực bản sao CCCD",
+    "Công chứng photo giấy tờ tại xã"
+  ],
+  "slots": {
+    "loai_giay_to": {
+      "type": "string",
+      "question": "Anh/chị cần chứng thực bản sao loại giấy tờ nào?",
+      "description": "VD: bằng đại học, CCCD, giấy khai sinh..."
+    },
+    "so_ban_sao": {
+      "type": "number",
+      "question": "Cần chứng thực bao nhiêu bản sao?"
+    }
+  },
+  "required_slots": [],
+  "conditional_slots": [],
+  "ask_policy": {
+    "ask_mode": "all_missing",
+    "completion_policy": "all_required_slots",
+    "allow_direct_answer_if_no_required_slots": true
+  },
+  "guidance": {
+    "summary": "Để chứng thực bản sao, mang bản chính và bản photo đến bộ phận tiếp nhận của UBND xã.",
+    "checklist": [
+      "Bản chính giấy tờ cần chứng thực",
+      "Bản photo/photocopy cần chứng thực",
+      "CCCD của người yêu cầu chứng thực"
+    ],
+    "where_to_submit": "Bộ phận tiếp nhận và trả kết quả — UBND xã",
+    "notes": [
+      "Một số loại giấy tờ có thể thuộc thẩm quyền chứng thực khác; nếu xã không chứng thực được sẽ hướng dẫn nơi phù hợp.",
+      "Nên mang đủ số bản photo cần dùng để tránh đi lại.",
+      "Seed tạm — cần đối chiếu quy định chứng thực hiện hành của xã."
+    ],
+    "fee_hint": "Theo mức phí chứng thực bản sao do địa phương quy định.",
+    "processing_time_hint": "Thường nhận kết quả nhanh trong buổi làm việc nếu hồ sơ hợp lệ."
+  },
+  "citations": [
+    {
+      "doc_id": "seed_chung_thuc_ban_sao_v1",
+      "title": "Hướng dẫn chứng thực bản sao (manual seed)",
+      "source_type": "manual_seed",
+      "effective_date": "2026-01-01",
+      "issuer": "Seed Phase 0 — chờ văn bản xã thay thế"
+    }
+  ],
+  "metadata": {
+    "priority": "P0",
+    "preferred_route": "direct_answer",
+    "seeded_at": "2026-08-04",
+    "needs_official_pdf": true
+  }
+}

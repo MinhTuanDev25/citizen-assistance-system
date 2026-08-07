@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Go
+apps/api/bin/
+apps/api/tmp/
+*.exe
+*.test
+vendor/
+
+# Build / IDE
+dist/
+build/
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.log
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+deploy/.env
+*.pem
+
+# Data / local runtime
+data/
+*.db
+coverage/
+.coverage
+
+# Docker volumes
+deploy/volumes/

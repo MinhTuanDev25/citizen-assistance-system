@@ -1,0 +1,15 @@
+# Placeholder — enable when apps have Dockerfiles
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scaffold notice
+        run: echo "Add Go/Python/Web CI jobs when Phase 1 apps exist."

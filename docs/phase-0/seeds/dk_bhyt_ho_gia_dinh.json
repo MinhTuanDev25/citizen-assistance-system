@@ -1,0 +1,70 @@
+{
+  "procedure_id": "dk_bhyt_ho_gia_dinh",
+  "domain": "bao_hiem_chinh_sach_xh",
+  "name": "Đăng ký BHYT hộ gia đình",
+  "description": "Hướng dẫn đăng ký tham gia BHYT theo hộ gia đình qua kênh xã/đại lý.",
+  "xa_id": "xa_demo_001",
+  "version": "1.0.0",
+  "status": "draft",
+  "authority_level": "xa",
+  "intent_examples": [
+    "Đăng ký BHYT hộ gia đình",
+    "Mua bảo hiểm y tế cho cả nhà",
+    "Làm BHYT theo hộ"
+  ],
+  "slots": {
+    "so_thanh_vien": {
+      "type": "number",
+      "question": "Hộ gia đình có bao nhiêu thành viên tham gia BHYT?"
+    },
+    "da_co_so_ho_khau_hoac_cu_tru": {
+      "type": "boolean",
+      "question": "Các thành viên đã có thông tin hộ khẩu/cư trú hợp lệ chưa?"
+    },
+    "co_nguoi_dang_tham_gia_noi_khac": {
+      "type": "boolean",
+      "question": "Trong hộ có ai đang tham gia BHYT ở nơi khác (cơ quan/trường học) không?"
+    }
+  },
+  "required_slots": [
+    "so_thanh_vien",
+    "da_co_so_ho_khau_hoac_cu_tru"
+  ],
+  "conditional_slots": [],
+  "ask_policy": {
+    "ask_mode": "all_missing",
+    "completion_policy": "all_required_slots",
+    "allow_direct_answer_if_no_required_slots": true
+  },
+  "guidance": {
+    "summary": "Chuẩn bị danh sách thành viên và giấy tờ tùy thân để đăng ký BHYT hộ gia đình tại xã hoặc điểm thu được chỉ định.",
+    "checklist": [
+      "CCCD của chủ hộ và các thành viên tham gia",
+      "Thông tin hộ khẩu/cư trú (hoặc dữ liệu dân cư tương đương)",
+      "Tờ khai tham gia BHYT theo mẫu",
+      "Tiền đóng BHYT theo mức quy định (sau khi được hướng dẫn mức đóng)"
+    ],
+    "where_to_submit": "UBND xã / tổ chức thu BHYT được chỉ định tại địa bàn",
+    "notes": [
+      "Thành viên đã có BHYT nơi khác thường không đóng trùng theo hộ.",
+      "Mức đóng và giảm trừ theo số thành viên tham gia — hỏi cán bộ để tính chính xác.",
+      "Seed tạm — cần đối chiếu hướng dẫn BHXH/xã hiện hành trước prod."
+    ],
+    "fee_hint": "Mức đóng theo % lương cơ sở và số thành viên tham gia (xác nhận tại điểm thu).",
+    "processing_time_hint": "Thời gian cấp thẻ/mã BHYT theo quy trình BHXH; xã sẽ báo lịch trả."
+  },
+  "citations": [
+    {
+      "doc_id": "seed_dk_bhyt_hgd_v1",
+      "title": "Hướng dẫn đăng ký BHYT hộ gia đình (manual seed)",
+      "source_type": "manual_seed",
+      "effective_date": "2026-01-01",
+      "issuer": "Seed Phase 0 — chờ văn bản xã/BHXH thay thế"
+    }
+  ],
+  "metadata": {
+    "priority": "P0",
+    "seeded_at": "2026-08-04",
+    "needs_official_pdf": true
+  }
+}

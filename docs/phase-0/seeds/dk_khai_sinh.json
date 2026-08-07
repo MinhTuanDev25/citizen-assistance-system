@@ -1,0 +1,93 @@
+{
+  "procedure_id": "dk_khai_sinh",
+  "domain": "ho_tich_chung_thuc",
+  "name": "Đăng ký khai sinh",
+  "description": "Hướng dẫn chuẩn bị hồ sơ và nơi nộp đăng ký khai sinh tại xã.",
+  "xa_id": "xa_demo_001",
+  "version": "1.0.0",
+  "status": "draft",
+  "authority_level": "xa",
+  "intent_examples": [
+    "Tôi muốn làm giấy khai sinh cho con",
+    "Đăng ký khai sinh",
+    "Làm khai sinh cho bé mới sinh"
+  ],
+  "slots": {
+    "noi_sinh": {
+      "type": "string",
+      "question": "Bé sinh ở đâu (bệnh viện/cơ sở y tế hay tại nhà, thuộc xã/phường nào)?",
+      "description": "Nơi sinh ảnh hưởng nơi nộp và giấy tờ thay thế"
+    },
+    "da_ket_hon": {
+      "type": "boolean",
+      "question": "Cha mẹ bé đã đăng ký kết hôn chưa?"
+    },
+    "co_giay_chung_sinh": {
+      "type": "boolean",
+      "question": "Anh/chị có giấy chứng sinh không?"
+    },
+    "nguoi_di_dang_ky": {
+      "type": "enum",
+      "enum_values": [
+        "cha",
+        "me",
+        "ong_ba",
+        "nguoi_duoc_uy_quyen"
+      ],
+      "question": "Ai sẽ đi đăng ký khai sinh?",
+      "description": "Dùng để gợi ý giấy tờ kèm theo nếu không phải cha/mẹ"
+    }
+  },
+  "required_slots": [
+    "noi_sinh",
+    "da_ket_hon",
+    "co_giay_chung_sinh"
+  ],
+  "conditional_slots": [
+    {
+      "when": {
+        "slot": "co_giay_chung_sinh",
+        "equals": false
+      },
+      "require": [
+        "nguoi_di_dang_ky"
+      ]
+    }
+  ],
+  "ask_policy": {
+    "ask_mode": "all_missing",
+    "completion_policy": "all_required_slots",
+    "allow_direct_answer_if_no_required_slots": true
+  },
+  "guidance": {
+    "summary": "Sau khi đủ thông tin, chuẩn bị hồ sơ đăng ký khai sinh và nộp tại UBND xã theo hướng dẫn địa phương.",
+    "checklist": [
+      "Giấy chứng sinh (nếu có) hoặc giấy tờ thay thế theo hướng dẫn xã",
+      "CCCD/hộ chiếu của cha và/hoặc mẹ",
+      "Giấy đăng ký kết hôn (nếu cha mẹ đã kết hôn)",
+      "Tờ khai đăng ký khai sinh (mẫu tại bộ phận tiếp nhận)"
+    ],
+    "where_to_submit": "Bộ phận tiếp nhận và trả kết quả — UBND xã (theo nơi cư trú của cha/mẹ hoặc nơi sinh, tùy trường hợp)",
+    "notes": [
+      "Nên đăng ký sớm trong thời hạn quy định.",
+      "Nếu chưa có giấy chứng sinh, hỏi cán bộ hộ tịch giấy tờ thay thế được chấp nhận tại xã.",
+      "Nội dung này là seed tạm; cần đối chiếu văn bản hiệu lực của xã trước khi đưa production."
+    ],
+    "fee_hint": "Theo mức lệ phí hộ tịch do địa phương quy định (có thể miễn/giảm theo đối tượng).",
+    "processing_time_hint": "Thường trả kết quả trong ngày làm việc nếu hồ sơ đầy đủ (xác nhận lại tại quầy)."
+  },
+  "citations": [
+    {
+      "doc_id": "seed_dk_khai_sinh_v1",
+      "title": "Hướng dẫn đăng ký khai sinh (manual seed)",
+      "source_type": "manual_seed",
+      "effective_date": "2026-01-01",
+      "issuer": "Seed Phase 0 — chờ văn bản xã thay thế"
+    }
+  ],
+  "metadata": {
+    "priority": "P0",
+    "seeded_at": "2026-08-04",
+    "needs_official_pdf": true
+  }
+}

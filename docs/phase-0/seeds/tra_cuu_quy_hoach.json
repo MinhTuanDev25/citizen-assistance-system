@@ -1,0 +1,68 @@
+{
+  "procedure_id": "tra_cuu_quy_hoach",
+  "domain": "dat_dai_nha_o_quy_hoach",
+  "name": "Tra cứu quy hoạch",
+  "description": "Hướng dẫn cách tra cứu thông tin quy hoạch tại địa bàn xã.",
+  "xa_id": "xa_demo_001",
+  "version": "1.0.0",
+  "status": "draft",
+  "authority_level": "mixed",
+  "intent_examples": [
+    "Tra cứu quy hoạch thửa đất",
+    "Đất tôi có nằm trong quy hoạch không",
+    "Xem quy hoạch sử dụng đất xã"
+  ],
+  "slots": {
+    "vi_tri_thua_dat": {
+      "type": "string",
+      "question": "Anh/chị muốn tra cứu thửa đất ở vị trí nào (địa chỉ/ấp/thôn hoặc số tờ/số thửa nếu có)?"
+    },
+    "muc_dich_tra_cuu": {
+      "type": "enum",
+      "enum_values": [
+        "xay_nha",
+        "chuyen_nhuong",
+        "tim_hieu_chung"
+      ],
+      "question": "Mục đích tra cứu là gì (xây nhà, chuyển nhượng, hay tìm hiểu chung)?"
+    }
+  },
+  "required_slots": [
+    "vi_tri_thua_dat"
+  ],
+  "conditional_slots": [],
+  "ask_policy": {
+    "ask_mode": "all_missing",
+    "completion_policy": "all_required_slots",
+    "allow_direct_answer_if_no_required_slots": true
+  },
+  "guidance": {
+    "summary": "Cung cấp vị trí thửa đất để bộ phận chuyên môn hướng dẫn tra cứu quy hoạch theo bản đồ/hồ sơ địa phương.",
+    "checklist": [
+      "Thông tin vị trí thửa đất (địa chỉ hoặc số tờ/số thửa)",
+      "Giấy chứng nhận quyền sử dụng đất (nếu có) để đối chiếu",
+      "CCCD người yêu cầu tra cứu"
+    ],
+    "where_to_submit": "Bộ phận địa chính / tiếp nhận UBND xã (có thể hướng dẫn tra cứu tại cổng thông tin hoặc cấp huyện)",
+    "notes": [
+      "Kết quả tra cứu mang tính hướng dẫn; xác nhận chính thức theo hồ sơ quy hoạch được công bố.",
+      "Seed tạm — cần gắn nguồn bản đồ/quy hoạch chính thức của xã."
+    ],
+    "fee_hint": "Theo quy định cung cấp thông tin của địa phương (một số trường hợp miễn phí tra cứu cơ bản).",
+    "processing_time_hint": "Tùy hình thức tra cứu tại quầy hoặc trực tuyến."
+  },
+  "citations": [
+    {
+      "doc_id": "seed_tra_cuu_quy_hoach_v1",
+      "title": "Hướng dẫn tra cứu quy hoạch (manual seed)",
+      "source_type": "manual_seed",
+      "effective_date": "2026-01-01",
+      "issuer": "Seed Phase 0 — chờ nguồn quy hoạch xã"
+    }
+  ],
+  "metadata": {
+    "priority": "P0",
+    "seeded_at": "2026-08-04",
+    "needs_official_pdf": true
+  }
+}

@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.xa/schemas/procedure_definition.schema.json",
+  "title": "ProcedureDefinition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "procedure_id",
+    "domain",
+    "name",
+    "xa_id",
+    "version",
+    "status",
+    "intent_examples",
+    "slots",
+    "required_slots",
+    "ask_policy",
+    "guidance",
+    "citations",
+    "authority_level"
+  ],
+  "properties": {
+    "procedure_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$",
+      "description": "Stable id, e.g. dk_khai_sinh"
+    },
+    "domain": {
+      "type": "string",
+      "enum": [
+        "ho_tich_chung_thuc",
+        "dat_dai_nha_o_quy_hoach",
+        "bao_hiem_chinh_sach_xh"
+      ]
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "xa_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "approved", "active", "archived"]
+    },
+    "authority_level": {
+      "type": "string",
+      "enum": ["xa", "huyen", "tinh", "mixed"],
+      "description": "Cấp xử lý chính của thủ tục"
+    },
+    "intent_examples": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 2 }
+    },
+    "slots": {
+      "type": "object",
+      "minProperties": 0,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "question"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["string", "boolean", "enum", "number"]
+          },
+          "question": { "type": "string", "minLength": 1 },
+          "enum_values": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "required_slots": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "conditional_slots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["when", "require"],
+        "properties": {
+          "when": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["slot", "equals"],
+            "properties": {
+              "slot": { "type": "string" },
+              "equals": {}
+            }
+          },
+          "require": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "ask_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ask_mode", "completion_policy"],
+      "properties": {
+        "ask_mode": {
+          "type": "string",
+          "enum": ["all_missing"],
+          "description": "V1: hỏi toàn bộ slot đang missing trong một lượt"
+        },
+        "completion_policy": {
+          "type": "string",
+          "enum": ["all_required_slots"]
+        },
+        "allow_direct_answer_if_no_required_slots": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "guidance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "checklist", "where_to_submit", "notes"],
+      "properties": {
+        "summary": { "type": "string" },
+        "checklist": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "where_to_submit": { "type": "string" },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "fee_hint": { "type": "string" },
+        "processing_time_hint": { "type": "string" }
+      }
+    },
+    "citations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["doc_id", "title", "source_type"],
+        "properties": {
+          "doc_id": { "type": "string" },
+          "title": { "type": "string" },
+          "source_type": {
+            "type": "string",
+            "enum": ["manual_seed", "pdf_official", "internal_note"]
+          },
+          "effective_date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "page_hint": { "type": "string" },
+          "issuer": { "type": "string" }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}
