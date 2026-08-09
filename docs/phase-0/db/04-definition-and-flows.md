@@ -25,9 +25,9 @@ Admin UI đọc/ghi object này qua form; runtime Decision Engine đọc để q
   "procedure_code": "dk_khai_sinh",
   "domain": "ho_tich_chung_thuc",
   "name": "Đăng ký khai sinh",
-  "xa_id": "xa_demo_001",
+  "xa_id": "xa_chu_se",
   "version": "1.0.0",
-  "status": "active",
+  "status": "ACTIVE",
   "authority_level": "xa",
   "intent_examples": ["Tôi muốn làm giấy khai sinh cho con"],
   "slots": {
@@ -81,7 +81,7 @@ Admin Upload PDF
       ▼
  [5] Approve / Publish (xem data-model §6)
       │
-      ├─► procedure_versions       status=indexing + source_draft_id
+      ├─► procedure_versions       status=INDEXING + source_draft_id
       ├─► procedure_version_documents
       ├─► embed + knowledge_chunks (ngoài txn dài)
       └─► SHORT TXN: archive cũ → active + procedures.active_version_id
@@ -94,13 +94,13 @@ Admin Upload PDF
 |------|-----------|--------------|--------------|
 | 1 | Upload PDF | `documents` | metadata + `processing_status` / `validity_status` |
 | 2 | Extract | (chưa publish) | LLM sinh object procedure |
-| 3 | Tạo draft | `procedure_drafts` | `draft_definition`, `validation_result`, `status=draft` |
+| 3 | Tạo draft | `procedure_drafts` | `draft_definition`, `validation_result`, `status=DRAFT` |
 | 4 | Admin sửa | `procedure_drafts` | UPDATE definition + validate |
-| 5a | Tạo version | `procedure_versions` | `procedure_id` (uuid), `definition`, `status=indexing`, `source_draft_id` |
+| 5a | Tạo version | `procedure_versions` | `procedure_id` (uuid), `definition`, `status=INDEXING`, `source_draft_id` |
 | 5b | Link docs | `procedure_version_documents` | N–N version ↔ document |
 | 5c | Embed | `knowledge_chunks` | `chunk_index`, `document_id`, `embedding vector(1536)` |
-| 5d | Activate (short txn) | versions + `procedures` + drafts + `audit_logs` | archive cũ; `active`; `active_version_id`; draft=`published`; audit |
-| Fail embed | Cleanup | chunks + versions | DELETE chunks theo version → `status=approved` → retry |
+| 5d | Activate (short txn) | versions + `procedures` + drafts + `audit_logs` | archive cũ; `ACTIVE`; `active_version_id`; draft=`PUBLISHED`; audit |
+| Fail embed | Cleanup | chunks + versions | DELETE chunks theo version → `status=APPROVED` → retry |
 
 Chi tiết đầy đủ: [`data-model.md`](data-model.md) §6.
 
@@ -126,7 +126,7 @@ User message
    ▼
 [D] Decision Policy Engine
    │  so definition.required_slots vs session slot_state
-   │  → ask_missing_slots | direct_answer | provide_final_guidance
+   │  → ASK_MISSING_SLOTS | DIRECT_ANSWER | PROVIDE_FINAL_GUIDANCE
    ▼
 [E] Persist + reply
 ```
@@ -136,19 +136,19 @@ User message
 | Bước | Đọc / Ghi | Nội dung |
 |------|-----------|----------|
 | A | INSERT/SELECT `conversation_sessions` | `user_id`, `xa_id`, `status=open`, `active_procedure_id` (uuid), `active_procedure_version_id` (uuid) |
-| A | INSERT `conversation_messages` | role=`user`, content=câu hỏi |
+| A | INSERT `conversation_messages` | role=`USER`, content=câu hỏi |
 | C | READ `procedures` + `procedure_versions` | lấy `definition` active |
-| D | UPSERT `session_slot_states` | `slot_state`: mọi required = `missing` |
-| E | INSERT `conversation_messages` | role=`assistant`, `action=ask_missing_slots`, `reply` ghép **tất cả** `definition.slots.*.question` của missing |
+| D | UPSERT `session_slot_states` | `slot_state`: mọi required = `MISSING` |
+| E | INSERT `conversation_messages` | role=`ASSISTANT`, `action=ASK_MISSING_SLOTS`, `reply` ghép **tất cả** `definition.slots.*.question` của missing |
 | E | INSERT `audit_logs` | `action=chat_decision`, payload route + version |
 
 `slot_state` sau turn 1:
 
 ```json
 {
-  "noi_sinh": { "value": null, "status": "missing" },
-  "da_ket_hon": { "value": null, "status": "missing" },
-  "co_giay_chung_sinh": { "value": null, "status": "missing" }
+  "noi_sinh": { "value": null, "status": "MISSING" },
+  "da_ket_hon": { "value": null, "status": "MISSING" },
+  "co_giay_chung_sinh": { "value": null, "status": "MISSING" }
 }
 ```
 
@@ -159,19 +159,19 @@ Pipeline extract:
 1. Allowed keys = missing hiện tại (`noi_sinh`, `da_ket_hon`, `co_giay_chung_sinh`)
 2. LLM structured output map vào đúng các key đó
 3. Backend validate type/enum → UPDATE `session_slot_states`
-4. Slot còn thiếu → hỏi lại **full missing còn lại**; đủ → `provide_final_guidance`
+4. Slot còn thiếu → hỏi lại **full missing còn lại**; đủ → `PROVIDE_FINAL_GUIDANCE`
 
 | Bước | Ghi | Nội dung |
 |------|-----|----------|
 | | INSERT message user | câu trả lời |
 | | UPDATE `session_slot_states` | chỉ các key extract hợp lệ |
-| | INSERT message assistant | `ask_missing_slots` (nếu còn thiếu) hoặc `provide_final_guidance` |
+| | INSERT message assistant | `ASK_MISSING_SLOTS` (nếu còn thiếu) hoặc `PROVIDE_FINAL_GUIDANCE` |
 
-### Nhánh `direct_answer` (vd chứng thực bản sao)
+### Nhánh `DIRECT_ANSWER` (vd chứng thực bản sao)
 
 - `definition.required_slots = []`
 - Không cần hỏi thêm
-- INSERT message assistant với `action=direct_answer` + guidance ngay
+- INSERT message assistant với `action=DIRECT_ANSWER` + guidance ngay
 - `session_slot_states` có thể trống/`{}`
 
 ---

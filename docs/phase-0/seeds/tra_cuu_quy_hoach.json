@@ -3,9 +3,9 @@
   "domain": "dat_dai_nha_o_quy_hoach",
   "name": "Tra cứu quy hoạch",
   "description": "Hướng dẫn cách tra cứu thông tin quy hoạch tại địa bàn xã.",
-  "xa_id": "xa_demo_001",
+  "xa_id": "xa_chu_se",
   "version": "1.0.0",
-  "status": "draft",
+  "status": "DRAFT",
   "authority_level": "mixed",
   "intent_examples": [
     "Tra cứu quy hoạch thửa đất",

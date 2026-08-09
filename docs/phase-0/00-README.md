@@ -25,7 +25,7 @@
 ## Definition of Done — Phase 0
 
 - [ ] Schema `procedure_definition` được approve
-- [ ] Decision actions chỉ còn 3 loại: `ask_missing_slots` | `direct_answer` | `provide_final_guidance`
+- [ ] Decision actions chỉ còn 3 loại: `ASK_MISSING_SLOTS` | `DIRECT_ANSWER` | `PROVIDE_FINAL_GUIDANCE`
 - [ ] Ít nhất 4 seed JSON review được (1–2/domain ưu tiên)
 - [ ] API + DB model không còn open question blocker
 - [ ] Test matrix đủ case thiếu-slot / đủ-slot / ngoài phạm vi

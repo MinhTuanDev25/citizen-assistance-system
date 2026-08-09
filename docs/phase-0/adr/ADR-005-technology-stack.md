@@ -160,7 +160,7 @@ Orchestration V1: **Docker Compose** trên 1 VPS; sau có thể K8s nếu cần.
 | Actor | Cơ chế đề xuất V1 |
 |-------|-------------------|
 | Citizen | JWT (login đơn giản hoặc guest token + session) — chốt có bắt buộc login hay không |
-| Admin | JWT + role `admin` (bắt buộc) |
+| Admin | JWT + role `ADMIN` (bắt buộc) |
 
 Go API: middleware Gin verify JWT.  
 Admin upload/publish chỉ role admin.  

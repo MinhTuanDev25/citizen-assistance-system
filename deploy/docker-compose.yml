@@ -1,43 +1,49 @@
-# Local / V1 stack (skeleton — wire services in Phase 1)
+name: citizen-assistance
 
 services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: cas
-      POSTGRES_PASSWORD: cas
-      POSTGRES_DB: citizen_assistance
+      POSTGRES_USER: ${POSTGRES_USER:-cas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cas}
+      POSTGRES_DB: ${POSTGRES_DB:-citizen_assistance}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cas} -d ${POSTGRES_DB:-citizen_assistance}"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    image: migrate/migrate:v4.18.1
+    volumes:
+      - ./migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint:
+      - migrate
+      - -path=/migrations
+      - -database=postgres://${POSTGRES_USER:-cas}:${POSTGRES_PASSWORD:-cas}@postgres:5432/${POSTGRES_DB:-citizen_assistance}?sslmode=disable
+    profiles:
+      - tools
 
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - miniodata:/data
-
-  # api:
-  #   build: ../apps/api
-  #   ports: ["8080:8080"]
-  #   depends_on: [postgres, ai-service]
-
-  # ai-service:
-  #   build: ../apps/ai-service
-  #   ports: ["8001:8000"]
-  #   depends_on: [postgres]
-
-  # web:
-  #   build: ../apps/web
-  #   ports: ["3000:80"]
-  #   depends_on: [api]
+    profiles:
+      - full
 
 volumes:
   pgdata:

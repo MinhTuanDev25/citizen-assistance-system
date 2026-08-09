@@ -149,13 +149,15 @@ erDiagram
 
 | Column | Type | Notes |
 |--------|------|-------|
-| id | text PK | = `xa_id`, e.g. `xa_demo_001` |
+| id | text PK | = `xa_id`, e.g. `xa_chu_se` |
+| name | text | e.g. `Chư Sê` |
+| description | text null | e.g. Huyện Chư Sê, tỉnh Gia Lai |
 | name | text | |
 | description | text null | |
 | is_active | boolean | default true |
 | created_at | timestamptz | |
 
-**Seed V1:** 1 row.
+**Seed V1:** 1 row — `xa_chu_se` (Chư Sê, Gia Lai).
 
 ---
 
@@ -179,7 +181,7 @@ erDiagram
 | Column | Type | Notes |
 |--------|------|-------|
 | id | uuid PK | |
-| role | text | `CHECK (role IN ('citizen', 'admin'))` |
+| role | text | `CHECK (role IN ('CITIZEN', 'ADMIN'))` |
 | full_name | text | |
 | email | text null | unique khi not null |
 | phone | text null | |
@@ -222,7 +224,7 @@ JSON definition dùng field **`procedure_code`** (không còn nhầm với uuid)
 | id | uuid PK | |
 | procedure_id | uuid FK → procedures.id | |
 | version | text | semver |
-| status | text | `CHECK (... IN ('approved', 'indexing', 'active', 'archived'))` |
+| status | text | `CHECK (... IN ('APPROVED', 'INDEXING', 'ACTIVE', 'ARCHIVED'))` |
 | definition | jsonb | chứa `procedure_code`, slots, … |
 | source_draft_id | uuid null FK → procedure_drafts.id | |
 | created_by | uuid FK → users | |
@@ -230,29 +232,29 @@ JSON definition dùng field **`procedure_code`** (không còn nhầm với uuid)
 | created_at / approved_at | timestamptz | |
 | **unique** | `(procedure_id, version)` | |
 | **unique** | `(procedure_id, id)` | cho composite FK |
-| **partial unique** | `(procedure_id) WHERE status = 'active'` | |
+| **partial unique** | `(procedure_id) WHERE status = 'ACTIVE'` | |
 | **partial unique** | `(source_draft_id) WHERE source_draft_id IS NOT NULL` | **1 draft → 1 version** |
 
 Publish: một approved draft → một immutable version. Version mới = draft mới (revise). Seed/manual: `source_draft_id = NULL` (không bị unique chặn).
 
-**Lifecycle status (không có `failed`):**
+**Lifecycle status (không có `FAILED`):**
 
 ```text
-approved
+APPROVED
     │
     ▼
-indexing
+INDEXING
    / \
 fail   success
  │        │
  ▼        ▼
-approved  active
+APPROVED  ACTIVE
             │
             ▼
-         archived
+         ARCHIVED
 ```
 
-Fail embedding → cleanup chunks → `status = approved` → retry được.
+Fail embedding → cleanup chunks → `status = 'APPROVED'` → retry được.
 
 ---
 
@@ -283,8 +285,8 @@ Tạo **trước** bước chunk/embed (xem §6).
 | storage_uri | text | |
 | checksum | text | |
 | effective_date / expire_date / issued_date | date null | |
-| processing_status | text | `uploaded` \| `processing` \| `processed` \| `failed` |
-| validity_status | text | `pending` \| `valid` \| `expired` \| `superseded` |
+| processing_status | text | `UPLOADED` \| `PROCESSING` \| `PROCESSED` \| `FAILED` |
+| validity_status | text | `PENDING` \| `VALID` \| `EXPIRED` \| `SUPERSEDED` |
 | uploaded_by | uuid FK → users | |
 | created_at / updated_at | timestamptz | |
 
@@ -309,7 +311,7 @@ CHECK (
 | procedure_id | uuid null FK → procedures.id | gán sau review |
 | draft_definition | jsonb | |
 | validation_result | jsonb | |
-| status | text | `draft` \| `reviewed` \| `approved` \| `rejected` \| `published` |
+| status | text | `DRAFT` \| `REVIEWED` \| `APPROVED` \| `REJECTED` \| `PUBLISHED` |
 | created_by / updated_by | uuid FK → users | |
 | created_at / updated_at | timestamptz | |
 
@@ -355,7 +357,7 @@ Citation/debug: Document A → chunk 0, 1, 2, …
 | xa_id | text FK → communes.id | |
 | active_procedure_id | uuid null FK → procedures.id | |
 | active_procedure_version_id | uuid null | |
-| status | text | `open` \| `completed` \| `abandoned` |
+| status | text | `OPEN` \| `COMPLETED` \| `ABANDONED` |
 | created_at / updated_at | timestamptz | |
 
 ```sql
@@ -383,9 +385,9 @@ FOREIGN KEY (active_procedure_id, xa_id)
 | id | uuid PK | |
 | session_id | uuid FK | |
 | request_id | uuid NOT NULL | |
-| role | text | `user` \| `assistant` \| `system` |
+| role | text | `USER` \| `ASSISTANT` \| `SYSTEM` |
 | content | text | |
-| action | text null | |
+| action | text null | `DIRECT_ANSWER` \| `ASK_MISSING_SLOTS` \| `PROVIDE_FINAL_GUIDANCE` \| `OUT_OF_SCOPE` (NULL = user/system không decision) |
 | message_metadata | jsonb | |
 | created_at | timestamptz | |
 
@@ -443,7 +445,7 @@ Decision Policy
 ```text
 Draft approved
        ↓
-Create procedure_versions (status = indexing)
+Create procedure_versions (status = INDEXING)
        + source_draft_id
        ↓
 Create procedure_version_documents (N–N links)
@@ -464,7 +466,7 @@ embedding fail (partial chunks có thể đã insert)
 DELETE FROM knowledge_chunks
  WHERE procedure_version_id = :version_id
       ↓
-UPDATE procedure_versions SET status = 'approved'
+UPDATE procedure_versions SET status = 'APPROVED'
  WHERE id = :version_id
       ↓
 retry từ đầu (chunk + embed)
@@ -477,25 +479,25 @@ UNIQUE `(procedure_version_id, document_id, chunk_index)` chống duplicate nế
 ```text
 BEGIN
   archive old active (cùng procedure_id)
-  SET new.status = 'active'
+  SET new.status = 'ACTIVE'
   UPDATE procedures
     SET active_version_id = new.id
     WHERE id = new.procedure_id
   UPDATE procedure_drafts
-    SET status = 'published'
+    SET status = 'PUBLISHED'
     WHERE id = new.source_draft_id   -- nếu có
   INSERT audit_logs (action = 'publish', ...)
 COMMIT
 ```
 
-Không được để `version = active` mà `draft = approved` vì process chết giữa chừng.
+Không được để `version = ACTIVE` mà `draft = APPROVED` vì process chết giữa chừng.
 
 ### Publish validation (Go — app-level)
 
 Trước khi tạo version / activate:
 
 ```text
-VERIFY draft.status = 'approved'
+VERIFY draft.status = 'APPROVED'
 VERIFY draft.procedure_id == target procedure_id   -- chống source_draft lệch procedure
 VERIFY source documents validity_status hợp lệ
 VERIFY document.xa_id == procedure.xa_id          -- scope commune
@@ -550,7 +552,7 @@ ORDER BY document_id, chunk_index;
 | Document dates | `expire_date >= effective_date` |
 | State machines | **CHECK IN (...)** mọi status/role (migration; không dùng PG ENUM) |
 | 1 active / procedure | partial unique + short txn |
-| Embed fail | delete chunks → `approved` |
+| Embed fail | delete chunks → `APPROVED` |
 
 ```text
 procedures (xa_id, procedure_code) UNIQUE
@@ -566,13 +568,14 @@ knowledge_chunks (procedure_version_id, document_id, chunk_index) UNIQUE
 knowledge_chunks USING hnsw (embedding vector_cosine_ops)
 
 -- CHECK examples (migration)
-procedure_versions.status IN ('approved','indexing','active','archived')
-documents.processing_status IN ('uploaded','processing','processed','failed')
-documents.validity_status IN ('pending','valid','expired','superseded')
-procedure_drafts.status IN ('draft','reviewed','approved','rejected','published')
-conversation_sessions.status IN ('open','completed','abandoned')
-conversation_messages.role IN ('user','assistant','system')
-users.role IN ('citizen','admin')
+procedure_versions.status IN ('APPROVED','INDEXING','ACTIVE','ARCHIVED')
+documents.processing_status IN ('UPLOADED','PROCESSING','PROCESSED','FAILED')
+documents.validity_status IN ('PENDING','VALID','EXPIRED','SUPERSEDED')
+procedure_drafts.status IN ('DRAFT','REVIEWED','APPROVED','REJECTED','PUBLISHED')
+conversation_sessions.status IN ('OPEN','COMPLETED','ABANDONED')
+conversation_messages.role IN ('USER','ASSISTANT','SYSTEM')
+conversation_messages.action IS NULL OR IN ('DIRECT_ANSWER','ASK_MISSING_SLOTS','PROVIDE_FINAL_GUIDANCE','OUT_OF_SCOPE')
+users.role IN ('CITIZEN','ADMIN')
 ```
 
 ## 8b. ON DELETE (migration — không đổi ER)

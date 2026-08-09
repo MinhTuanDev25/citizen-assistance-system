@@ -37,7 +37,7 @@ Runtime chỉ:
 | Citizen Portal | Chat UI, history |
 | Auth | JWT, user profile |
 | Conversation Manager | Intent/domain, extract slots, session context |
-| **Decision Policy Engine** | `ask_missing_slots` / `direct_answer` / `provide_final_guidance` |
+| **Decision Policy Engine** | `ASK_MISSING_SLOTS` / `DIRECT_ANSWER` / `PROVIDE_FINAL_GUIDANCE` |
 | Procedure Orchestrator | Load active JSON, validate slots, update slot_state |
 | Knowledge Service | RAG + natural response + citation |
 | Stores | PostgreSQL (session, JSON, versions) + Vector DB |

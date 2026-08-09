@@ -3,9 +3,9 @@
   "domain": "ho_tich_chung_thuc",
   "name": "Chứng thực bản sao",
   "description": "Hướng dẫn chứng thực bản sao từ bản chính tại UBND xã.",
-  "xa_id": "xa_demo_001",
+  "xa_id": "xa_chu_se",
   "version": "1.0.0",
-  "status": "draft",
+  "status": "DRAFT",
   "authority_level": "xa",
   "intent_examples": [
     "Tôi muốn chứng thực bằng đại học",
@@ -57,7 +57,7 @@
   ],
   "metadata": {
     "priority": "P0",
-    "preferred_route": "direct_answer",
+    "preferred_route": "DIRECT_ANSWER",
     "seeded_at": "2026-08-04",
     "needs_official_pdf": true
   }
