@@ -13,15 +13,14 @@ cd "$ROOT"
 CMD="${1:-up}"
 shift || true
 
-if [[ ! -f .env ]]; then
-  echo "No deploy/.env — copying from .env.example"
-  cp .env.example .env
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+elif [[ -f .env.example ]]; then
+  echo "No deploy/.env — using defaults (optional: cp .env.example .env)"
 fi
-
-set -a
-# shellcheck disable=SC1091
-source .env
-set +a
 
 echo "→ Ensuring postgres is up..."
 docker compose up -d postgres

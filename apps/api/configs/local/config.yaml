@@ -1,0 +1,14 @@
+# Local defaults — OK to commit. Override with env if needed.
+server:
+  addr: ":8080"
+  shutdown_timeout_sec: 10
+
+database:
+  url: "postgres://cas:cas@localhost:5432/citizen_assistance?sslmode=disable"
+  max_conns: 10
+  min_conns: 1
+  conn_timeout_sec: 5
+
+app:
+  xa_id: xa_chu_se
+  log_level: debug
