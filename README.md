@@ -39,7 +39,8 @@ citizen-assistance-system/
 
 - [x] Monorepo scaffold
 - [x] Local Postgres migrations (schema + master seed)
-- [ ] Phase 1: Go chat + Decision Engine
+- [x] Go API skeleton (Gin, config, DB pool, logger, request_id, health/ready)
+- [ ] Phase 1: seed procedures + Decision Engine + chat turns
 - [ ] Phase 2: AI extract (mock → LLM)
 - [ ] Phase 3: React chat UI
 - [ ] … → Production (see A→Z plan)

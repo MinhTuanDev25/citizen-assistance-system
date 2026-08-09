@@ -1,0 +1,14 @@
+# Non-secret prod skeleton — bake into image. Secrets via env at deploy.
+server:
+  addr: ":8080"
+  shutdown_timeout_sec: 15
+
+database:
+  url: "" # required: set DATABASE_URL at deploy
+  max_conns: 20
+  min_conns: 2
+  conn_timeout_sec: 5
+
+app:
+  xa_id: xa_chu_se
+  log_level: info

@@ -134,7 +134,7 @@ P0 Scaffold ✅
 | 7.1 | Dockerfile cho `api`, `ai-service`, `web` | Multi-stage builds |
 | 7.2 | Compose: postgres, minio, api, ai, web, nginx | `deploy/docker-compose.yml` |
 | 7.3 | Migrations on startup / init job | Idempotent |
-| 7.4 | `.env.example` đầy đủ | Documented |
+| 7.4 | Prod secrets: env on VPS (no committed secrets) | Documented |
 | 7.5 | One-command: `docker compose up --build` | Dev README |
 
 **Done when:** máy mới clone → compose up → chat + admin chạy.

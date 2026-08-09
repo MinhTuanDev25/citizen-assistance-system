@@ -1,5 +1,8 @@
 name: citizen-assistance
 
+# Local infra. Defaults work without .env; copy .env.example → .env to override.
+# Go API reads apps/api/configs/local/config.yaml (not this file).
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
