@@ -51,9 +51,9 @@
 1. Nhận câu hỏi công dân → detect domain + procedure.
 2. Load `procedure_definition` version **active**.
 3. So khớp slot đã biết vs `required_slots` (và conditional slots nếu có).
-4. Nếu thiếu → `ask_missing_slots` (**hỏi full danh sách slot thiếu trong 1 lượt**, không hỏi từng câu).
-5. Nếu đủ → `provide_final_guidance` (+ citation).
-6. Nếu câu hỏi đã đủ thông tin / thủ tục không cần slot → `direct_answer`.
+4. Nếu thiếu → `ASK_MISSING_SLOTS` (**hỏi full danh sách slot thiếu trong 1 lượt**, không hỏi từng câu).
+5. Nếu đủ → `PROVIDE_FINAL_GUIDANCE` (+ citation).
+6. Nếu câu hỏi đã đủ thông tin / thủ tục không cần slot → `DIRECT_ANSWER`.
 
 ## 4. Assumptions (Phase 0)
 

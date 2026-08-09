@@ -20,9 +20,9 @@ Tách **Decision Policy Engine** giữa Conversation Manager và Procedure Orche
 
 Engine chỉ trả về một trong 3 action:
 
-- `ask_missing_slots`
-- `direct_answer`
-- `provide_final_guidance`
+- `ASK_MISSING_SLOTS`
+- `DIRECT_ANSWER`
+- `PROVIDE_FINAL_GUIDANCE`
 
 Input chính: `procedure_definition` active + `slot_state` session + slots vừa extract.
 

@@ -1,7 +1,7 @@
 # API Contract (Phase 0)
 
 Base path giả định: `/api/v1`  
-Auth: Bearer JWT (`citizen` | `admin`)
+Auth: Bearer JWT (`CITIZEN` | `ADMIN`)
 
 ## 1. Citizen — Chat
 
@@ -25,7 +25,7 @@ Bắt đầu/tiếp tục một lượt hội thoại.
 ```json
 {
   "session_id": "sess_001",
-  "action": "ask_missing_slots",
+  "action": "ASK_MISSING_SLOTS",
   "procedure_code": "dk_khai_sinh",
   "procedure_version": "1.0.0",
   "reply_text": "Bé sinh ở đâu (bệnh viện/cơ sở y tế hay tại nhà, thuộc xã/phường nào)?",
@@ -50,7 +50,7 @@ Khi final/direct:
 ```json
 {
   "session_id": "sess_001",
-  "action": "provide_final_guidance",
+  "action": "PROVIDE_FINAL_GUIDANCE",
   "procedure_code": "dk_khai_sinh",
   "procedure_version": "1.0.0",
   "reply_text": "Anh/chị chuẩn bị các giấy tờ sau...",
@@ -68,7 +68,7 @@ Trả conversation history + slot_state hiện tại.
 ```json
 {
   "session_id": "sess_001",
-  "action": "out_of_scope",
+  "action": "OUT_OF_SCOPE",
   "reply_text": "Hiện trợ lý chỉ hỗ trợ thủ tục hành chính của xã trong 3 nhóm: Hộ tịch & Chứng thực; Đất đai, Nhà ở & Quy hoạch; Bảo hiểm & Chính sách xã hội."
 }
 ```
@@ -84,7 +84,7 @@ Upload PDF/text nguồn.
 **Response**
 
 ```json
-{ "document_id": "doc_001", "status": "uploaded" }
+{ "document_id": "doc_001", "status": "UPLOADED" }
 ```
 
 ### `POST /admin/documents/{document_id}/extract`
@@ -96,7 +96,7 @@ Sinh draft procedure JSON (LLM assist).
 ```json
 {
   "draft_id": "draft_001",
-  "status": "draft",
+  "status": "DRAFT",
   "procedure_draft": { "...procedure_definition..." }
 }
 ```
@@ -140,7 +140,7 @@ Approve + publish version.
 {
   "procedure_code": "dk_khai_sinh",
   "version": "1.0.0",
-  "status": "active"
+  "status": "ACTIVE"
 }
 ```
 

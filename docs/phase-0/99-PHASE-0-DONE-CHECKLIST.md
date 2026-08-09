@@ -19,7 +19,7 @@ Dùng checklist này để **ký duyệt Phase 0** trước khi mở Sprint 0 co
 ## C. Contracts
 
 - [ ] `procedure_definition.schema.json` approved
-- [ ] Decision contract (3 actions + out_of_scope) approved
+- [ ] Decision contract (3 actions + OUT_OF_SCOPE) approved
 - [ ] API notes approved (chat + admin)
 - [ ] DB model approved (sessions, slot_state, versions, audit)
 
@@ -43,7 +43,7 @@ Ghi rõ nếu còn. Nếu trống → Phase 0 pass.
 
 1. `xa_id` thật của xã triển khai là gì? → ________________
 2. Có bắt buộc login công dân ở V1 không? → ________________
-3. First-turn đủ slot: dùng `direct_answer` hay `provide_final_guidance`? → **đề xuất: `direct_answer`**
+3. First-turn đủ slot: dùng `DIRECT_ANSWER` hay `PROVIDE_FINAL_GUIDANCE`? → **đề xuất: `DIRECT_ANSWER`**
 4. Khi nào có PDF/văn bản chính thức để thay seed? → ________________
 5. Voice mode: `voice→text` hay `voice↔voice`? → **đề xuất V1.1: voice→text**
 

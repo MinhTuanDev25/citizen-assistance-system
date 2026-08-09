@@ -10,7 +10,7 @@ Citizen                API                 ConversationMgr          DecisionEngi
   |                     |                        | load active JSON       |                        |
   |                     |                        |----------------------->|----------------------->|
   |                     |                        |                        | missing = 3 slots      |
-  |                     |                        |<-----------------------| ask_missing_slots      |
+  |                     |                        |<-----------------------| ASK_MISSING_SLOTS      |
   |<--------------------| hỏi noi_sinh           |                        |                        |
   | "sinh BV tỉnh"      |                        |                        |                        |
   |-------------------->| extract + update state |                        |                        |
@@ -18,8 +18,8 @@ Citizen                API                 ConversationMgr          DecisionEngi
   |<--------------------| hỏi da_ket_hon         |                        |                        |
   | ...                 |                        |                        |                        |
   | đủ slots            |                        |                        |                        |
-  |                     |                        |                        | provide_final_guidance |
+  |                     |                        |                        | PROVIDE_FINAL_GUIDANCE |
   |<--------------------| checklist + citations  |                        |                        |
 ```
 
-Nhánh direct (chứng thực bản sao): detect procedure → required_slots rỗng → `direct_answer` ngay.
+Nhánh direct (chứng thực bản sao): detect procedure → required_slots rỗng → `DIRECT_ANSWER` ngay.

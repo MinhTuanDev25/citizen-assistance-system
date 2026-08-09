@@ -33,11 +33,13 @@ citizen-assistance-system/
 - **A→Z plan (code → prod):** [`docs/IMPLEMENTATION-PLAN-A-TO-Z.md`](docs/IMPLEMENTATION-PLAN-A-TO-Z.md)
 - Phase 0: [`docs/phase-0/00-README.md`](docs/phase-0/00-README.md)
 - Tech lock: [`docs/phase-0/05-TECH-LOCK.md`](docs/phase-0/05-TECH-LOCK.md)
+- **Local DB:** [`deploy/README.md`](deploy/README.md) — `make db-migrate`
 
 ## Status
 
 - [x] Monorepo scaffold
+- [x] Local Postgres migrations (schema + master seed)
 - [ ] Phase 1: Go chat + Decision Engine
 - [ ] Phase 2: AI extract (mock → LLM)
 - [ ] Phase 3: React chat UI
-- [ ] … → Staging → Production (see A→Z plan)
+- [ ] … → Production (see A→Z plan)

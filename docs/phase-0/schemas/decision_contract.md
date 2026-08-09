@@ -10,9 +10,9 @@ Khóa output của Decision Policy Engine để backend/frontend/AI cùng một 
 
 | action | Khi nào | Citizen UX |
 |--------|---------|------------|
-| `ask_missing_slots` | Còn required/conditional slot thiếu | Hỏi **full** danh sách slot thiếu trong **1 lượt** |
-| `direct_answer` | Không cần slot, hoặc user đã cung cấp đủ ngay từ đầu và policy cho phép | Trả hướng dẫn ngay |
-| `provide_final_guidance` | Session đã đủ slot (sau khi user trả lời bổ sung hoặc từ câu đầu) | Trả checklist + nơi nộp + citation |
+| `ASK_MISSING_SLOTS` | Còn required/conditional slot thiếu | Hỏi **full** danh sách slot thiếu trong **1 lượt** |
+| `DIRECT_ANSWER` | Không cần slot, hoặc user đã cung cấp đủ ngay từ đầu và policy cho phép | Trả hướng dẫn ngay |
+| `PROVIDE_FINAL_GUIDANCE` | Session đã đủ slot (sau khi user trả lời bổ sung hoặc từ câu đầu) | Trả checklist + nơi nộp + citation |
 
 ## 3. Ai viết câu hỏi? Ai extract slot?
 
@@ -58,7 +58,7 @@ Vì extract luôn bị **constrain** bởi `definition.slots` + `missing_slots` 
 ```json
 {
   "session_id": "sess_001",
-  "xa_id": "xa_demo_001",
+  "xa_id": "xa_chu_se",
   "user_message": "Tôi muốn làm giấy khai sinh cho con tôi.",
   "detected": {
     "domain": "ho_tich_chung_thuc",
@@ -67,24 +67,24 @@ Vì extract luôn bị **constrain** bởi `definition.slots` + `missing_slots` 
   },
   "extracted_slots": {},
   "slot_state": {
-    "noi_sinh": { "value": null, "status": "missing" },
-    "da_ket_hon": { "value": null, "status": "missing" },
-    "co_giay_chung_sinh": { "value": null, "status": "missing" }
+    "noi_sinh": { "value": null, "status": "MISSING" },
+    "da_ket_hon": { "value": null, "status": "MISSING" },
+    "co_giay_chung_sinh": { "value": null, "status": "MISSING" }
   },
   "procedure_version": "1.0.0"
 }
 ```
 
-> `slot_state`: map theo slot key; `status` ∈ `missing` | `known` | `confirmed`.  
+> `slot_state`: map theo slot key; `status` ∈ `MISSING` | `KNOWN` | `CONFIRMED`.  
 > API response vẫn trả thêm `missing_slots[]` (derived) cho UI.
 
 ## 5. Response envelopes
 
-### 5.1 ask_missing_slots (hỏi full missing)
+### 5.1 ASK_MISSING_SLOTS (hỏi full missing)
 
 ```json
 {
-  "action": "ask_missing_slots",
+  "action": "ASK_MISSING_SLOTS",
   "procedure_code": "dk_khai_sinh",
   "procedure_version": "1.0.0",
   "missing_slots": ["noi_sinh", "da_ket_hon", "co_giay_chung_sinh"],
@@ -105,18 +105,18 @@ Vì extract luôn bị **constrain** bởi `definition.slots` + `missing_slots` 
   ],
   "reply_text": "Để hướng dẫn đăng ký khai sinh, anh/chị cho mình biết:\n1) Bé sinh ở đâu (bệnh viện/cơ sở y tế hay tại nhà, thuộc xã/phường nào)?\n2) Cha mẹ bé đã đăng ký kết hôn chưa?\n3) Anh/chị có giấy chứng sinh không?",
   "slot_state": {
-    "noi_sinh": { "value": null, "status": "missing" },
-    "da_ket_hon": { "value": null, "status": "missing" },
-    "co_giay_chung_sinh": { "value": null, "status": "missing" }
+    "noi_sinh": { "value": null, "status": "MISSING" },
+    "da_ket_hon": { "value": null, "status": "MISSING" },
+    "co_giay_chung_sinh": { "value": null, "status": "MISSING" }
   }
 }
 ```
 
-### 5.2 direct_answer
+### 5.2 DIRECT_ANSWER
 
 ```json
 {
-  "action": "direct_answer",
+  "action": "DIRECT_ANSWER",
   "procedure_code": "chung_thuc_ban_sao",
   "procedure_version": "1.0.0",
   "guidance": {
@@ -138,11 +138,11 @@ Vì extract luôn bị **constrain** bởi `definition.slots` + `missing_slots` 
 }
 ```
 
-### 5.3 provide_final_guidance
+### 5.3 PROVIDE_FINAL_GUIDANCE
 
 ```json
 {
-  "action": "provide_final_guidance",
+  "action": "PROVIDE_FINAL_GUIDANCE",
   "procedure_code": "dk_khai_sinh",
   "procedure_version": "1.0.0",
   "filled_slots": {
@@ -182,12 +182,12 @@ recompute effective_required = required_slots + conditional_slots(matched)
 missing = [s in effective_required if slot_state[s].status == missing or value empty]
 
 if missing empty:
-  if first turn complete: return direct_answer
-  else: return provide_final_guidance
+  if first turn complete: return DIRECT_ANSWER
+  else: return PROVIDE_FINAL_GUIDANCE
 else:
   ask_now = missing                    # FULL missing, không cắt 1 slot
   questions = [definition.slots[s].question for s in ask_now]
-  return ask_missing_slots
+  return ASK_MISSING_SLOTS
 ```
 
 ## 7. Quy ước V1
@@ -195,6 +195,6 @@ else:
 - `ask_mode = all_missing`: mỗi lượt hỏi **toàn bộ** slot đang thiếu.
 - Câu hỏi lấy từ `definition.slots.*.question` (JSON), không để LLM tự tạo nội dung nghiệp vụ.
 - Extract slot = structured output **constrained** theo allowed keys + type/enum; backend validate trước khi ghi `session_slot_states`.
-- Không hỏi lại slot đã `confirmed`.
+- Không hỏi lại slot đã `CONFIRMED`.
 - Mọi final/direct answer **bắt buộc** có `citations`.
-- Không detect được procedure → `out_of_scope`.
+- Không detect được procedure → `OUT_OF_SCOPE`.

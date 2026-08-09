@@ -3,9 +3,9 @@
   "domain": "dat_dai_nha_o_quy_hoach",
   "name": "Xin giấy phép xây dựng",
   "description": "Hướng dẫn chuẩn bị hồ sơ xin giấy phép xây dựng; thẩm quyền có thể ở xã hoặc cấp trên tùy quy mô.",
-  "xa_id": "xa_demo_001",
+  "xa_id": "xa_chu_se",
   "version": "1.0.0",
-  "status": "draft",
+  "status": "DRAFT",
   "authority_level": "mixed",
   "intent_examples": [
     "Xin giấy phép xây dựng nhà",
