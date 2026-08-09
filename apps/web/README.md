@@ -1,21 +1,18 @@
-# Web (React + JavaScript)
+# Web — Citizen Portal (React + Vite + JavaScript)
 
-Citizen Portal (chat) and Admin Portal (upload / review / publish) in one React app
-with route-based separation (e.g. `/` citizen, `/admin` officer).
+## Run
 
-## Planned layout
+```bash
+# from repo root
+make web-run
 
-```text
-apps/web/
-├── public/
-├── src/
-│   ├── pages/
-│   ├── components/
-│   ├── api/
-│   └── App.jsx
-├── package.json
-├── Dockerfile
-└── README.md
+# or
+cd apps/web && npm install && npm run dev
 ```
 
-Phase 1 target: minimal Citizen chat UI calling Go `POST /api/v1/chat/turns`.
+Mở http://localhost:5173
+
+## Notes
+
+- UI chat demo (mock reply) — chưa gọi Go API.
+- Vite proxy sẵn `/api` → `http://localhost:8080` khi nối `POST /api/v1/chat/turns`.

@@ -1,4 +1,4 @@
-.PHONY: db-up db-down db-migrate db-migrate-down db-psql db-reset api-run api-tidy
+.PHONY: db-up db-down db-migrate db-migrate-down db-psql db-reset api-run api-tidy web-run
 
 db-up:
 	cd deploy && docker compose up -d postgres
@@ -23,3 +23,6 @@ api-tidy:
 
 api-run:
 	cd apps/api && APP_ENV=local go run ./cmd/api
+
+web-run:
+	cd apps/web && npm install && npm run dev
