@@ -12,13 +12,16 @@
 | LLM | Abstraction → OpenAI GPT và/hoặc Gemini |
 | Voice | V1 text; V1.1 voice→STT→text |
 | Deploy | Containers tách service + Reverse proxy + CI/CD |
+| Embedding (pgvector) | **OpenAI `text-embedding-3-small` / dim 1536** (frozen với data-model) |
 
 Chi tiết + phân tích auth/storage/OCR/cache/logging:  
 [`adr/ADR-005-technology-stack.md`](adr/ADR-005-technology-stack.md)
 
+Data model: [`db/data-model.md`](db/data-model.md)
+
 ## Còn mở (chặn nhẹ)
 
-- [ ] Primary LLM: OpenAI hay Gemini?
+- [ ] Primary LLM (chat): OpenAI hay Gemini? *(embedding đã chốt riêng)*
 - [ ] Object storage: MinIO hay S3/GCS?
 - [ ] Citizen bắt buộc login V1?
 - [ ] CI: GitHub Actions / GitLab?

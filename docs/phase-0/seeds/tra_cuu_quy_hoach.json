@@ -1,5 +1,5 @@
 {
-  "procedure_id": "tra_cuu_quy_hoach",
+  "procedure_code": "tra_cuu_quy_hoach",
   "domain": "dat_dai_nha_o_quy_hoach",
   "name": "Tra cứu quy hoạch",
   "description": "Hướng dẫn cách tra cứu thông tin quy hoạch tại địa bàn xã.",

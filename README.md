@@ -30,6 +30,7 @@ citizen-assistance-system/
 
 ## Docs
 
+- **A→Z plan (code → prod):** [`docs/IMPLEMENTATION-PLAN-A-TO-Z.md`](docs/IMPLEMENTATION-PLAN-A-TO-Z.md)
 - Phase 0: [`docs/phase-0/00-README.md`](docs/phase-0/00-README.md)
 - Tech lock: [`docs/phase-0/05-TECH-LOCK.md`](docs/phase-0/05-TECH-LOCK.md)
 
@@ -37,5 +38,6 @@ citizen-assistance-system/
 
 - [x] Monorepo scaffold
 - [ ] Phase 1: Go chat + Decision Engine
-- [ ] Phase 1: AI extract (mock → LLM)
-- [ ] Phase 1: React chat UI
+- [ ] Phase 2: AI extract (mock → LLM)
+- [ ] Phase 3: React chat UI
+- [ ] … → Staging → Production (see A→Z plan)

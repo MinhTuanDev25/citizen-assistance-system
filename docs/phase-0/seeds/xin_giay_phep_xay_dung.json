@@ -1,5 +1,5 @@
 {
-  "procedure_id": "xin_giay_phep_xay_dung",
+  "procedure_code": "xin_giay_phep_xay_dung",
   "domain": "dat_dai_nha_o_quy_hoach",
   "name": "Xin giấy phép xây dựng",
   "description": "Hướng dẫn chuẩn bị hồ sơ xin giấy phép xây dựng; thẩm quyền có thể ở xã hoặc cấp trên tùy quy mô.",

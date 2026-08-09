@@ -1,72 +1,380 @@
-# Data Model (PostgreSQL) — Phase 0
+# Data Model (PostgreSQL + pgvector) — V1 **FROZEN**
 
-`xa_id` xuất hiện ở bảng nghiệp vụ chính dù V1 chỉ 1 xã.
+`xa_id` FK → `communes.id` (V1: 1 xã; schema sẵn multi-xã).
+
+**Nguyên tắc identity**
+
+| | Technical pointer | Human-readable |
+|--|-------------------|----------------|
+| Procedure | `procedures.id` uuid — FK tên `procedure_id` | `procedure_code` e.g. `dk_khai_sinh` |
+| Version | `procedure_versions.id` uuid | `version` e.g. `1.0.0` |
+
+`UNIQUE (xa_id, procedure_code)` — cùng mã thủ tục được phép ở hai xã khác nhau.
+
+Composite FK `(procedure_id, version_id)` đảm bảo không lệch procedure ↔ version.
+
+> Không chỉnh ER tiếp trừ bug thật. Tiếp theo = `001_init_schema.up.sql` + Phase 1.
 
 ## 1. ER overview
 
 ```text
-domains
-  └── procedures
-        └── procedure_versions   ←── active pointer trên procedures
+communes
+  ├── procedures          (xa_id FK; id uuid PK; procedure_code)
+  ├── documents
+  ├── conversation_sessions
+  └── knowledge_chunks
+
+domains                     ← catalog độc lập (không thuộc communes)
+  ├── procedures
+  └── documents
+
+procedures
+  ├── active: composite FK (id, active_version_id)
+  │              → procedure_versions(procedure_id, id)
+  └── procedure_versions
+        ├── source_draft_id → procedure_drafts
+        ├── procedure_version_documents → documents
+        └── knowledge_chunks  vector(1536) + chunk_index
 
 users
   └── conversation_sessions
-        └── conversation_messages
-        └── session_slot_states   (PK: session_id + procedure_id)
+        ├── active: composite FK (active_procedure_id, active_procedure_version_id)
+        ├── conversation_messages  (+ request_id uuid)
+        └── session_slot_states
 
-documents
-  └── procedure_drafts
-        └── (publish) procedure_versions
-
-audit_logs
+audit_logs  (+ request_id uuid null)
 ```
 
-Vector DB (tách): embeddings/chunks gắn `doc_id`, `procedure_id`, `xa_id`, `version`.
+## 2. Tracing — chỉ `session_id` + `request_id`
 
-## 2. Tables
+**Không** dùng `correlation_id` trong V1.
 
-### `domains`
+| ID | Scope |
+|----|-------|
+| `session_id` | Cả hội thoại |
+| `request_id` | 1 HTTP / 1 turn (Web → Go → Python → LLM → DB/log) |
 
-Danh mục domain — tách bảng để sau thêm domain không phải sửa enum trong code.
+Messages: `request_id uuid NOT NULL`. Audit: `uuid null` (job/migration).
+
+---
+
+## 3. Embedding lock (V1)
+
+| Hạng mục | Giá trị |
+|----------|---------|
+| Model | `text-embedding-3-small` (OpenAI) |
+| Dimension | **1536** → `vector(1536)` |
+| Đổi sau | Re-embed toàn bộ + migration |
+
+---
+
+## 4. ER diagram
+
+```mermaid
+erDiagram
+    communes ||--o{ procedures : "jurisdiction"
+    communes ||--o{ documents : "jurisdiction"
+    communes ||--o{ conversation_sessions : "jurisdiction"
+    communes ||--o{ knowledge_chunks : "jurisdiction"
+
+    domains ||--o{ procedures : "has"
+    domains ||--o{ documents : "optional"
+    users ||--o{ conversation_sessions : "opens"
+    users ||--o{ documents : "uploads"
+    users ||--o{ procedure_drafts : "edits"
+    users ||--o{ procedure_versions : "creates"
+    users ||--o{ audit_logs : "acts"
+
+    conversation_sessions ||--o{ conversation_messages : "contains"
+    conversation_sessions ||--o{ session_slot_states : "tracks"
+    procedures ||--o{ session_slot_states : "used_in"
+    procedures ||--o{ procedure_versions : "versions"
+    procedure_versions ||--o| procedures : "active_as"
+    procedure_versions ||--o{ knowledge_chunks : "chunks_of"
+    procedure_versions ||--o{ conversation_sessions : "used_in_chat"
+    procedures ||--o{ procedure_drafts : "assigned"
+    procedure_drafts ||--o{ procedure_versions : "source_of"
+
+    documents ||--o{ procedure_drafts : "extract_to"
+    documents ||--o{ procedure_version_documents : "supports"
+    procedure_versions ||--o{ procedure_version_documents : "cites"
+    documents ||--o{ knowledge_chunks : "sourced_from"
+
+    communes {
+        text id PK
+        text name
+    }
+
+    procedures {
+        uuid id PK
+        text procedure_code
+        text domain_id FK
+        text xa_id FK
+        uuid active_version_id
+    }
+
+    procedure_versions {
+        uuid id PK
+        uuid procedure_id FK
+        text version
+        text status
+        uuid source_draft_id FK
+    }
+
+    knowledge_chunks {
+        uuid id PK
+        uuid procedure_id FK
+        uuid procedure_version_id FK
+        uuid document_id FK
+        int chunk_index
+        vector embedding
+    }
+
+    conversation_sessions {
+        uuid id PK
+        uuid active_procedure_id FK
+        uuid active_procedure_version_id FK
+    }
+
+    conversation_messages {
+        uuid id PK
+        uuid session_id FK
+        uuid request_id
+    }
+```
+
+## 5. Tables
+
+### `communes`
 
 | Column | Type | Notes |
 |--------|------|-------|
-| id | text PK | e.g. `ho_tich_chung_thuc` |
-| name | text | Tên hiển thị |
+| id | text PK | = `xa_id`, e.g. `xa_demo_001` |
+| name | text | |
 | description | text null | |
-| sort_order | int | Thứ tự UI |
 | is_active | boolean | default true |
 | created_at | timestamptz | |
 
-Seed V1:
+**Seed V1:** 1 row.
 
-| id | name |
-|----|------|
-| `ho_tich_chung_thuc` | Hộ tịch & Chứng thực |
-| `dat_dai_nha_o_quy_hoach` | Đất đai, Nhà ở & Quy hoạch |
-| `bao_hiem_chinh_sach_xh` | Bảo hiểm & Chính sách xã hội |
+---
+
+### `domains`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | text PK | |
+| name | text | |
+| description | text null | |
+| sort_order | int | default 0 |
+| is_active | boolean | default true |
+| created_at | timestamptz | |
+
+**Seed:** `ho_tich_chung_thuc`, `dat_dai_nha_o_quy_hoach`, `bao_hiem_chinh_sach_xh`.
+
+---
 
 ### `users`
 
 | Column | Type | Notes |
 |--------|------|-------|
 | id | uuid PK | |
-| role | text | `citizen` \| `admin` |
+| role | text | `CHECK (role IN ('citizen', 'admin'))` |
 | full_name | text | |
+| email | text null | unique khi not null |
 | phone | text null | |
+| password_hash | text null | |
+| created_at / updated_at | timestamptz | |
+
+---
+
+### `procedures`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| **id** | **uuid PK** | Technical identity — mọi FK gọi là `procedure_id` |
+| **procedure_code** | **text NOT NULL** | Human code, e.g. `dk_khai_sinh` |
+| domain_id | text FK → domains.id | |
+| name | text | |
+| xa_id | text FK → communes.id | |
+| active_version_id | uuid null | |
+| created_at | timestamptz | NOT NULL DEFAULT now() |
+| updated_at | timestamptz | NOT NULL DEFAULT now() |
+| **unique** | **`(xa_id, procedure_code)`** | Multi-xã: cùng code, khác xã |
+| **unique** | **`(id, xa_id)`** | Hỗ trợ composite FK denorm `xa_id` trên chunks/sessions |
+
+```sql
+-- Composite FK: active version phải thuộc đúng procedure
+FOREIGN KEY (id, active_version_id)
+  REFERENCES procedure_versions (procedure_id, id)
+```
+
+API resolve: `(xa_id, procedure_code)` → `procedures.id`.
+
+JSON definition dùng field **`procedure_code`** (không còn nhầm với uuid).
+
+---
+
+### `procedure_versions`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | uuid PK | |
+| procedure_id | uuid FK → procedures.id | |
+| version | text | semver |
+| status | text | `CHECK (... IN ('approved', 'indexing', 'active', 'archived'))` |
+| definition | jsonb | chứa `procedure_code`, slots, … |
+| source_draft_id | uuid null FK → procedure_drafts.id | |
+| created_by | uuid FK → users | |
+| approved_by | uuid FK → users null | |
+| created_at / approved_at | timestamptz | |
+| **unique** | `(procedure_id, version)` | |
+| **unique** | `(procedure_id, id)` | cho composite FK |
+| **partial unique** | `(procedure_id) WHERE status = 'active'` | |
+| **partial unique** | `(source_draft_id) WHERE source_draft_id IS NOT NULL` | **1 draft → 1 version** |
+
+Publish: một approved draft → một immutable version. Version mới = draft mới (revise). Seed/manual: `source_draft_id = NULL` (không bị unique chặn).
+
+**Lifecycle status (không có `failed`):**
+
+```text
+approved
+    │
+    ▼
+indexing
+   / \
+fail   success
+ │        │
+ ▼        ▼
+approved  active
+            │
+            ▼
+         archived
+```
+
+Fail embedding → cleanup chunks → `status = approved` → retry được.
+
+---
+
+### `procedure_version_documents`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| procedure_version_id | uuid FK | PK composite |
+| document_id | uuid FK | PK composite |
+
+Tạo **trước** bước chunk/embed (xem §6).
+
+**Scope commune — app-level (không composite FK V1):** publish service verify `document.xa_id == procedure.xa_id` trước khi INSERT. Không ép FK cứng vì sau này có thể có VB tỉnh/QG dùng chung nhiều xã.
+
+---
+
+### `documents`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | uuid PK | |
+| xa_id | text FK → communes.id | |
+| domain_id | text FK → domains null | |
+| title | text | |
+| document_number | text null | |
+| issuer | text null | |
+| filename | text | |
+| storage_uri | text | |
+| checksum | text | |
+| effective_date / expire_date / issued_date | date null | |
+| processing_status | text | `uploaded` \| `processing` \| `processed` \| `failed` |
+| validity_status | text | `pending` \| `valid` \| `expired` \| `superseded` |
+| uploaded_by | uuid FK → users | |
+| created_at / updated_at | timestamptz | |
+
+**Migration CHECK:**
+
+```sql
+CHECK (
+  effective_date IS NULL
+  OR expire_date IS NULL
+  OR expire_date >= effective_date
+)
+```
+
+---
+
+### `procedure_drafts`
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | uuid PK | |
+| document_id | uuid FK → documents null | |
+| procedure_id | uuid null FK → procedures.id | gán sau review |
+| draft_definition | jsonb | |
+| validation_result | jsonb | |
+| status | text | `draft` \| `reviewed` \| `approved` \| `rejected` \| `published` |
+| created_by / updated_by | uuid FK → users | |
+| created_at / updated_at | timestamptz | |
+
+---
+
+### `knowledge_chunks` (pgvector)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | uuid PK | |
+| xa_id | text FK → communes.id | |
+| procedure_id | uuid | denorm; khóa bằng composite FK |
+| procedure_version_id | uuid | |
+| **document_id** | **uuid NOT NULL FK → documents** | V1: chunk luôn từ document (tránh UNIQUE NULL) |
+| **chunk_index** | **int NOT NULL** | 0-based trong document |
+| content | text | |
+| metadata | jsonb | page, heading, embedding_model, … |
+| embedding | vector(1536) | |
 | created_at | timestamptz | |
+
+```sql
+FOREIGN KEY (procedure_id, procedure_version_id)
+  REFERENCES procedure_versions (procedure_id, id)
+
+-- Denorm xa_id không được lệch commune của procedure
+FOREIGN KEY (procedure_id, xa_id)
+  REFERENCES procedures (id, xa_id)
+
+UNIQUE (procedure_version_id, document_id, chunk_index)
+```
+
+Citation/debug: Document A → chunk 0, 1, 2, …
+
+---
 
 ### `conversation_sessions`
 
 | Column | Type | Notes |
 |--------|------|-------|
-| id | uuid PK | session_id |
-| user_id | uuid FK null | anonymous allowed V1? → nên có user hoặc guest token |
-| xa_id | text | |
-| active_procedure_id | text null | |
-| active_procedure_version | text null | |
+| id | uuid PK | |
+| user_id | uuid FK → users null | |
+| guest_token | text null | UNIQUE WHERE NOT NULL |
+| xa_id | text FK → communes.id | |
+| active_procedure_id | uuid null FK → procedures.id | |
+| active_procedure_version_id | uuid null | |
 | status | text | `open` \| `completed` \| `abandoned` |
 | created_at / updated_at | timestamptz | |
+
+```sql
+CHECK (
+  (active_procedure_id IS NULL AND active_procedure_version_id IS NULL)
+  OR (active_procedure_id IS NOT NULL AND active_procedure_version_id IS NOT NULL)
+)
+
+FOREIGN KEY (active_procedure_id, active_procedure_version_id)
+  REFERENCES procedure_versions (procedure_id, id)
+
+-- Khi đã chọn procedure: xa_id session phải khớp procedure
+FOREIGN KEY (active_procedure_id, xa_id)
+  REFERENCES procedures (id, xa_id)
+```
+
+(MATCH SIMPLE: khi `active_procedure_id` NULL thì FK commune-procedure không check — session vẫn có `xa_id` hợp lệ qua FK → communes.)
+
+---
 
 ### `conversation_messages`
 
@@ -74,157 +382,229 @@ Seed V1:
 |--------|------|-------|
 | id | uuid PK | |
 | session_id | uuid FK | |
+| request_id | uuid NOT NULL | |
 | role | text | `user` \| `assistant` \| `system` |
 | content | text | |
-| action | text null | decision action if assistant |
-| message_metadata | jsonb | extracted slots, confidence |
+| action | text null | |
+| message_metadata | jsonb | |
 | created_at | timestamptz | |
+
+---
 
 ### `session_slot_states`
 
-Lưu trạng thái thu thập slot theo **từng thủ tục trong session** (dân hỏi nhiều lượt).
+Slot schema nằm trong **procedure_version.definition**, không chỉ trên procedure. Phải pin version.
 
 | Column | Type | Notes |
 |--------|------|-------|
-| session_id | uuid FK | |
-| procedure_id | text | |
-| slot_state | jsonb | một object duy nhất — xem cấu trúc bên dưới |
+| session_id | uuid FK → conversation_sessions ON DELETE CASCADE | |
+| procedure_id | uuid | |
+| **procedure_version_id** | **uuid NOT NULL** | Version đã dùng để collect slots |
+| slot_state | jsonb | map slot → `{ value, status }` |
 | updated_at | timestamptz | |
-| **PK** | `(session_id, procedure_id)` | 1 session đổi thủ tục → nhiều row |
+| **PK** | `(session_id, procedure_id)` | 1 row / procedure / session |
 
-#### Cấu trúc `slot_state` (một cột, không tách 3 cột)
-
-```json
-{
-  "noi_sinh": {
-    "value": "Bệnh viện Đa khoa tỉnh",
-    "status": "confirmed"
-  },
-  "da_ket_hon": {
-    "value": true,
-    "status": "known"
-  },
-  "co_giay_chung_sinh": {
-    "value": null,
-    "status": "missing"
-  }
-}
+```sql
+FOREIGN KEY (procedure_id, procedure_version_id)
+  REFERENCES procedure_versions (procedure_id, id)
 ```
 
-| `status` | Ý nghĩa |
-|----------|---------|
-| `missing` | chưa có giá trị, cần hỏi |
-| `known` | đã extract nhưng chưa xác nhận chắc |
-| `confirmed` | đã xác nhận, không hỏi lại |
-
-**Vì sao gộp 1 cột thay vì 3 cột `known` / `missing` / `confirmed`?**
-
-- 3 cột trước đó mô tả cùng một khái niệm (trạng thái từng slot) nhưng bị xé ra → dễ lệch (slot vừa có trong `known` vừa còn trong `missing`)
-- 1 `slot_state` map theo `slot_key` là source of truth; `missing` list có thể derive khi cần
-- Admin UI / debug đọc một object là đủ
-
-Runtime vẫn có thể compute nhanh:
+**Runtime V1:** một procedure trong session gắn version nào lúc bắt đầu thì **giữ version đó** đến hết flow (khớp `conversation_sessions.active_procedure_version_id`). Không âm thầm reuse slot state khi catalog đổi active version. Đổi version giữa chừng = **reset** slot state (hoặc migrate tường minh — không làm V1).
 
 ```text
-missing_slots = [k for k,v in slot_state.items() if v.status == "missing"]
-# hoặc: required_slots - keys(status in known|confirmed)
+Session.active_procedure_version_id = V003
+        ↓
+V003.definition.required_slots
+        ↓
+slot_state (procedure_version_id = V003)
+        ↓
+Decision Policy
 ```
 
-### `procedures`
-
-| Column | Type | Notes |
-|--------|------|-------|
-| procedure_id | text PK | |
-| domain_id | text FK → domains.id | |
-| name | text | |
-| xa_id | text | |
-| active_version | text null | |
-| updated_at | timestamptz | |
-
-### `procedure_versions`
-
-| Column | Type | Notes |
-|--------|------|-------|
-| id | uuid PK | |
-| procedure_id | text FK | |
-| version | text | semver |
-| status | text | `draft` / `approved` / `active` / `archived` |
-| definition | jsonb | full procedure_definition |
-| source_document_id | uuid null | |
-| created_by | uuid | |
-| approved_by | uuid null | |
-| created_at / approved_at | timestamptz | |
-| unique(procedure_id, version) | | |
-
-### `documents`
-
-| Column | Type | Notes |
-|--------|------|-------|
-| id | uuid PK | |
-| xa_id | text | |
-| domain_id | text FK null → domains.id | |
-| filename | text | |
-| storage_uri | text | |
-| checksum | text | |
-| effective_date | date null | ngày có hiệu lực |
-| expire_date | date null | null = chưa hết hạn |
-| issued_date | date null | ngày ban hành (optional) |
-| status | text | `active` / `expired` / `superseded` |
-| uploaded_by | uuid | |
-| created_at | timestamptz | |
-
-**Rule:** runtime / publish chỉ ưu tiên document còn hiệu lực (`expire_date IS NULL OR expire_date >= today`). Snapshot citation vẫn lấy từ version đã publish.
-
-### `procedure_drafts`
-
-Draft cho **admin review trên UI** (form slots/câu hỏi/checklist). DB lưu jsonb bên dưới; admin không làm việc với “raw JSON”.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| id | uuid PK | |
-| document_id | uuid FK null | |
-| procedure_id | text null | gán sau khi review |
-| draft_definition | jsonb | nội dung procedure draft |
-| validation_result | jsonb | kết quả validate gần nhất `{ valid, errors[] }` |
-| status | text | `draft` / `ready` / `published` / `rejected` |
-| created_by / updated_by | uuid | |
-| created_at / updated_at | timestamptz | |
+---
 
 ### `audit_logs`
 
 | Column | Type | Notes |
 |--------|------|-------|
 | id | bigserial PK | |
-| actor_user_id | uuid null | |
-| action | text | `publish`, `rollback`, `chat_decision`, ... |
+| request_id | uuid null | |
+| actor_user_id | uuid FK → users null | |
+| action | text | |
 | entity_type | text | |
 | entity_id | text | |
-| payload | jsonb | version, route, citations... |
+| payload | jsonb | |
 | created_at | timestamptz | |
 
-## 3. Constraints quan trọng
+---
 
-- Chỉ **1** `procedure_versions.status = active` / `procedure_id` (partial unique index hoặc transaction publish).
-- `definition` phải pass schema trước khi `approved` / `active`.
-- Mọi chat decision log vào `audit_logs` kèm `procedure_version`.
-- `procedures.domain_id` và `documents.domain_id` phải trỏ `domains` đang `is_active` (khi tạo mới).
+## 6. Publish flow
 
-## 4. Indexes gợi ý
+```text
+Draft approved
+       ↓
+Create procedure_versions (status = indexing)
+       + source_draft_id
+       ↓
+Create procedure_version_documents (N–N links)
+       │  app-check: document.xa_id == procedure.xa_id
+       ↓
+Chunk documents → embed (ngoài txn dài / batch)
+       ↓
+INSERT knowledge_chunks (chunk_index, document_id NOT NULL)
+       ↓
+SHORT TXN activate (atomic)
+```
 
-- `conversation_sessions(user_id, updated_at desc)`
-- `session_slot_states(session_id)`
-- `procedure_versions(procedure_id, status)`
-- `documents(xa_id, status, effective_date, expire_date)`
-- `audit_logs(created_at desc)`
+### Embedding fail / retry
 
-## 5. Changelog từ bản trước
+```text
+embedding fail (partial chunks có thể đã insert)
+      ↓
+DELETE FROM knowledge_chunks
+ WHERE procedure_version_id = :version_id
+      ↓
+UPDATE procedure_versions SET status = 'approved'
+ WHERE id = :version_id
+      ↓
+retry từ đầu (chunk + embed)
+```
+
+UNIQUE `(procedure_version_id, document_id, chunk_index)` chống duplicate nếu retry kém; **vẫn cleanup** cho đơn giản V1.
+
+### Short transaction (activate)
+
+```text
+BEGIN
+  archive old active (cùng procedure_id)
+  SET new.status = 'active'
+  UPDATE procedures
+    SET active_version_id = new.id
+    WHERE id = new.procedure_id
+  UPDATE procedure_drafts
+    SET status = 'published'
+    WHERE id = new.source_draft_id   -- nếu có
+  INSERT audit_logs (action = 'publish', ...)
+COMMIT
+```
+
+Không được để `version = active` mà `draft = approved` vì process chết giữa chừng.
+
+### Publish validation (Go — app-level)
+
+Trước khi tạo version / activate:
+
+```text
+VERIFY draft.status = 'approved'
+VERIFY draft.procedure_id == target procedure_id   -- chống source_draft lệch procedure
+VERIFY source documents validity_status hợp lệ
+VERIFY document.xa_id == procedure.xa_id          -- scope commune
+```
+
+Không thêm composite FK `source_draft` ↔ `procedure` (V1 đủ bằng verify).
+
+---
+
+## 6b. Chat version pin (slot state)
+
+```text
+DETECT procedure → pin active_procedure_version_id trên session
+                 → UPSERT session_slot_states với cùng procedure_version_id
+Decision đọc definition của version đã pin (không đọc “active mới nhất” của catalog)
+```
+
+## 7. Debug recipes
+
+```sql
+-- resolve code → uuid
+SELECT id FROM procedures
+WHERE xa_id = :xa AND procedure_code = 'dk_khai_sinh';
+
+SELECT * FROM conversation_messages WHERE request_id = :rid;
+SELECT * FROM conversation_messages WHERE session_id = :sid ORDER BY created_at;
+
+SELECT pv.*
+FROM procedures p
+JOIN procedure_versions pv
+  ON pv.id = p.active_version_id AND pv.procedure_id = p.id
+WHERE p.xa_id = :xa AND p.procedure_code = 'dk_khai_sinh';
+
+SELECT * FROM knowledge_chunks
+WHERE procedure_version_id = :vid
+ORDER BY document_id, chunk_index;
+```
+
+## 8. Constraints & indexes
+
+| Rule | Enforce |
+|------|---------|
+| Multi-xã procedure code | `UNIQUE (xa_id, procedure_code)` |
+| 1 draft → 1 version | partial `UNIQUE (source_draft_id) WHERE NOT NULL` |
+| draft ↔ version cùng procedure | **app-level** publish VERIFY |
+| procedure ↔ version | composite FK |
+| slot state ↔ version | composite FK trên `session_slot_states` |
+| chunk / session `xa_id` ↔ procedure | `UNIQUE (procedures.id, xa_id)` + composite FK |
+| version ↔ document cùng xã | **app-level** publish |
+| Session active cặp | CHECK both null / both set |
+| Chunk idempotent | `UNIQUE (version_id, document_id, chunk_index)` |
+| Document dates | `expire_date >= effective_date` |
+| State machines | **CHECK IN (...)** mọi status/role (migration; không dùng PG ENUM) |
+| 1 active / procedure | partial unique + short txn |
+| Embed fail | delete chunks → `approved` |
+
+```text
+procedures (xa_id, procedure_code) UNIQUE
+procedures (id, xa_id) UNIQUE
+procedures (id, active_version_id) composite FK
+procedure_versions (source_draft_id) UNIQUE WHERE NOT NULL
+conversation_sessions (active_procedure_id, active_procedure_version_id)
+conversation_sessions (active_procedure_id, xa_id) → procedures(id, xa_id)
+session_slot_states (procedure_id, procedure_version_id) → procedure_versions
+knowledge_chunks (procedure_id, procedure_version_id)
+knowledge_chunks (procedure_id, xa_id) → procedures(id, xa_id)
+knowledge_chunks (procedure_version_id, document_id, chunk_index) UNIQUE
+knowledge_chunks USING hnsw (embedding vector_cosine_ops)
+
+-- CHECK examples (migration)
+procedure_versions.status IN ('approved','indexing','active','archived')
+documents.processing_status IN ('uploaded','processing','processed','failed')
+documents.validity_status IN ('pending','valid','expired','superseded')
+procedure_drafts.status IN ('draft','reviewed','approved','rejected','published')
+conversation_sessions.status IN ('open','completed','abandoned')
+conversation_messages.role IN ('user','assistant','system')
+users.role IN ('citizen','admin')
+```
+
+## 8b. ON DELETE (migration — không đổi ER)
+
+| FK | ON DELETE | Lý do |
+|----|-----------|-------|
+| `conversation_messages.session_id` | **CASCADE** | Xóa session → xóa messages |
+| `session_slot_states.session_id` | **CASCADE** | |
+| `procedure_versions.procedure_id` | **RESTRICT** | Version đã publish = lịch sử |
+| `knowledge_chunks.procedure_version_id` | **RESTRICT** | Không xóa version còn chunks |
+| `procedure_version_documents.*` | **RESTRICT** | |
+| `documents` đã gắn version | **RESTRICT** | |
+| `audit_logs.actor_user_id` | **SET NULL** | Giữ audit khi xóa user |
+| `source_draft_id` | **RESTRICT** | Không xóa draft đã publish thành version |
+
+## 9. Implement order → migration
+
+1. `communes` (+ seed)  
+2. `domains`  
+3. `users`  
+4. `procedures` (`active_version_id` null; `UNIQUE(id,xa_id)`) + `procedure_versions` → composite FKs + partial unique `source_draft_id`  
+5. `conversation_*` + `session_slot_states` (CASCADE children)  
+6. `documents` (+ date CHECK) + `procedure_drafts` + `source_draft_id` FK + `procedure_version_documents`  
+7. `knowledge_chunks` (`vector(1536)`, chunk unique, xa composite FK)  
+8. `audit_logs`  
+
+## 10. Changelog (freeze pass 5)
 
 | Thay đổi | Lý do |
 |----------|-------|
-| Gộp `known`/`missing`/`confirmed` → `slot_state` | một source of truth, tránh lệch 3 cột |
-| PK `(session_id, procedure_id)` | session có thể đổi thủ tục |
-| Thêm bảng `domains` | mở rộng domain sau này |
-| `documents.effective_date` / `expire_date` (+ status) | hiệu lực văn bản hành chính |
-| Rename `draft_json` → `draft_definition`, `validation_json` → `validation_result` | đúng ngôn ngữ domain; UI admin không “sửa JSON” |
-| Rename `definition_json` → `definition`, `payload_json` → `payload` | đồng bộ naming |
-| `procedures.domain` → `domain_id` FK | gắn domains |
+| `session_slot_states.procedure_version_id` + composite FK | Slot thuộc definition version; pin đến hết flow |
+| `procedures.created_at` | Business entity chính |
+| Publish VERIFY `draft.procedure_id` | App-level; không composite FK thêm |
+| CHECK state machines trong migration | Enforce, không chỉ comment |
+| (pass 4) source_draft unique, xa composite, ON DELETE | — |

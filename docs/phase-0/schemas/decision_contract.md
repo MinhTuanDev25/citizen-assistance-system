@@ -1,5 +1,7 @@
 # Decision Contract (Runtime)
 
+> Naming: JSON definition / API human field = `procedure_code` (e.g. `dk_khai_sinh`). DB technical FK = `procedure_id` (uuid → `procedures.id`).
+
 ## 1. Mục tiêu
 
 Khóa output của Decision Policy Engine để backend/frontend/AI cùng một hợp đồng.
@@ -60,7 +62,7 @@ Vì extract luôn bị **constrain** bởi `definition.slots` + `missing_slots` 
   "user_message": "Tôi muốn làm giấy khai sinh cho con tôi.",
   "detected": {
     "domain": "ho_tich_chung_thuc",
-    "procedure_id": "dk_khai_sinh",
+    "procedure_code": "dk_khai_sinh",
     "confidence": 0.92
   },
   "extracted_slots": {},
@@ -83,7 +85,7 @@ Vì extract luôn bị **constrain** bởi `definition.slots` + `missing_slots` 
 ```json
 {
   "action": "ask_missing_slots",
-  "procedure_id": "dk_khai_sinh",
+  "procedure_code": "dk_khai_sinh",
   "procedure_version": "1.0.0",
   "missing_slots": ["noi_sinh", "da_ket_hon", "co_giay_chung_sinh"],
   "ask_now": ["noi_sinh", "da_ket_hon", "co_giay_chung_sinh"],
@@ -115,7 +117,7 @@ Vì extract luôn bị **constrain** bởi `definition.slots` + `missing_slots` 
 ```json
 {
   "action": "direct_answer",
-  "procedure_id": "chung_thuc_ban_sao",
+  "procedure_code": "chung_thuc_ban_sao",
   "procedure_version": "1.0.0",
   "guidance": {
     "summary": "Để chứng thực bản sao, mang bản chính và bản photo đến bộ phận tiếp nhận của xã.",
@@ -141,7 +143,7 @@ Vì extract luôn bị **constrain** bởi `definition.slots` + `missing_slots` 
 ```json
 {
   "action": "provide_final_guidance",
-  "procedure_id": "dk_khai_sinh",
+  "procedure_code": "dk_khai_sinh",
   "procedure_version": "1.0.0",
   "filled_slots": {
     "noi_sinh": "Bệnh viện Đa khoa tỉnh",

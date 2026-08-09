@@ -184,15 +184,18 @@ Admin upload → API nhận file → ghi Object Storage → INSERT documents.sto
 
 **Đề xuất V1:** MinIO nếu self-host cùng VPS; S3 nếu dùng cloud.
 
-### 5.3 Embedding Model (tiếng Việt) — **CÓ khi làm RAG (Phase 3)**
+### 5.3 Embedding Model — **FROZEN với data-model V1**
 
 | Câu hỏi | Trả lời |
 |---------|---------|
-| Có cần embedding? | Có, để pgvector search khi final guidance / knowledge |
-| Có cần model “riêng tiếng Việt”? | Nên chọn model **multilingual / VN-capable** (không dùng English-only) |
-| Dùng model nào? | Cùng vendor LLM (OpenAI/Gemini embedding) **hoặc** multilingual open model — đo quality trên corpus xã |
+| Có cần embedding? | Có (Phase publish knowledge / RAG) |
+| Model V1 | **OpenAI `text-embedding-3-small`** |
+| Dimension | **1536** → cột `knowledge_chunks.embedding vector(1536)` |
+| Đổi sau | Re-embed toàn bộ + migration |
 
-V1 chat với seed JSON **chưa cần** embedding; Phase 3 publish knowledge mới cần.
+Chat LLM vẫn abstraction OpenAI/Gemini; **embedding cố định** để schema/pgvector ổn định.
+
+V1 chat với seed JSON chưa cần embedding runtime; Phase publish knowledge mới cần.
 
 ### 5.4 OCR — **Có điều kiện**
 

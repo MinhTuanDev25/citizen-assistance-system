@@ -5,7 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "procedure_id",
+    "procedure_code",
     "domain",
     "name",
     "xa_id",
@@ -20,10 +20,10 @@
     "authority_level"
   ],
   "properties": {
-    "procedure_id": {
+    "procedure_code": {
       "type": "string",
       "pattern": "^[a-z0-9_]+$",
-      "description": "Stable id, e.g. dk_khai_sinh"
+      "description": "Human-readable code per commune, e.g. dk_khai_sinh. DB: procedures.procedure_code; technical PK is procedures.id (uuid)."
     },
     "domain": {
       "type": "string",

@@ -1,5 +1,5 @@
 {
-  "procedure_id": "chung_thuc_ban_sao",
+  "procedure_code": "chung_thuc_ban_sao",
   "domain": "ho_tich_chung_thuc",
   "name": "Chứng thực bản sao",
   "description": "Hướng dẫn chứng thực bản sao từ bản chính tại UBND xã.",

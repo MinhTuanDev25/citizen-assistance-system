@@ -1,5 +1,5 @@
 {
-  "procedure_id": "dk_khai_sinh",
+  "procedure_code": "dk_khai_sinh",
   "domain": "ho_tich_chung_thuc",
   "name": "Đăng ký khai sinh",
   "description": "Hướng dẫn chuẩn bị hồ sơ và nơi nộp đăng ký khai sinh tại xã.",

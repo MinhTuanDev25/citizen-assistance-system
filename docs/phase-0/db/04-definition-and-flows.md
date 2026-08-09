@@ -9,7 +9,7 @@ Admin UI đọc/ghi object này qua form; runtime Decision Engine đọc để q
 
 | Nhóm | Field | Dùng để làm gì |
 |------|-------|----------------|
-| Identity | `procedure_id`, `name`, `domain`, `xa_id`, `version`, `status` | Định danh thủ tục |
+| Identity | `procedure_code`, `name`, `domain`, `xa_id`, `version`, `status` | Mã thủ tục (human); DB PK là `procedures.id` uuid |
 | Scope | `authority_level`, `description` | Xã/huyện/mixed; mô tả ngắn |
 | NLU hints | `intent_examples` | Gợi ý nhận diện câu hỏi |
 | Slot schema | `slots` | Mỗi slot: type, question, enum… |
@@ -22,7 +22,7 @@ Admin UI đọc/ghi object này qua form; runtime Decision Engine đọc để q
 
 ```json
 {
-  "procedure_id": "dk_khai_sinh",
+  "procedure_code": "dk_khai_sinh",
   "domain": "ho_tich_chung_thuc",
   "name": "Đăng ký khai sinh",
   "xa_id": "xa_demo_001",
@@ -79,29 +79,30 @@ Admin Upload PDF
  [4] Admin Review UI (sửa form, không sửa raw JSON)
       │  validate lại → update validation_result
       ▼
- [5] Approve / Publish
+ [5] Approve / Publish (xem data-model §6)
       │
-      ├─► procedure_versions    ← definition (snapshot), status=active
-      ├─► procedures            ← active_version trỏ version mới
-      ├─► (optional) archive version cũ
-      └─► audit_logs            ← ai publish, version nào
+      ├─► procedure_versions       status=indexing + source_draft_id
+      ├─► procedure_version_documents
+      ├─► embed + knowledge_chunks (ngoài txn dài)
+      └─► SHORT TXN: archive cũ → active + procedures.active_version_id
+                     + draft=published + audit_logs
 ```
 
 ### Chi tiết từng bước
 
 | Bước | Hành động | Ghi vào bảng | Lưu những gì |
 |------|-----------|--------------|--------------|
-| 1 | Upload PDF | `documents` | `filename`, `storage_uri`, `checksum`, `xa_id`, `domain_id`, `effective_date`, `expire_date`, `status=active`, `uploaded_by` |
-| 2 | Extract | (chưa publish) | LLM sinh object procedure; chưa active |
-| 3 | Tạo draft | `procedure_drafts` | `document_id`, `draft_definition` (= bản definition nháp), `validation_result` (lần validate đầu), `status=draft` |
-| 4 | Admin sửa trên UI | `procedure_drafts` | UPDATE `draft_definition`; mỗi lần Validate → UPDATE `validation_result` `{valid, errors[]}` |
-| 5a | Publish | `procedure_versions` | INSERT: `procedure_id`, `version`, `definition` = copy từ `draft_definition`, `source_document_id`, `status=active`, `created_by`, `approved_by` |
-| 5b | Trỏ active | `procedures` | UPSERT procedure; set `active_version`, `domain_id`, `name`, `xa_id` |
-| 5c | Archive cũ | `procedure_versions` | version trước: `status=archived` |
-| 5d | Đóng draft | `procedure_drafts` | `status=published` |
-| 5e | Audit | `audit_logs` | `action=publish`, entity, payload `{procedure_id, version, document_id}` |
+| 1 | Upload PDF | `documents` | metadata + `processing_status` / `validity_status` |
+| 2 | Extract | (chưa publish) | LLM sinh object procedure |
+| 3 | Tạo draft | `procedure_drafts` | `draft_definition`, `validation_result`, `status=draft` |
+| 4 | Admin sửa | `procedure_drafts` | UPDATE definition + validate |
+| 5a | Tạo version | `procedure_versions` | `procedure_id` (uuid), `definition`, `status=indexing`, `source_draft_id` |
+| 5b | Link docs | `procedure_version_documents` | N–N version ↔ document |
+| 5c | Embed | `knowledge_chunks` | `chunk_index`, `document_id`, `embedding vector(1536)` |
+| 5d | Activate (short txn) | versions + `procedures` + drafts + `audit_logs` | archive cũ; `active`; `active_version_id`; draft=`published`; audit |
+| Fail embed | Cleanup | chunks + versions | DELETE chunks theo version → `status=approved` → retry |
 
-Phase 3 thêm: index embeddings từ document/definition → vector store (chưa có ở ER structured hiện tại).
+Chi tiết đầy đủ: [`data-model.md`](data-model.md) §6.
 
 ---
 
@@ -117,10 +118,10 @@ User message
    │  tạo hoặc tái sử dụng conversation_sessions
    ▼
 [B] Conversation Manager
-   │  detect domain + procedure_id (dk_khai_sinh)
+   │  detect domain + procedure_code (dk_khai_sinh) → resolve procedures.id (uuid)
    │  extract slots từ câu (nếu có)
    ▼
-[C] Load procedures.active_version
+[C] Load procedures.active_version_id
    │  → procedure_versions.definition
    ▼
 [D] Decision Policy Engine
@@ -134,7 +135,7 @@ User message
 
 | Bước | Đọc / Ghi | Nội dung |
 |------|-----------|----------|
-| A | INSERT/SELECT `conversation_sessions` | `user_id`, `xa_id`, `status=open`, `active_procedure_id=dk_khai_sinh`, `active_procedure_version=1.0.0` |
+| A | INSERT/SELECT `conversation_sessions` | `user_id`, `xa_id`, `status=open`, `active_procedure_id` (uuid), `active_procedure_version_id` (uuid) |
 | A | INSERT `conversation_messages` | role=`user`, content=câu hỏi |
 | C | READ `procedures` + `procedure_versions` | lấy `definition` active |
 | D | UPSERT `session_slot_states` | `slot_state`: mọi required = `missing` |

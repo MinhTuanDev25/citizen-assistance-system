@@ -26,7 +26,7 @@ Bắt đầu/tiếp tục một lượt hội thoại.
 {
   "session_id": "sess_001",
   "action": "ask_missing_slots",
-  "procedure_id": "dk_khai_sinh",
+  "procedure_code": "dk_khai_sinh",
   "procedure_version": "1.0.0",
   "reply_text": "Bé sinh ở đâu (bệnh viện/cơ sở y tế hay tại nhà, thuộc xã/phường nào)?",
   "ask_now": ["noi_sinh", "da_ket_hon", "co_giay_chung_sinh"],
@@ -51,7 +51,7 @@ Khi final/direct:
 {
   "session_id": "sess_001",
   "action": "provide_final_guidance",
-  "procedure_id": "dk_khai_sinh",
+  "procedure_code": "dk_khai_sinh",
   "procedure_version": "1.0.0",
   "reply_text": "Anh/chị chuẩn bị các giấy tờ sau...",
   "guidance": { "checklist": ["..."], "where_to_submit": "..." },
@@ -138,7 +138,7 @@ Approve + publish version.
 
 ```json
 {
-  "procedure_id": "dk_khai_sinh",
+  "procedure_code": "dk_khai_sinh",
   "version": "1.0.0",
   "status": "active"
 }
