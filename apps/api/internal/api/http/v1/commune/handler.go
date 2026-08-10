@@ -16,7 +16,15 @@ func NewHandler(repo *repository.CommuneRepo) *Handler {
 	return &Handler{Repo: repo}
 }
 
-// List GET /api/v1/communes?active=true
+// List godoc
+//
+//	@Summary		List communes
+//	@Tags			communes
+//	@Produce		json
+//	@Param			active	query		string	false	"Filter active only (true)"
+//	@Success		200		{object}	response.Envelope
+//	@Failure		500		{object}	response.Envelope
+//	@Router			/api/v1/communes [get]
 func (h *Handler) List(c *gin.Context) {
 	activeOnly := c.Query("active") == "true"
 	items, err := h.Repo.List(c.Request.Context(), activeOnly)
@@ -27,7 +35,16 @@ func (h *Handler) List(c *gin.Context) {
 	response.OK(c, gin.H{"items": items, "count": len(items)})
 }
 
-// Get GET /api/v1/communes/:id
+// Get godoc
+//
+//	@Summary		Get commune by id
+//	@Tags			communes
+//	@Produce		json
+//	@Param			id	path		string	true	"Commune id"
+//	@Success		200	{object}	response.Envelope
+//	@Failure		404	{object}	response.Envelope
+//	@Failure		500	{object}	response.Envelope
+//	@Router			/api/v1/communes/{id} [get]
 func (h *Handler) Get(c *gin.Context) {
 	item, err := h.Repo.GetByID(c.Request.Context(), c.Param("id"))
 	if err != nil {

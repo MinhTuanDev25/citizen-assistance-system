@@ -15,16 +15,34 @@ type Health struct {
 	Timeout time.Duration
 }
 
-// Live is process liveness — does not check dependencies.
-// GET /health
-func (h *Health) Live(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status": "OK",
-	})
+type liveResponse struct {
+	Status string `json:"status" example:"OK"`
 }
 
-// Ready checks database connectivity.
-// GET /ready
+type readyResponse struct {
+	Status string            `json:"status" example:"READY"`
+	Checks map[string]string `json:"checks"`
+}
+
+// Live godoc
+//
+//	@Summary		Liveness probe
+//	@Tags			health
+//	@Produce		json
+//	@Success		200	{object}	liveResponse
+//	@Router			/health [get]
+func (h *Health) Live(c *gin.Context) {
+	c.JSON(http.StatusOK, liveResponse{Status: "OK"})
+}
+
+// Ready godoc
+//
+//	@Summary		Readiness probe
+//	@Tags			health
+//	@Produce		json
+//	@Success		200	{object}	readyResponse
+//	@Failure		503	{object}	map[string]string
+//	@Router			/ready [get]
 func (h *Health) Ready(c *gin.Context) {
 	timeout := h.Timeout
 	if timeout <= 0 {
@@ -42,10 +60,8 @@ func (h *Health) Ready(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"status": "READY",
-		"checks": gin.H{
-			"database": "OK",
-		},
+	c.JSON(http.StatusOK, readyResponse{
+		Status: "READY",
+		Checks: map[string]string{"database": "OK"},
 	})
 }

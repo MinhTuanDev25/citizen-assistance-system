@@ -9,16 +9,23 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/MinhTuanDev25/citizen-assistance-system/apps/api/docs"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/config"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/db"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/httpserver"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/logx"
 )
 
+// @title           Citizen Assistance API
+// @version         1.0
+// @description     Backend API for commune citizen assistance (Chư Sê).
+// @BasePath        /
+// @schemes         http
+// @accept          json
+// @produce         json
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		// Logger not ready yet — fail fast on stdout.
 		panic(err)
 	}
 
@@ -42,7 +49,7 @@ func main() {
 		"min_conns", cfg.DBMinConns,
 	)
 
-	engine := httpserver.New(logger, pool)
+	engine := httpserver.New(logger, pool, cfg.XAID)
 	srv := &http.Server{
 		Addr:              cfg.APIAddr,
 		Handler:           engine,

@@ -120,7 +120,7 @@ func ApiLog(logger *slog.Logger) gin.HandlerFunc {
 }
 
 func isProbe(path string) bool {
-	return path == "/health" || path == "/ready"
+	return path == "/health" || path == "/ready" || strings.HasPrefix(path, "/swagger")
 }
 
 func readRequestBody(c *gin.Context) string {
