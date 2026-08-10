@@ -1,12 +1,42 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { listDomains } from '../../api/catalog.js'
 import { mockStore, nextId } from '../../data/mockStore.js'
 
 export default function DocumentsPage() {
   const [rows, setRows] = useState(() => [...mockStore.documents])
   const [fileName, setFileName] = useState('')
   const [domain, setDomain] = useState('ho_tich_chung_thuc')
+  const [domainOptions, setDomainOptions] = useState([])
   const [msg, setMsg] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const data = await listDomains({ active: true })
+        if (cancelled) return
+        const items = data?.items || []
+        setDomainOptions(items)
+        if (items.length) {
+          setDomain((prev) =>
+            items.some((d) => d.id === prev) ? prev : items[0].id,
+          )
+        }
+      } catch {
+        if (!cancelled) {
+          setDomainOptions([
+            { id: 'ho_tich_chung_thuc', name: 'Hộ tịch & Chứng thực' },
+            { id: 'dat_dai_nha_o_quy_hoach', name: 'Đất đai, Nhà ở & Quy hoạch' },
+            { id: 'bao_hiem_chinh_sach_xh', name: 'Bảo hiểm & Chính sách xã hội' },
+          ])
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   function onUpload(e) {
     e.preventDefault()
@@ -85,9 +115,11 @@ export default function DocumentsPage() {
         <label>
           Domain
           <select value={domain} onChange={(e) => setDomain(e.target.value)}>
-            <option value="ho_tich_chung_thuc">Hộ tịch & Chứng thực</option>
-            <option value="dat_dai_nha_o">Đất đai, Nhà ở</option>
-            <option value="bhxh_chinh_sach">BHXH & Chính sách</option>
+            {domainOptions.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
           </select>
         </label>
         <button type="submit" className="btn-primary">

@@ -1,86 +1,130 @@
-import { useState } from 'react'
-import { mockStore } from '../../data/mockStore.js'
+import { useEffect, useState } from 'react'
+import { getActiveVersion, listProcedures } from '../../api/catalog.js'
+import { useCommune } from '../../commune/CommuneContext.jsx'
 
 export default function ProceduresPage() {
-  const [rows, setRows] = useState(() => [...mockStore.procedures])
-  const [msg, setMsg] = useState('')
+  const { xaId, commune } = useCommune()
+  const [domains, setDomains] = useState([])
+  const [count, setCount] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [detail, setDetail] = useState(null)
+  const [detailLoading, setDetailLoading] = useState(false)
 
-  function rollback(proc) {
-    const reason = window.prompt('Lý do rollback (audit)?', 'Sửa nội dung sai')
-    if (reason == null) return
-    if (!proc.versions.length) {
-      setMsg('Chưa có version để rollback.')
-      return
+  useEffect(() => {
+    if (!xaId) return
+    let cancelled = false
+    ;(async () => {
+      setLoading(true)
+      setError('')
+      try {
+        const data = await listProcedures({ xaId })
+        if (cancelled) return
+        setDomains(data?.domains || [])
+        setCount(data?.count || 0)
+      } catch (err) {
+        if (!cancelled) setError(err.message || 'Không tải được thủ tục')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
     }
-    const prev = proc.versions.find((v) => v.status === 'ARCHIVED') || proc.versions[0]
-    proc.versions = proc.versions.map((v) => ({
-      ...v,
-      status: v.version === prev.version ? 'ACTIVE' : 'ARCHIVED',
-    }))
-    proc.active_version = prev.version
-    mockStore.procedures = mockStore.procedures.map((p) =>
-      p.id === proc.id ? { ...proc } : p,
-    )
-    setRows([...mockStore.procedures])
-    setMsg(`Rollback ${proc.procedure_code} → ${prev.version}. Lý do: ${reason}`)
+  }, [xaId])
+
+  async function openDefinition(proc) {
+    setDetailLoading(true)
+    setError('')
+    try {
+      const data = await getActiveVersion(proc.id)
+      setDetail(data)
+    } catch (err) {
+      setError(err.message || 'Không tải được definition')
+    } finally {
+      setDetailLoading(false)
+    }
   }
 
   return (
     <div className="admin-page">
       <header className="admin-page-head">
-        <h1>Thủ tục đã publish</h1>
-        <p>ACTIVE version phục vụ Citizen chat · rollback kèm audit reason.</p>
+        <h1>Thủ tục ACTIVE</h1>
+        <p>
+          Xã {commune?.name || xaId} ·{' '}
+          <code>GET /api/v1/procedures?xa_id=…</code> · xem definition qua
+          active-version. Rollback API chưa có — giữ Phase 4.
+        </p>
       </header>
 
-      {msg ? <p className="form-ok">{msg}</p> : null}
+      {error ? <p className="form-error">{error}</p> : null}
+      {loading ? <p className="muted">Đang tải…</p> : null}
 
-      <div className="panel">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Mã</th>
-                <th>Tiêu đề</th>
-                <th>Active</th>
-                <th>Versions</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p) => (
-                <tr key={p.id}>
-                  <td>
-                    <code>{p.procedure_code}</code>
-                  </td>
-                  <td>
-                    {p.title}
-                    <div className="cell-muted">{p.domain}</div>
-                  </td>
-                  <td>
-                    {p.active_version ? (
-                      <span className="pill ok">{p.active_version}</span>
-                    ) : (
-                      <span className="pill">—</span>
-                    )}
-                  </td>
-                  <td>
-                    {(p.versions || [])
-                      .map((v) => `${v.version}(${v.status})`)
-                      .join(', ') || '—'}
-                  </td>
-                  <td>
-                    {p.active_version ? (
-                      <button type="button" onClick={() => rollback(p)}>
-                        Rollback
-                      </button>
-                    ) : null}
-                  </td>
+      {!loading && !error ? (
+        <p className="muted" style={{ marginBottom: '1rem' }}>
+          Tổng {count} thủ tục · {domains.length} domain
+        </p>
+      ) : null}
+
+      {domains.map((g) => (
+        <div className="panel" key={g.domain_id}>
+          <h2>
+            {g.domain_name}{' '}
+            <span className="pill">{g.count}</span>
+          </h2>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Mã</th>
+                  <th>Tiêu đề</th>
+                  <th>Active</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {(g.procedures || []).map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <code>{p.procedure_code}</code>
+                    </td>
+                    <td>{p.name}</td>
+                    <td>
+                      <span className="pill ok">{p.active_version}</span>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        onClick={() => openDefinition(p)}
+                        disabled={detailLoading}
+                      >
+                        Xem definition
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      ))}
+
+      {detail ? (
+        <div className="panel">
+          <div className="admin-page-head" style={{ marginBottom: '0.75rem' }}>
+            <h2 style={{ margin: 0 }}>
+              {detail.procedure_name}{' '}
+              <code>{detail.procedure_code}</code> @ {detail.version}
+            </h2>
+            <button type="button" className="linkish dark" onClick={() => setDetail(null)}>
+              Đóng
+            </button>
+          </div>
+          <pre className="json-block">
+            {JSON.stringify(detail.definition, null, 2)}
+          </pre>
+        </div>
+      ) : null}
     </div>
   )
 }
