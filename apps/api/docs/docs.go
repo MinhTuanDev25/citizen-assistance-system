@@ -465,6 +465,211 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/sessions": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Create conversation session (guest)",
+                "parameters": [
+                    {
+                        "description": "xa_id required; guest_token optional to resume",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_http_v1_session.createRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/sessions/{sessionId}/messages": {
+            "get": {
+                "description": "Oldest→newest. FE maps role USER→user bubble, ASSISTANT→bot bubble.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "List messages for chat UI",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session UUID",
+                        "name": "sessionId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Guest token from session create",
+                        "name": "X-Guest-Token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max messages (default 100, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Persists user message. Chat turn / Decision Engine will be added next.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Append USER message to session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session UUID",
+                        "name": "sessionId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Guest token from session create",
+                        "name": "X-Guest-Token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "User message",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_http_v1_session.createMessageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "produces": [
@@ -574,6 +779,31 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api_http_v1_session.createMessageRequest": {
+            "type": "object",
+            "required": [
+                "message"
+            ],
+            "properties": {
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api_http_v1_session.createRequest": {
+            "type": "object",
+            "required": [
+                "xa_id"
+            ],
+            "properties": {
+                "guest_token": {
+                    "type": "string"
+                },
+                "xa_id": {
                     "type": "string"
                 }
             }

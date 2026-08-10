@@ -44,6 +44,22 @@ definitions:
       message:
         type: string
     type: object
+  internal_api_http_v1_session.createMessageRequest:
+    properties:
+      message:
+        type: string
+    required:
+    - message
+    type: object
+  internal_api_http_v1_session.createRequest:
+    properties:
+      guest_token:
+        type: string
+      xa_id:
+        type: string
+    required:
+    - xa_id
+    type: object
   internal_handler.liveResponse:
     properties:
       status:
@@ -355,6 +371,143 @@ paths:
       summary: Resolve procedure by code
       tags:
       - procedures
+  /api/v1/sessions:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: xa_id required; guest_token optional to resume
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api_http_v1_session.createRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: Create conversation session (guest)
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/messages:
+    get:
+      description: Oldest→newest. FE maps role USER→user bubble, ASSISTANT→bot bubble.
+      parameters:
+      - description: Session UUID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      - description: Guest token from session create
+        in: header
+        name: X-Guest-Token
+        required: true
+        type: string
+      - description: Max messages (default 100, max 200)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: List messages for chat UI
+      tags:
+      - sessions
+    post:
+      consumes:
+      - application/json
+      description: Persists user message. Chat turn / Decision Engine will be added
+        next.
+      parameters:
+      - description: Session UUID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      - description: Guest token from session create
+        in: header
+        name: X-Guest-Token
+        required: true
+        type: string
+      - description: User message
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api_http_v1_session.createMessageRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: Append USER message to session
+      tags:
+      - sessions
   /health:
     get:
       produces:

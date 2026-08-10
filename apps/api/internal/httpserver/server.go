@@ -8,6 +8,7 @@ import (
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/commune"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/domain"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/procedure"
+	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/session"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/handler"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/middleware"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/repository"
@@ -31,12 +32,14 @@ func New(logger *slog.Logger, pool *pgxpool.Pool, defaultXaID string) *gin.Engin
 	r.GET("/ready", health.Ready)
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	communeHandler := commune.NewHandler(&repository.CommuneRepo{Pool: pool})
+	communeRepo := &repository.CommuneRepo{Pool: pool}
+	communeHandler := commune.NewHandler(communeRepo)
 	domainHandler := domain.NewHandler(&repository.DomainRepo{Pool: pool})
 	procedureHandler := procedure.NewHandler(&repository.ProcedureRepo{Pool: pool}, defaultXaID)
+	sessionHandler := session.NewHandler(&repository.SessionRepo{Pool: pool}, communeRepo)
 
 	api := r.Group("/api")
-	v1.MapRoutes(api, communeHandler, domainHandler, procedureHandler)
+	v1.MapRoutes(api, communeHandler, domainHandler, procedureHandler, sessionHandler)
 
 	return r
 }

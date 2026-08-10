@@ -32,6 +32,11 @@ make api-swagger   # regenerates apps/api/docs/
 | GET | `/api/v1/procedures` | List ACTIVE procedures grouped by domain |
 | GET | `/api/v1/procedures/by-code/:code` | Resolve by `(xa_id, procedure_code)` |
 | GET | `/api/v1/procedures/:id/active-version` | Active version + definition JSON |
+| POST | `/api/v1/sessions` | Create guest session (`xa_id`; optional `guest_token` resume) |
+| GET | `/api/v1/sessions/:sessionId/messages` | List messages oldest→newest (`X-Guest-Token`) |
+| POST | `/api/v1/sessions/:sessionId/messages` | Save USER message (`X-Guest-Token` required) |
+
+Guest V1: `user_id` null; FE giữ `guest_token`. UI: `role=USER` → bubble user, `role=ASSISTANT` → bubble bot. Chat turn / Decision Engine chưa gắn.
 
 ## Logging
 
