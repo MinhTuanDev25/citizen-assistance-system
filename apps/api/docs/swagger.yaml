@@ -1,0 +1,392 @@
+basePath: /
+consumes:
+- application/json
+definitions:
+  github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_repository.DomainCreate:
+    properties:
+      description:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      name:
+        type: string
+      sort_order:
+        type: integer
+    required:
+    - id
+    - name
+    type: object
+  github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_repository.DomainUpdate:
+    properties:
+      description:
+        type: string
+      is_active:
+        type: boolean
+      name:
+        type: string
+      sort_order:
+        type: integer
+    type: object
+  github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope:
+    properties:
+      data: {}
+      error:
+        $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Error'
+      request_id:
+        type: string
+    type: object
+  github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Error:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  internal_handler.liveResponse:
+    properties:
+      status:
+        example: OK
+        type: string
+    type: object
+  internal_handler.readyResponse:
+    properties:
+      checks:
+        additionalProperties:
+          type: string
+        type: object
+      status:
+        example: READY
+        type: string
+    type: object
+info:
+  contact: {}
+  description: Backend API for commune citizen assistance (Chư Sê).
+  title: Citizen Assistance API
+  version: "1.0"
+paths:
+  /api/v1/communes:
+    get:
+      parameters:
+      - description: Filter active only (true)
+        in: query
+        name: active
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: List communes
+      tags:
+      - communes
+  /api/v1/communes/{id}:
+    get:
+      parameters:
+      - description: Commune id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: Get commune by id
+      tags:
+      - communes
+  /api/v1/domains:
+    get:
+      parameters:
+      - description: Filter active only (true)
+        in: query
+        name: active
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: List domains
+      tags:
+      - domains
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Domain payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_repository.DomainCreate'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: Create domain
+      tags:
+      - domains
+  /api/v1/domains/{id}:
+    delete:
+      parameters:
+      - description: Domain id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Set true for hard delete
+        in: query
+        name: hard
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: Delete domain (soft by default)
+      tags:
+      - domains
+    get:
+      parameters:
+      - description: Domain id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: Get domain by id
+      tags:
+      - domains
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Domain id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_repository.DomainUpdate'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: Update domain
+      tags:
+      - domains
+  /api/v1/procedures:
+    get:
+      parameters:
+      - description: Commune id (default from config)
+        in: query
+        name: xa_id
+        type: string
+      - description: Filter by domain id
+        in: query
+        name: domain_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: List ACTIVE procedures grouped by domain
+      tags:
+      - procedures
+  /api/v1/procedures/{id}/active-version:
+    get:
+      parameters:
+      - description: Procedure UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: Get ACTIVE version + definition
+      tags:
+      - procedures
+  /api/v1/procedures/by-code/{code}:
+    get:
+      parameters:
+      - description: procedure_code
+        in: path
+        name: code
+        required: true
+        type: string
+      - description: Commune id (default from config)
+        in: query
+        name: xa_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: Resolve procedure by code
+      tags:
+      - procedures
+  /health:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.liveResponse'
+      summary: Liveness probe
+      tags:
+      - health
+  /ready:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handler.readyResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Readiness probe
+      tags:
+      - health
+produces:
+- application/json
+schemes:
+- http
+swagger: "2.0"

@@ -17,6 +17,15 @@ func NewHandler(repo *repository.DomainRepo) *Handler {
 	return &Handler{Repo: repo}
 }
 
+// List godoc
+//
+//	@Summary		List domains
+//	@Tags			domains
+//	@Produce		json
+//	@Param			active	query		string	false	"Filter active only (true)"
+//	@Success		200		{object}	response.Envelope
+//	@Failure		500		{object}	response.Envelope
+//	@Router			/api/v1/domains [get]
 func (h *Handler) List(c *gin.Context) {
 	activeOnly := c.Query("active") == "true"
 	items, err := h.Repo.List(c.Request.Context(), activeOnly)
@@ -27,6 +36,16 @@ func (h *Handler) List(c *gin.Context) {
 	response.OK(c, gin.H{"items": items, "count": len(items)})
 }
 
+// Get godoc
+//
+//	@Summary		Get domain by id
+//	@Tags			domains
+//	@Produce		json
+//	@Param			id	path		string	true	"Domain id"
+//	@Success		200	{object}	response.Envelope
+//	@Failure		404	{object}	response.Envelope
+//	@Failure		500	{object}	response.Envelope
+//	@Router			/api/v1/domains/{id} [get]
 func (h *Handler) Get(c *gin.Context) {
 	item, err := h.Repo.GetByID(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -40,6 +59,18 @@ func (h *Handler) Get(c *gin.Context) {
 	response.OK(c, item)
 }
 
+// Create godoc
+//
+//	@Summary		Create domain
+//	@Tags			domains
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		repository.DomainCreate	true	"Domain payload"
+//	@Success		201		{object}	response.Envelope
+//	@Failure		400		{object}	response.Envelope
+//	@Failure		409		{object}	response.Envelope
+//	@Failure		500		{object}	response.Envelope
+//	@Router			/api/v1/domains [post]
 func (h *Handler) Create(c *gin.Context) {
 	var body repository.DomainCreate
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -58,6 +89,19 @@ func (h *Handler) Create(c *gin.Context) {
 	response.Created(c, item)
 }
 
+// Update godoc
+//
+//	@Summary		Update domain
+//	@Tags			domains
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string					true	"Domain id"
+//	@Param			body	body		repository.DomainUpdate	true	"Fields to update"
+//	@Success		200		{object}	response.Envelope
+//	@Failure		400		{object}	response.Envelope
+//	@Failure		404		{object}	response.Envelope
+//	@Failure		500		{object}	response.Envelope
+//	@Router			/api/v1/domains/{id} [put]
 func (h *Handler) Update(c *gin.Context) {
 	var body repository.DomainUpdate
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -76,6 +120,18 @@ func (h *Handler) Update(c *gin.Context) {
 	response.OK(c, item)
 }
 
+// Delete godoc
+//
+//	@Summary		Delete domain (soft by default)
+//	@Tags			domains
+//	@Produce		json
+//	@Param			id		path		string	true	"Domain id"
+//	@Param			hard	query		string	false	"Set true for hard delete"
+//	@Success		200		{object}	response.Envelope
+//	@Failure		404		{object}	response.Envelope
+//	@Failure		409		{object}	response.Envelope
+//	@Failure		500		{object}	response.Envelope
+//	@Router			/api/v1/domains/{id} [delete]
 func (h *Handler) Delete(c *gin.Context) {
 	id := c.Param("id")
 	if c.Query("hard") == "true" {
