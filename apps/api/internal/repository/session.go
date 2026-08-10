@@ -78,6 +78,92 @@ func (r *SessionRepo) CreateForUser(ctx context.Context, xaID string, userID uui
 	return &s, nil
 }
 
+// GetOpenByUserAndXa returns the latest OPEN session for a logged-in user in a commune.
+func (r *SessionRepo) GetOpenByUserAndXa(ctx context.Context, userID uuid.UUID, xaID string) (*Session, error) {
+	var s Session
+	err := r.Pool.QueryRow(ctx, `
+		SELECT id, user_id, guest_token, xa_id,
+		       active_procedure_id, active_procedure_version_id,
+		       status, created_at, updated_at
+		FROM conversation_sessions
+		WHERE user_id = $1 AND xa_id = $2 AND status = 'OPEN'
+		ORDER BY updated_at DESC
+		LIMIT 1`, userID, xaID,
+	).Scan(
+		&s.ID, &s.UserID, &s.GuestToken, &s.XaID,
+		&s.ActiveProcedureID, &s.ActiveProcedureVersionID,
+		&s.Status, &s.CreatedAt, &s.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// GetOrCreateOpenForUser resumes the OPEN session for (user, xa) or creates one.
+// Uses an advisory lock so concurrent POSTs cannot insert duplicates.
+func (r *SessionRepo) GetOrCreateOpenForUser(ctx context.Context, xaID string, userID uuid.UUID) (*Session, error) {
+	tx, err := r.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))`,
+		userID.String(), xaID,
+	); err != nil {
+		return nil, err
+	}
+
+	var s Session
+	err = tx.QueryRow(ctx, `
+		SELECT id, user_id, guest_token, xa_id,
+		       active_procedure_id, active_procedure_version_id,
+		       status, created_at, updated_at
+		FROM conversation_sessions
+		WHERE user_id = $1 AND xa_id = $2 AND status = 'OPEN'
+		ORDER BY updated_at DESC
+		LIMIT 1`, userID, xaID,
+	).Scan(
+		&s.ID, &s.UserID, &s.GuestToken, &s.XaID,
+		&s.ActiveProcedureID, &s.ActiveProcedureVersionID,
+		&s.Status, &s.CreatedAt, &s.UpdatedAt,
+	)
+	if err == nil {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return &s, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+
+	err = tx.QueryRow(ctx, `
+		INSERT INTO conversation_sessions (user_id, xa_id, status)
+		VALUES ($1, $2, 'OPEN')
+		RETURNING id, user_id, guest_token, xa_id,
+		          active_procedure_id, active_procedure_version_id,
+		          status, created_at, updated_at`,
+		userID, xaID,
+	).Scan(
+		&s.ID, &s.UserID, &s.GuestToken, &s.XaID,
+		&s.ActiveProcedureID, &s.ActiveProcedureVersionID,
+		&s.Status, &s.CreatedAt, &s.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
 func (r *SessionRepo) GetByID(ctx context.Context, id uuid.UUID) (*Session, error) {
 	var s Session
 	err := r.Pool.QueryRow(ctx, `

@@ -49,12 +49,12 @@ export default function LoginPage() {
     setSearchParams(next === 'admin' ? { as: 'admin' } : { as: 'citizen' })
   }
 
-  function onSubmit(e) {
+  async function onSubmit(e) {
     e.preventDefault()
     setError('')
     setBusy(true)
     try {
-      const next = login(email, password)
+      const next = await login(email, password)
       navigate(next.role === 'ADMIN' ? '/admin' : '/', { replace: true })
     } catch (err) {
       setError(err.message || 'Đăng nhập thất bại')
@@ -121,11 +121,11 @@ export default function LoginPage() {
           <div className="login-hint">
             {mode === 'citizen' ? (
               <p>
-                <strong>Demo:</strong> citizen@example.com / citizen123
+                <strong>Demo API:</strong> citizen@example.com / citizen123
               </p>
             ) : (
               <p>
-                <strong>Demo:</strong> admin@chuse.vn / admin123
+                <strong>Demo API:</strong> admin@chuse.vn / admin123
               </p>
             )}
             <Link to="/">Tiếp tục hỏi thủ tục (khách)</Link>

@@ -33,7 +33,13 @@ export function AdminShell() {
         <div className="admin-side-foot">
           <p>{user?.name}</p>
           <Link to="/">← Cổng công dân</Link>
-          <button type="button" className="linkish" onClick={logout}>
+          <button
+            type="button"
+            className="linkish"
+            onClick={() => {
+              void logout()
+            }}
+          >
             Đăng xuất
           </button>
         </div>
