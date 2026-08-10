@@ -58,6 +58,26 @@ func (r *SessionRepo) CreateGuest(ctx context.Context, xaID, guestToken string) 
 	return &s, nil
 }
 
+func (r *SessionRepo) CreateForUser(ctx context.Context, xaID string, userID uuid.UUID) (*Session, error) {
+	var s Session
+	err := r.Pool.QueryRow(ctx, `
+		INSERT INTO conversation_sessions (user_id, xa_id, status)
+		VALUES ($1, $2, 'OPEN')
+		RETURNING id, user_id, guest_token, xa_id,
+		          active_procedure_id, active_procedure_version_id,
+		          status, created_at, updated_at`,
+		userID, xaID,
+	).Scan(
+		&s.ID, &s.UserID, &s.GuestToken, &s.XaID,
+		&s.ActiveProcedureID, &s.ActiveProcedureVersionID,
+		&s.Status, &s.CreatedAt, &s.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
 func (r *SessionRepo) GetByID(ctx context.Context, id uuid.UUID) (*Session, error) {
 	var s Session
 	err := r.Pool.QueryRow(ctx, `

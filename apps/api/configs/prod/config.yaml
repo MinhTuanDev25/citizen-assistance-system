@@ -12,3 +12,7 @@ database:
 app:
   xa_id: xa_chu_se
   log_level: info
+
+auth:
+  jwt_secret: "" # required: set JWT_SECRET at deploy
+  jwt_expire_hours: 24
