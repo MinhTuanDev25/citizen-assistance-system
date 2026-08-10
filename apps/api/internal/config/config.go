@@ -24,6 +24,8 @@ type Config struct {
 	DBConnTimeout   time.Duration
 	ShutdownTimeout time.Duration
 	ConfigFile      string
+	JWTSecret       string
+	JWTExpireHours  int
 }
 
 type fileConfig struct {
@@ -41,6 +43,10 @@ type fileConfig struct {
 		XAID     string `yaml:"xa_id"`
 		LogLevel string `yaml:"log_level"`
 	} `yaml:"app"`
+	Auth struct {
+		JWTSecret      string `yaml:"jwt_secret"`
+		JWTExpireHours int    `yaml:"jwt_expire_hours"`
+	} `yaml:"auth"`
 }
 
 // Load reads configs/{APP_ENV}/config.yaml then applies environment overrides.
@@ -80,12 +86,23 @@ func Load() (Config, error) {
 		DBMinConns:      int32(defaultInt(fc.Database.MinConns, 1)),
 		DBConnTimeout:   time.Duration(defaultInt(fc.Database.ConnTimeoutSec, 5)) * time.Second,
 		ShutdownTimeout: time.Duration(defaultInt(fc.Server.ShutdownTimeoutSec, 10)) * time.Second,
+		JWTSecret:       strings.TrimSpace(fc.Auth.JWTSecret),
+		JWTExpireHours:  defaultInt(fc.Auth.JWTExpireHours, 24),
 	}
 
 	applyEnvOverrides(&cfg)
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL missing for APP_ENV=%s (set env or database.url in YAML)", envName)
+	}
+	if cfg.JWTSecret == "" {
+		return Config{}, fmt.Errorf("JWT_SECRET missing for APP_ENV=%s (set env or auth.jwt_secret in YAML)", envName)
+	}
+	if len(cfg.JWTSecret) < 16 {
+		return Config{}, fmt.Errorf("JWT_SECRET must be at least 16 characters")
+	}
+	if cfg.JWTExpireHours < 1 {
+		return Config{}, fmt.Errorf("auth.jwt_expire_hours must be >= 1")
 	}
 	if cfg.DBMaxConns < 1 {
 		return Config{}, fmt.Errorf("database.max_conns must be >= 1")
@@ -127,6 +144,14 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("SHUTDOWN_TIMEOUT_SEC"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.ShutdownTimeout = time.Duration(n) * time.Second
+		}
+	}
+	if v := os.Getenv("JWT_SECRET"); v != "" {
+		cfg.JWTSecret = v
+	}
+	if v := os.Getenv("JWT_EXPIRE_HOURS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.JWTExpireHours = n
 		}
 	}
 }

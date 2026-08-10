@@ -34,15 +34,17 @@ type createMessageRequest struct {
 
 // Create godoc
 //
-//	@Summary		Create conversation session (guest)
+//	@Summary		Create conversation session
+//	@Description	Guest: omit Authorization, optional guest_token resume. Logged-in: Bearer JWT → user_id set, no guest_token.
 //	@Tags			sessions
 //	@Accept			json
 //	@Produce		json
-//	@Param			body	body		createRequest	true	"xa_id required; guest_token optional to resume"
-//	@Success		201		{object}	response.Envelope
-//	@Failure		400		{object}	response.Envelope
-//	@Failure		404		{object}	response.Envelope
-//	@Failure		500		{object}	response.Envelope
+//	@Param			Authorization	header		string			false	"Bearer access token"
+//	@Param			body			body		createRequest	true	"xa_id required; guest_token optional (guest only)"
+//	@Success		201				{object}	response.Envelope
+//	@Failure		400				{object}	response.Envelope
+//	@Failure		404				{object}	response.Envelope
+//	@Failure		500				{object}	response.Envelope
 //	@Router			/api/v1/sessions [post]
 func (h *Handler) Create(c *gin.Context) {
 	var req createRequest
@@ -63,6 +65,16 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	if commune == nil || !commune.IsActive {
 		response.Fail(c, http.StatusNotFound, "NOT_FOUND", "commune not found or inactive")
+		return
+	}
+
+	if userID, ok := middleware.UserID(c); ok {
+		sess, err := h.Sessions.CreateForUser(c.Request.Context(), xaID, userID)
+		if err != nil {
+			response.FailErr(c, http.StatusInternalServerError, "INTERNAL", "failed to create session", err)
+			return
+		}
+		response.Created(c, sess)
 		return
 	}
 
@@ -204,12 +216,6 @@ func (h *Handler) loadAuthorizedSession(c *gin.Context) (*repository.Session, bo
 		return nil, false
 	}
 
-	guestToken := strings.TrimSpace(c.GetHeader(HeaderGuestToken))
-	if guestToken == "" {
-		response.Fail(c, http.StatusUnauthorized, "UNAUTHORIZED", "X-Guest-Token header is required")
-		return nil, false
-	}
-
 	sess, err := h.Sessions.GetByID(c.Request.Context(), sessionID)
 	if err != nil {
 		response.FailErr(c, http.StatusInternalServerError, "INTERNAL", "failed to load session", err)
@@ -217,6 +223,21 @@ func (h *Handler) loadAuthorizedSession(c *gin.Context) (*repository.Session, bo
 	}
 	if sess == nil {
 		response.Fail(c, http.StatusNotFound, "NOT_FOUND", "session not found")
+		return nil, false
+	}
+
+	if sess.UserID != nil {
+		uid, ok := middleware.UserID(c)
+		if !ok || uid != *sess.UserID {
+			response.Fail(c, http.StatusForbidden, "FORBIDDEN", "session belongs to another user")
+			return nil, false
+		}
+		return sess, true
+	}
+
+	guestToken := strings.TrimSpace(c.GetHeader(HeaderGuestToken))
+	if guestToken == "" {
+		response.Fail(c, http.StatusUnauthorized, "UNAUTHORIZED", "X-Guest-Token header is required")
 		return nil, false
 	}
 	if sess.GuestToken == nil || *sess.GuestToken != guestToken {

@@ -23,6 +23,10 @@ import (
 // @schemes         http
 // @accept          json
 // @produce         json
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Type "Bearer" followed by a space and JWT.
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -49,7 +53,7 @@ func main() {
 		"min_conns", cfg.DBMinConns,
 	)
 
-	engine := httpserver.New(logger, pool, cfg.XAID)
+	engine := httpserver.New(logger, pool, cfg)
 	srv := &http.Server{
 		Addr:              cfg.APIAddr,
 		Handler:           engine,
