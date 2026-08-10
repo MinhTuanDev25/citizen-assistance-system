@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// New returns a JSON structured logger.
-func New(level string) *slog.Logger {
+// New returns a JSON structured logger for stdout (Promtail/Loki scrapes this).
+func New(level, env string) *slog.Logger {
 	var lvl slog.Level
 	switch strings.ToLower(level) {
 	case "debug":
@@ -21,5 +21,8 @@ func New(level string) *slog.Logger {
 	}
 
 	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})
-	return slog.New(handler)
+	return slog.New(handler).With(
+		"service", "cas-api",
+		"env", env,
+	)
 }
