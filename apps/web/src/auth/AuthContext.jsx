@@ -1,5 +1,7 @@
 import { createContext, useContext, useMemo, useState } from 'react'
-import { loadAuth, login as doLogin, saveAuth } from './auth.js'
+import { loginRequest, logoutRequest } from '../api/auth.js'
+import { clearChatSession } from '../api/session.js'
+import { loadAuth, saveAuth } from './auth.js'
 
 const AuthContext = createContext(null)
 
@@ -9,16 +11,21 @@ export function AuthProvider({ children }) {
   const value = useMemo(
     () => ({
       user,
+      accessToken: user?.accessToken || null,
       isAdmin: user?.role === 'ADMIN',
-      login(email, password) {
-        const next = doLogin(email, password)
+      async login(email, password) {
+        const next = await loginRequest(email, password)
         saveAuth(next)
         setUser(next)
+        // New auth identity → fresh chat session next time
+        clearChatSession()
         return next
       },
-      logout() {
+      async logout() {
+        await logoutRequest()
         saveAuth(null)
         setUser(null)
+        clearChatSession()
       },
     }),
     [user],

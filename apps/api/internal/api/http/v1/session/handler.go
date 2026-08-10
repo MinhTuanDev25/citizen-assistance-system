@@ -69,7 +69,7 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 
 	if userID, ok := middleware.UserID(c); ok {
-		sess, err := h.Sessions.CreateForUser(c.Request.Context(), xaID, userID)
+		sess, err := h.Sessions.GetOrCreateOpenForUser(c.Request.Context(), xaID, userID)
 		if err != nil {
 			response.FailErr(c, http.StatusInternalServerError, "INTERNAL", "failed to create session", err)
 			return

@@ -59,7 +59,13 @@ export function CitizenShell({ children }) {
             </span>
           )}
           {user ? (
-            <button type="button" className="linkish" onClick={logout}>
+            <button
+              type="button"
+              className="linkish"
+              onClick={() => {
+                void logout()
+              }}
+            >
               Đăng xuất
             </button>
           ) : null}
