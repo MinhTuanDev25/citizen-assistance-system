@@ -4,6 +4,7 @@ import (
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/commune"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/domain"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/procedure"
+	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/session"
 	"github.com/gin-gonic/gin"
 )
 
@@ -13,6 +14,7 @@ func MapRoutes(
 	communeHandler *commune.Handler,
 	domainHandler *domain.Handler,
 	procedureHandler *procedure.Handler,
+	sessionHandler *session.Handler,
 ) {
 	v1 := api.Group("/v1")
 	{
@@ -36,6 +38,13 @@ func MapRoutes(
 			procedures.GET("", procedureHandler.List)
 			procedures.GET("/by-code/:code", procedureHandler.GetByCode)
 			procedures.GET("/:id/active-version", procedureHandler.GetActiveVersion)
+		}
+
+		sessions := v1.Group("/sessions")
+		{
+			sessions.POST("", sessionHandler.Create)
+			sessions.GET("/:sessionId/messages", sessionHandler.ListMessages)
+			sessions.POST("/:sessionId/messages", sessionHandler.CreateMessage)
 		}
 	}
 }
