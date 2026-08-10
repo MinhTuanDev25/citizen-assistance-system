@@ -22,7 +22,7 @@ func main() {
 		panic(err)
 	}
 
-	logger := logx.New(cfg.LogLevel)
+	logger := logx.New(cfg.LogLevel, cfg.Env)
 	logger.Info("starting api",
 		"env", cfg.Env,
 		"config_file", cfg.ConfigFile,

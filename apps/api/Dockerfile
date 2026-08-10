@@ -2,7 +2,7 @@
 # Build from repo root:
 #   docker build -f apps/api/Dockerfile -t cas-api:latest .
 #
-# Run (secrets via env — same idea as hdb-agent-service APP_ENV):
+# Run (secrets via env at deploy):
 #   docker run --rm -p 8080:8080 \
 #     -e APP_ENV=prod \
 #     -e DATABASE_URL='postgres://...' \
