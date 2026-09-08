@@ -148,35 +148,37 @@ def derive_group(
     )
 
 
-def namespace_cross_source_collisions(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def audit_cross_source_collisions(df: pd.DataFrame) -> pd.DataFrame:
     """
-    If the same recording_group_id (prefix-derived) appears under multiple
-    source_labels, namespace group_id with source_label to avoid false merges.
+    Audit-only: report prefix-derived recording_group_id values that appear
+    under multiple source_labels.
 
-    Returns (updated_df, collisions_report).
+    Does **not** modify the input dataframe or rewrite group_id.
+    Prefix rows must keep group_id = "recording:" + recording_group_id so the
+    same recording stays in one split regardless of source_label.
     """
-    out = df.copy()
+    empty = pd.DataFrame(
+        columns=["recording_group_id", "n_source_labels", "source_labels", "rows"]
+    )
     required = {"recording_group_id", "group_id", "group_source", "source_label"}
-    if out.empty or not required.issubset(out.columns):
-        return out, pd.DataFrame(
-            columns=[
-                "recording_group_id",
-                "n_source_labels",
-                "source_labels",
-                "rows",
-            ]
-        )
+    if df is None or df.empty or not required.issubset(df.columns):
+        return empty
 
-    prefix_mask = out["group_source"].isin(["record_id_prefix", "audio_path_prefix"])
-    prefix = out.loc[prefix_mask].copy()
+    prefix = df.loc[
+        df["group_source"].isin(["record_id_prefix", "audio_path_prefix"])
+    ]
     if prefix.empty:
-        return out, pd.DataFrame(
-            columns=["recording_group_id", "n_source_labels", "source_labels", "rows"]
-        )
+        return empty
 
     collision_rows = []
     for rgid, g in prefix.groupby("recording_group_id", dropna=False):
-        sources = sorted({clean_group_value(s) for s in g["source_label"].tolist() if clean_group_value(s)})
+        sources = sorted(
+            {
+                clean_group_value(s)
+                for s in g["source_label"].tolist()
+                if clean_group_value(s)
+            }
+        )
         if len(sources) <= 1:
             continue
         collision_rows.append(
@@ -187,18 +189,75 @@ def namespace_cross_source_collisions(df: pd.DataFrame) -> tuple[pd.DataFrame, p
                 "rows": int(len(g)),
             }
         )
-        collide_ids = set(g.index.tolist())
-        for idx in collide_ids:
-            src = clean_group_value(out.at[idx, "source_label"]) or "unknown"
-            base = out.at[idx, "recording_group_id"]
-            out.at[idx, "group_id"] = f"recording:{src}:{base}"
 
-    collisions = pd.DataFrame(collision_rows)
-    if not collisions.empty:
-        collisions = collisions.sort_values(
-            ["n_source_labels", "rows"], ascending=False
-        ).reset_index(drop=True)
+    if not collision_rows:
+        return empty
+
+    collisions = pd.DataFrame(
+        collision_rows,
+        columns=empty.columns,
+    )
+    collisions = collisions.sort_values(
+        ["n_source_labels", "rows"], ascending=False
+    ).reset_index(drop=True)
+    return collisions
+
+
+def namespace_cross_source_collisions(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Backward-compatible wrapper around audit_cross_source_collisions.
+
+    Audit-only: returns (df unchanged / shallow copy, collisions_report).
+    Does **not** namespace group_id by source_label (that caused group leakage).
+    Prefer audit_cross_source_collisions() for new code.
+    """
+    collisions = audit_cross_source_collisions(df)
+    # Return a copy so callers that mutate the first value cannot alter input unexpectedly,
+    # but never rewrite group_id here.
+    out = df.copy() if df is not None else pd.DataFrame()
     return out, collisions
+
+
+def assert_prefix_recording_group_invariant(df: pd.DataFrame) -> None:
+    """
+    Hard invariant: for prefix-derived rows, each recording_group_id maps to
+    exactly one group_id, and that group_id must be recording:<recording_group_id>.
+    """
+    if df is None or df.empty:
+        return
+    required = {"recording_group_id", "group_id", "group_source"}
+    if not required.issubset(df.columns):
+        return
+
+    prefix = df.loc[
+        df["group_source"].isin(["record_id_prefix", "audio_path_prefix"])
+    ]
+    if prefix.empty:
+        return
+
+    # Expected canonical form
+    bad_form = prefix.loc[
+        prefix["group_id"].astype(str)
+        != ("recording:" + prefix["recording_group_id"].astype(str))
+    ]
+    if len(bad_form):
+        sample = bad_form[["recording_group_id", "group_id", "group_source"]].head(5)
+        raise RuntimeError(
+            "Prefix-derived group_id must equal 'recording:' + recording_group_id. "
+            f"Violations (sample):\n{sample}"
+        )
+
+    mapping = (
+        prefix.groupby("recording_group_id")["group_id"]
+        .nunique(dropna=False)
+        .reset_index(name="n_group_ids")
+    )
+    multi = mapping.loc[mapping["n_group_ids"] > 1]
+    if len(multi):
+        raise RuntimeError(
+            "Prefix recording_group_id maps to multiple group_id values "
+            f"(group leakage risk): {multi.head(10).to_dict(orient='records')}"
+        )
 
 
 def collect_ambiguous_group_suffixes(df: pd.DataFrame) -> pd.DataFrame:
