@@ -1,0 +1,9 @@
+# Bahnar→Vietnamese MT (Cascaded stage 2) — placeholder
+model_name: VinAIResearch/bartpho-syllable
+batch_size: 16
+learning_rate: 2.0e-5
+num_epochs: 10
+seed: 42
+manifest_train: data/manifests/rq1_train.csv
+manifest_validation: data/manifests/rq1_validation.csv
+checkpoint_dir: checkpoints/mt
