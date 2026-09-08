@@ -1,0 +1,10 @@
+# Bahnar ASR (Cascaded stage 1) — placeholder
+model_name: facebook/wav2vec2-xls-r-300m
+sample_rate: 16000
+batch_size: 8
+learning_rate: 1.0e-4
+num_epochs: 10
+seed: 42
+manifest_train: data/manifests/rq1_train.csv
+manifest_validation: data/manifests/rq1_validation.csv
+checkpoint_dir: checkpoints/asr

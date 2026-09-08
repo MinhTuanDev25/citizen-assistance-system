@@ -1,0 +1,11 @@
+# Direct S2TT Bahnar speech → Vietnamese text — placeholder
+# Do NOT init from public SeamlessM4T Bahnar checkpoint (RQ2 contamination).
+encoder: facebook/wav2vec2-xls-r-300m
+decoder: facebook/mbart-large-50
+batch_size: 4
+learning_rate: 1.0e-4
+num_epochs: 10
+seed: 42
+manifest_train: data/manifests/rq1_train.csv
+manifest_validation: data/manifests/rq1_validation.csv
+checkpoint_dir: checkpoints/direct
