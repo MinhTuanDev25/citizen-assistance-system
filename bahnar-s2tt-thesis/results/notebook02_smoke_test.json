@@ -1,0 +1,57 @@
+{
+  "run_id": "9ead5530-f078-4d45-bbad-c7b9c5495a08",
+  "dataset_name": "cuong06/Bahnar_Vietnamese",
+  "dataset_revision": "3d88d3951b1a6e3388559b341cd7bd274879d696",
+  "seed": 42,
+  "processing_version": "notebook02_audio_v3",
+  "timestamp_utc": "2026-09-11T14:58:57.378887+00:00",
+  "input_sha256": {
+    "rq1_train.csv": "b9acbc3ff31411f22db0806b9cb1d59b518141ba7c7055e60981860192c7626a",
+    "rq1_validation.csv": "5a7b13c87d0be684b351dfb02ea97f2efa64b1e7bc2a7e46ba2dd206ca9253f6",
+    "rq1_test.csv": "169807577a055b0b7b996b31bcd67470416af02ad1118d723f54ea368c8d5807"
+  },
+  "device": "mps",
+  "smoke_model_id": "hf-internal-testing/tiny-random-wav2vec2",
+  "smoke_model_revision_requested": "9123c4c809823cc53466e9868a1cf1c476be2e54",
+  "smoke_model_revision_loaded": "9123c4c809823cc53466e9868a1cf1c476be2e54",
+  "vocabulary_size": 140,
+  "smoke_train_record_uids": [
+    "03e3291f1bea3ffeccd3b3d4dbeb71f4ca545ca0",
+    "dc0990314861b42ba65b58fced1913c630e6669f",
+    "2e388a1da199e4447dc5dfcf7ffbb3933229f668",
+    "dc64a312ecf7191c8625cd1b35d637f2b91db94f"
+  ],
+  "smoke_validation_record_uids": [
+    "39ba92c021c2937369526838bdae553a03857392",
+    "2b385538fab43df99f8b64ef5ae09311301af30c"
+  ],
+  "input_values_shape": [
+    4,
+    40960
+  ],
+  "logits_shape": [
+    4,
+    638,
+    140
+  ],
+  "losses": [
+    91.65789794921875,
+    91.6558837890625,
+    91.58009338378906
+  ],
+  "optimizer_steps": 2,
+  "loss_finite": true,
+  "logits_finite": true,
+  "gradients_finite": true,
+  "predictions": [
+    "pidèpŋƀpŋƀôpỵçƀôpdŋdƀpỵŋdƀpdƀèpdiƀôǝpổạ'ạpổɨỵpŋễpỵpễdƀỵpŋd'pôidƀpiƀạŋèɨỵăpôpẵḷạŋễôpỵdpŋ'ŋữỷèɨŋỵp'ŋdèɨỵpôp'çạƀỵpdèpi'ƀŋƀạdỷmpŋpỳpƀiŋƀỵpỵpônpɨỵpỵpỵpỵɨ'ɨpɨpɨỵɨỵp7ŋ7dɨạpdễpŋổỷrƀạŋèỵpỵễạèạp'pôễpḷạŋôpdƀriŋdp'ẹổăôpiạŋdpŋèôpễpŋèpm'iŋïnôƀôŋễè7ạɨèn'ƀɨạdpễḷpạôièôpɨỵpḍpdpạôèƀạỵpạŋễçạŋpạŋẵèạŋẵmƀdmạdôƀnạd'ƀ'ôpŋdạdôdɨŋạiạpḷạpạŋpdèƀôpèạiŋừpôp'ỵr'çŋdpdỵpôpdạdprdpɨpŋpôp'ạièŋổạrpôèôpŋiŋạẵƀpễ'ổạŋễ'pễạŋƀăỵp'ẹổŋăễdễ5ạdnpôpïỳŋdễôpriạŋổịỵạpŋ'ŋặdpôïŋôçƀèidôpễôèạỵiḷpôpễăạncŋạpd'pôŋôèmƀipïễỵẵễạḷŋôpiƀạpŋdpạŋôpŋdpiŋpnƀpiŋpôḷŋạypnạẵpôpŋổpôpŋd'pnŋ'pnạŋ'pỵnŋ'pôpŋạổ'pèçpŋễpạnèçƀpɨnŋpniăŋạdỵpễŋpdpdŋpôỵañànk",
+    "papŋdƀpiƀạƀễỵpçƀạƀỵpèạƀỵpiạễỵpdạƀpịɨiạèôỵdçạdễỵpiạèƀỵpễạèƀỵpdƀpôèpdpỵipdɨapɨŋèpdạrpôp3ỵp'mạƀạŋễôp'ôpẹôạŋrẹrypôƀỵèŋƀpdŋạƀạƀiyç'pỵ'dôàɨpỵpôpŋèɨpŋdŭôpdipôɨçdèễipèɨpiŋẹễàỵpổpƀôpnèƀŋèpŋôḷŋạŋẵɨpŋƀễŋ7ôèpăr'ŋpôpçpḷƀễŋ'pɨpdôpôèạễpŋôƀŋƀỵpŋôèƀŋỵpạèdạp'didpçiïdôạɨpạiễôp'pdaiçƀpạipdpɨŋẵŋạiŋdpôɨôpŋạdŋnèiạƀèpôrpipdɨpôŋƀèpễƀpỵŋpŋ'ễèỷiổèrdiƀŋôè7ƀpƀỵôipnŋçƀạpnpôƀŋạèạƀpôễƀăpôidpipdôƀạdèễɨễdƀỵễḷŋnƀŋpn'ỳẹƀŋiƀạèç'pôrnŋạɨpôip3ɨƀŋɨrễỵèidô'ipdɨễèỵpôdƀẵôèạŋpŋăèiŋỵɨpŋô7ŋạypễỵŋạ'pôpnạy'pôŋạƀmçèçƀỵpƀidŭrèpŭpôriɨỵɨpỵôạdpạổ'ŋôạdèŋpạổpổpŋçạổpdçŋpƀçƀỵƀdạễpễpổpễpễdpŋpdŋƀpỵpổdpdɨè'pdçễpỵễ'ipôn'ŋpôèipôèpdpdễ"
+  ],
+  "references": [
+    "lơ̆m tươm săn am tơ chơi âu kiak kơ sô cha chi",
+    "lươm tuôm săn anh olget tơ đong săn anh păng pơm kiơ"
+  ],
+  "technical_cer_not_for_research": 11.581632653061224,
+  "frozen_test_used": false,
+  "warning": "ENGINEERING SMOKE ONLY. Not a research result."
+}

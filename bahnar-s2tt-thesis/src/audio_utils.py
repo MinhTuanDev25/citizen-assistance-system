@@ -123,6 +123,13 @@ def _mix_to_mono(wav, np):
     return wav.mean(axis=1) if cols < rows else wav.mean(axis=0)
 
 
+def waveform_to_mono_float32(array) -> "Any":
+    """Public canonical PCM→mono float32 in [-1, 1] (normalize integer before mix)."""
+    import numpy as np
+
+    return _to_mono_float(np.asarray(array), np).astype(np.float32)
+
+
 def _to_mono_float(wav, np):
     """
     Convert waveform to mono float64 in [-1, 1].

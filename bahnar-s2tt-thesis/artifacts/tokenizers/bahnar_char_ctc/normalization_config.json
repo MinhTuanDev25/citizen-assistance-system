@@ -1,0 +1,13 @@
+{
+  "version": "bahnar_ctc_normalization_v1",
+  "pad_token": "[PAD]",
+  "unk_token": "[UNK]",
+  "word_delimiter_token": "|",
+  "bos_token": null,
+  "eos_token": null,
+  "pad_token_id": 0,
+  "unk_token_id": 1,
+  "vocab_size": 140,
+  "ctc_blank_token": "[PAD]",
+  "ctc_blank_token_id": 0
+}
