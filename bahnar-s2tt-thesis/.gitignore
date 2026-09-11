@@ -1,0 +1,24 @@
+# Local / large artifacts (thesis workspace)
+.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store
+*.pyc
+
+# Audio cache + large model blobs (do NOT ignore audit CSV/JSON)
+data/cache/notebook02_audio/
+checkpoints/**
+!checkpoints/.gitkeep
+predictions/**
+!predictions/.gitkeep
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+wandb/
+runs/
+lightning_logs/
+
+# Notebook checkpoints
+.ipynb_checkpoints/

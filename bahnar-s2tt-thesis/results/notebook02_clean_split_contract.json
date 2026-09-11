@@ -1,0 +1,28 @@
+{
+  "run_id": "9ead5530-f078-4d45-bbad-c7b9c5495a08",
+  "dataset_id": "cuong06/Bahnar_Vietnamese",
+  "dataset_revision": "3d88d3951b1a6e3388559b341cd7bd274879d696",
+  "normalization_version": "bahnar_ctc_normalization_v1",
+  "policy": "exclude_unexpected_script",
+  "base_manifest_sha256": {
+    "rq1_train.csv": "b9acbc3ff31411f22db0806b9cb1d59b518141ba7c7055e60981860192c7626a",
+    "rq1_validation.csv": "5a7b13c87d0be684b351dfb02ea97f2efa64b1e7bc2a7e46ba2dd206ca9253f6",
+    "rq1_test.csv": "169807577a055b0b7b996b31bcd67470416af02ad1118d723f54ea368c8d5807"
+  },
+  "train": {
+    "original_count": 102698,
+    "excluded_count": 191,
+    "clean_count": 102507,
+    "ordered_uid_sha256": "1fae58ebf435557fa582f9befbcf6c14e8ded348c75c452b29398042ce756df5",
+    "uid_set_sha256": "5672eaef7e02670c1cf2381f90c3df70ddb03e2b44354bbe23467f8c585b4a56",
+    "exclusion_csv_sha256": "3f94e7e523e4856f163c1d758fabead6f9cd52cf183c73c2e3f56912c91844bc"
+  },
+  "validation": {
+    "original_count": 11132,
+    "excluded_count": 19,
+    "clean_count": 11113,
+    "ordered_uid_sha256": "532b7f51dd66508ca99457e1a755619098ae1d9eb521d2419102dd4f7660a2db",
+    "uid_set_sha256": "6b9a55458734ff7c5d9337064482aad2b43347380645e1e1edb4445023e31236",
+    "exclusion_csv_sha256": "254683740aae13e4f3a3bbd78ce76cf9b13728e1e8f9a2dcbe2fbce777dfbe47"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "run_id": "9ead5530-f078-4d45-bbad-c7b9c5495a08",
+  "dataset_id": "cuong06/Bahnar_Vietnamese",
+  "dataset_revision": "3d88d3951b1a6e3388559b341cd7bd274879d696",
+  "normalization_version": "bahnar_ctc_normalization_v1",
+  "train_clean_count": 102507,
+  "train_clean_ordered_uid_sha256": "1fae58ebf435557fa582f9befbcf6c14e8ded348c75c452b29398042ce756df5",
+  "train_clean_uid_set_sha256": "5672eaef7e02670c1cf2381f90c3df70ddb03e2b44354bbe23467f8c585b4a56",
+  "train_exclusion_csv_sha256": "3f94e7e523e4856f163c1d758fabead6f9cd52cf183c73c2e3f56912c91844bc",
+  "vocab_sha256": "30e9b1e2640a5d9d3fb513f2ab780bd49b4b7e2ae3908700c0561b1568c67422"
+}
