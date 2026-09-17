@@ -1,10 +1,10 @@
 {
-  "run_id": "9ead5530-f078-4d45-bbad-c7b9c5495a08",
+  "run_id": "d0478702-32f0-4bf6-ae1b-6932c190a16b",
   "dataset_name": "cuong06/Bahnar_Vietnamese",
   "dataset_revision": "3d88d3951b1a6e3388559b341cd7bd274879d696",
   "seed": 42,
   "processing_version": "notebook02_audio_v3",
-  "timestamp_utc": "2026-09-11T14:58:57.378887+00:00",
+  "timestamp_utc": "2026-09-14T03:43:34.500451+00:00",
   "input_sha256": {
     "rq1_train.csv": "b9acbc3ff31411f22db0806b9cb1d59b518141ba7c7055e60981860192c7626a",
     "rq1_validation.csv": "5a7b13c87d0be684b351dfb02ea97f2efa64b1e7bc2a7e46ba2dd206ca9253f6",
@@ -16,19 +16,19 @@
   "vocab_size": 140,
   "qa_targets": {
     "train": 500,
-    "validation": 50
+    "validation": 70
   },
   "qa_unique_candidates": {
-    "train": 2236,
-    "validation": 259
+    "train": 1823,
+    "validation": 212
   },
   "qa_planned": {
     "train": 500,
-    "validation": 50
+    "validation": 70
   },
   "qa_selected": {
     "train": 500,
-    "validation": 50
+    "validation": 70
   },
   "qa_hard_ok_rates": [
     {
@@ -43,13 +43,13 @@
     },
     {
       "split": "validation",
-      "n": 50,
+      "n": 70,
       "hard_ok_rate": 1.0,
-      "hard_ok_n": 50,
+      "hard_ok_n": 70,
       "source_hard_ok_rate": 1.0,
       "cache_hard_ok_rate": 1.0,
       "fresh_count": 0,
-      "reuse_count": 50
+      "reuse_count": 70
     }
   ],
   "cache_stats": {
@@ -60,13 +60,13 @@
     },
     "validation": {
       "fresh": 0,
-      "reuse": 50,
-      "total": 50
+      "reuse": 70,
+      "total": 70
     },
     "global": {
       "fresh": 0,
-      "reuse": 550,
-      "total": 550
+      "reuse": 570,
+      "total": 570
     }
   },
   "sampled_text_identity_ok": true,
@@ -170,14 +170,14 @@
         "ំ",
         "ស",
         "អ",
-        "ិ",
         "ុ",
+        "ិ",
         "ព",
-        "ដ",
         "វ",
+        "ដ",
         "ី",
-        "ហ",
         "េ",
+        "ហ",
         "ទ",
         "ើ",
         "៉",
@@ -186,8 +186,8 @@
         "ជ",
         "ឹ",
         "គ",
-        "ះ",
         "ៀ",
+        "ះ",
         "ញ",
         "ឡ",
         "ួ",
@@ -197,8 +197,8 @@
         "ធ",
         "ៃ",
         "ៅ",
-        "ភ",
         "៊",
+        "ភ",
         "័",
         "ផ",
         "ឲ",
@@ -206,9 +206,9 @@
         "ឆ",
         "ឿ",
         "៏",
-        "ឍ",
-        "៍",
         "ឌ",
+        "៍",
+        "ឍ",
         "ឃ"
       ],
       "control_characters": 0,
@@ -304,7 +304,7 @@
   "pytest_passed": true,
   "ready_for_notebook_03": true,
   "notes": [
-    "Sampled QA covers 550 records, NOT full 102,698 train records",
+    "Sampled QA covers 570 records, NOT full 102,698 train records",
     "Validation is for checkpoint/HP selection in Notebook 03",
     "Frozen test unused for vocab/model/smoke eval",
     "Smoke metrics are engineering-only",

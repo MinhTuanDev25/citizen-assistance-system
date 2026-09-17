@@ -1,0 +1,19 @@
+{
+  "run_id": "d12ba08d-68c6-4c76-a561-d9b8a06f5308",
+  "run_mode": "pilot",
+  "training_success": true,
+  "eval_metrics": {
+    "test_loss": 8.527002334594727,
+    "test_cer": 1.0,
+    "test_wer": 1.0,
+    "test_runtime": 9.9869,
+    "test_samples_per_second": 5.007,
+    "test_steps_per_second": 5.007,
+    "corpus_cer": 1.0,
+    "corpus_wer": 1.0
+  },
+  "n_predictions": 50,
+  "mean_cer": 1.0,
+  "mean_wer": 1.0,
+  "validation_metrics_valid": true
+}

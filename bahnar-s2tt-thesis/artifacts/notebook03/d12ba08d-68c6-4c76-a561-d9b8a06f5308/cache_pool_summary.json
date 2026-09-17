@@ -1,0 +1,28 @@
+{
+  "run_id": "d12ba08d-68c6-4c76-a561-d9b8a06f5308",
+  "expected_audio_processing_version": "notebook02_audio_v3",
+  "train": {
+    "ok": true,
+    "pool_size": 777,
+    "target": 200,
+    "deficit": 0,
+    "split": "train",
+    "message": "[train] verified cache pool has 777 records; target=200; deficit=0.",
+    "reject_reasons": {
+      "cache_provenance_mismatch": 671,
+      "duration_too_long": 344
+    }
+  },
+  "validation": {
+    "ok": true,
+    "pool_size": 74,
+    "target": 50,
+    "deficit": 0,
+    "split": "validation",
+    "message": "[validation] verified cache pool has 74 records; target=50; deficit=0.",
+    "reject_reasons": {
+      "cache_provenance_mismatch": 39,
+      "duration_too_long": 23
+    }
+  }
+}

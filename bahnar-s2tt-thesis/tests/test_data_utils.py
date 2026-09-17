@@ -20,6 +20,8 @@ from src.data_utils import (
     CONTAMINATION_ROW_SCHEMA,
     FROZEN_TEST_ALLOWED_COLUMNS,
     FROZEN_TEST_FORBIDDEN_COLUMNS,
+    NOTEBOOK03_COMPAT_MAX_DURATION,
+    NOTEBOOK03_COMPAT_MIN_DURATION,
     ResponseTooLargeError,
     assert_no_signed_urls_persisted,
     asset_headers,
@@ -38,6 +40,7 @@ from src.data_utils import (
     encode_text_with_vocab,
     export_clean_split_contract,
     extract_audio_src,
+    filter_candidates_by_duration,
     find_oov_characters,
     find_oov_rows,
     generate_run_id,
@@ -285,6 +288,84 @@ class TestContaminationAudit:
 # ============================================================================
 # Representative sampling tests
 # ============================================================================
+
+def test_filter_candidates_by_duration_keeps_inclusive_bounds():
+    """Only keep numeric finite durations in [0.5, 30.0]."""
+    df = pd.DataFrame({
+        "record_uid": [f"u{i}" for i in range(8)],
+        "group_id": [f"g{i}" for i in range(8)],
+        "duration_seconds": [0.49, 0.5, 1.0, 30.0, 30.01, float("nan"), -1.0, float("inf")],
+    })
+    out = filter_candidates_by_duration(df)
+    assert set(out["record_uid"]) == {"u1", "u2", "u3"}
+    durs = pd.to_numeric(out["duration_seconds"])
+    assert (durs >= NOTEBOOK03_COMPAT_MIN_DURATION).all()
+    assert (durs <= NOTEBOOK03_COMPAT_MAX_DURATION).all()
+
+
+def test_filter_candidates_by_duration_empty_and_missing_col():
+    empty = pd.DataFrame(columns=["record_uid", "duration_seconds"])
+    assert len(filter_candidates_by_duration(empty)) == 0
+    with pytest.raises(ValueError, match="duration_seconds"):
+        filter_candidates_by_duration(pd.DataFrame({"record_uid": ["a"]}))
+
+
+def test_duration_filter_then_sample_hits_validation_target_70():
+    """After duration filter, sampling can still hit validation target=70."""
+    rows = []
+    for i in range(120):
+        # Mix of in-range and out-of-range durations
+        dur = 1.0 + (i % 40) * 0.5  # 1.0 .. 20.5 for most
+        if i % 10 == 0:
+            dur = 45.0  # too long — must be dropped before sampling
+        rows.append({
+            "record_uid": f"v{i}",
+            "group_id": f"g{i % 20}",
+            "source_label": f"s{i % 4}",
+            "duration_seconds": dur,
+            "final_split": "validation",
+        })
+    raw = pd.DataFrame(rows)
+    filtered = filter_candidates_by_duration(raw)
+    assert (pd.to_numeric(filtered["duration_seconds"]) <= 30.0).all()
+    assert (pd.to_numeric(filtered["duration_seconds"]) >= 0.5).all()
+    assert filtered["record_uid"].nunique() >= 70
+
+    sel = select_representative_samples(filtered, n=70, seed=42)
+    assert len(sel) == 70
+    assert sel["record_uid"].nunique() == 70
+    assert set(sel["record_uid"]).issubset(set(filtered["record_uid"]))
+    # No out-of-range records selected
+    assert set(sel["record_uid"]).isdisjoint(set(raw.loc[raw["duration_seconds"] > 30, "record_uid"]))
+
+
+def test_duration_filter_then_sample_deterministic_and_clean_only():
+    """Deterministic selection; never picks UIDs outside the provided clean candidate pool."""
+    clean_uids = {f"clean-{i}" for i in range(100)}
+    rows = []
+    for i in range(100):
+        rows.append({
+            "record_uid": f"clean-{i}",
+            "group_id": f"g{i % 10}",
+            "source_label": f"s{i % 3}",
+            "duration_seconds": 2.0 + (i % 20),
+        })
+    # Contaminated / out-of-split decoys with valid duration must not appear if not in candidates
+    decoys = pd.DataFrame([
+        {"record_uid": "outside-1", "group_id": "gx", "source_label": "sx", "duration_seconds": 5.0},
+        {"record_uid": "outside-2", "group_id": "gy", "source_label": "sy", "duration_seconds": 8.0},
+    ])
+    pool = filter_candidates_by_duration(pd.DataFrame(rows))
+    assert set(pool["record_uid"]).issubset(clean_uids)
+
+    sel1 = select_representative_samples(pool, n=40, seed=7)
+    sel2 = select_representative_samples(pool, n=40, seed=7)
+    sel3 = select_representative_samples(pool, n=40, seed=99)
+    assert list(sel1["record_uid"]) == list(sel2["record_uid"])
+    assert set(sel1["record_uid"]) != set(sel3["record_uid"])
+    assert set(sel1["record_uid"]).issubset(clean_uids)
+    assert set(sel1["record_uid"]).isdisjoint(set(decoys["record_uid"]))
+
 
 def test_representative_sampling_balanced_data():
     """Test with balanced data."""
