@@ -1663,6 +1663,37 @@ def duration_bin(seconds: float | None) -> str:
     return "30s+"
 
 
+# Compatible with Notebook 03 ASR training duration gate (0.5–30 s).
+NOTEBOOK03_COMPAT_MIN_DURATION = 0.5
+NOTEBOOK03_COMPAT_MAX_DURATION = 30.0
+
+
+def filter_candidates_by_duration(
+    df: pd.DataFrame,
+    *,
+    min_duration: float = NOTEBOOK03_COMPAT_MIN_DURATION,
+    max_duration: float = NOTEBOOK03_COMPAT_MAX_DURATION,
+    duration_col: str = "duration_seconds",
+) -> pd.DataFrame:
+    """
+    Keep only rows whose ``duration_seconds`` is numeric, finite, and in
+    ``[min_duration, max_duration]`` (inclusive).
+
+    Used by Notebook 02 *before* representative sampling / caching so the
+    pilot cache pool is usable by Notebook 03 (which rejects clips outside
+    0.5–30 s). Does not mutate the input DataFrame.
+    """
+    if df is None or len(df) == 0:
+        return df.iloc[0:0].copy() if df is not None else pd.DataFrame()
+    if duration_col not in df.columns:
+        raise ValueError(f"filter_candidates_by_duration requires column {duration_col!r}")
+
+    durs = pd.to_numeric(df[duration_col], errors="coerce")
+    mask = durs.notna() & np.isfinite(durs.to_numpy(dtype=float, copy=False))
+    mask &= (durs >= float(min_duration)) & (durs <= float(max_duration))
+    return df.loc[mask].copy().reset_index(drop=True)
+
+
 def select_representative_samples(
     candidates: pd.DataFrame,
     *,

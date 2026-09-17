@@ -1,0 +1,17 @@
+check,passed
+data_contract_passed,True
+tokenizer_provenance_passed,True
+cache_pool_sufficient,True
+active_counts_correct,True
+split_overlaps_zero,True
+source_split_train_only,True
+ctc_feasibility_passed,True
+gradient_smoke_test_passed,True
+training_completed,True
+best_checkpoint_exists,True
+checkpoint_in_run_dir,True
+checkpoint_reload_ok,True
+predictions_count_match,True
+validation_metrics_valid,True
+frozen_test_not_accessed,True
+cross_file_run_id_consistent,True

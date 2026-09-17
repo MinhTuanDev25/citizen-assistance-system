@@ -1,10 +1,10 @@
 {
-  "run_id": "9ead5530-f078-4d45-bbad-c7b9c5495a08",
+  "run_id": "d0478702-32f0-4bf6-ae1b-6932c190a16b",
   "dataset_name": "cuong06/Bahnar_Vietnamese",
   "dataset_revision": "3d88d3951b1a6e3388559b341cd7bd274879d696",
   "seed": 42,
   "processing_version": "notebook02_audio_v3",
-  "timestamp_utc": "2026-09-11T14:58:57.378887+00:00",
+  "timestamp_utc": "2026-09-14T03:43:34.500451+00:00",
   "input_sha256": {
     "rq1_train.csv": "b9acbc3ff31411f22db0806b9cb1d59b518141ba7c7055e60981860192c7626a",
     "rq1_validation.csv": "5a7b13c87d0be684b351dfb02ea97f2efa64b1e7bc2a7e46ba2dd206ca9253f6",

@@ -1,0 +1,32 @@
+{
+  "run_id": "d12ba08d-68c6-4c76-a561-d9b8a06f5308",
+  "pilot_sampling_scope": "notebook02_verified_cache_pool",
+  "pilot_is_representative_final_evaluation": false,
+  "pilot_purpose": "pipeline_smoke_test_only",
+  "train_cache_pool_size": 777,
+  "validation_cache_pool_size": 74,
+  "pilot_train_target": 200,
+  "pilot_validation_target": 50,
+  "actual_train_records": 200,
+  "actual_validation_records": 50,
+  "split_overlaps": {
+    "record_uid": 0,
+    "group_id": 0,
+    "recording_group_id": 0,
+    "pair_key": 0
+  },
+  "train_group_coverage": {
+    "eligible_pool_size": 777,
+    "eligible_group_count": 293,
+    "active_group_count": 200,
+    "expected_active_groups": 200,
+    "group_coverage_ratio": 0.6825938566552902
+  },
+  "validation_group_coverage": {
+    "eligible_pool_size": 74,
+    "eligible_group_count": 13,
+    "active_group_count": 13,
+    "expected_active_groups": 13,
+    "group_coverage_ratio": 1.0
+  }
+}

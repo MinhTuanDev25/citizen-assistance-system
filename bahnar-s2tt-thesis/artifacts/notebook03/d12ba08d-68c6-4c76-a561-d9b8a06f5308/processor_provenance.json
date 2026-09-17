@@ -1,0 +1,12 @@
+{
+  "run_id": "d12ba08d-68c6-4c76-a561-d9b8a06f5308",
+  "tokenizer_dir": "/Users/minhtuan25/Desktop/MinhTuanCode/MasterAI/citizen-assistance-system/bahnar-s2tt-thesis/artifacts/tokenizers/bahnar_char_ctc",
+  "vocab_size": 140,
+  "pad_token_id": 0,
+  "unk_token_id": 1,
+  "word_delimiter_id": 2,
+  "feature_extractor_sampling_rate": 16000,
+  "model_id": "facebook/wav2vec2-xls-r-300m",
+  "model_revision": "1a640f32ac3e39899438a2931f9924c02f080a54",
+  "vocab_sha256": "30e9b1e2640a5d9d3fb513f2ab780bd49b4b7e2ae3908700c0561b1568c67422"
+}

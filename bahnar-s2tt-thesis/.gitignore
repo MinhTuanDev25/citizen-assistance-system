@@ -7,6 +7,7 @@ __pycache__/
 
 # Audio cache + large model blobs (do NOT ignore audit CSV/JSON)
 data/cache/notebook02_audio/
+data/cache/parquet_shards/
 checkpoints/**
 !checkpoints/.gitkeep
 predictions/**
@@ -19,6 +20,11 @@ predictions/**
 wandb/
 runs/
 lightning_logs/
+
+# Notebook 03 large artifacts (keep small JSON/CSV for reproducibility)
+checkpoints/notebook03/**
+!checkpoints/notebook03/.gitkeep
+artifacts/notebook03/logs/
 
 # Notebook checkpoints
 .ipynb_checkpoints/

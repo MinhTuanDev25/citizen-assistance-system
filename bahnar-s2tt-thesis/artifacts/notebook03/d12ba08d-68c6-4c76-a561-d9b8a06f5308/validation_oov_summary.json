@@ -1,0 +1,495 @@
+{
+  "run_id": "d12ba08d-68c6-4c76-a561-d9b8a06f5308",
+  "full_clean_validation_oov_chars": 43,
+  "active_validation_oov_chars": 18,
+  "records": [
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+002E",
+      "char": ".",
+      "count": 1544,
+      "n_records": 891,
+      "record_ratio": 0.0801763700170971
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+002C",
+      "char": ",",
+      "count": 1530,
+      "n_records": 738,
+      "record_ratio": 0.06640871051921174
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0042",
+      "char": "B",
+      "count": 778,
+      "n_records": 471,
+      "record_ratio": 0.04238279492486277
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+004B",
+      "char": "K",
+      "count": 748,
+      "n_records": 456,
+      "record_ratio": 0.041033024385854405
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0049",
+      "char": "I",
+      "count": 748,
+      "n_records": 341,
+      "record_ratio": 0.030684783586790245
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0053",
+      "char": "S",
+      "count": 716,
+      "n_records": 362,
+      "record_ratio": 0.03257446234140196
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0059",
+      "char": "Y",
+      "count": 645,
+      "n_records": 414,
+      "record_ratio": 0.037253666876630974
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0044",
+      "char": "D",
+      "count": 560,
+      "n_records": 384,
+      "record_ratio": 0.034554125798614235
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0022",
+      "char": "\"",
+      "count": 442,
+      "n_records": 281,
+      "record_ratio": 0.02528570143075677
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+003A",
+      "char": ":",
+      "count": 272,
+      "n_records": 247,
+      "record_ratio": 0.022226221542337804
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+004E",
+      "char": "N",
+      "count": 268,
+      "n_records": 233,
+      "record_ratio": 0.020966435705929994
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+004C",
+      "char": "L",
+      "count": 257,
+      "n_records": 223,
+      "record_ratio": 0.02006658867992441
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0050",
+      "char": "P",
+      "count": 215,
+      "n_records": 169,
+      "record_ratio": 0.015207414739494286
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0054",
+      "char": "T",
+      "count": 183,
+      "n_records": 155,
+      "record_ratio": 0.013947628903086476
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+004D",
+      "char": "M",
+      "count": 143,
+      "n_records": 134,
+      "record_ratio": 0.01205795014847476
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0110",
+      "char": "Đ",
+      "count": 124,
+      "n_records": 109,
+      "record_ratio": 0.009808332583460812
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+004A",
+      "char": "J",
+      "count": 115,
+      "n_records": 98,
+      "record_ratio": 0.008818500854854675
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+003F",
+      "char": "?",
+      "count": 88,
+      "n_records": 79,
+      "record_ratio": 0.007108791505444074
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+01A0",
+      "char": "Ơ",
+      "count": 80,
+      "n_records": 78,
+      "record_ratio": 0.007018806802843516
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0041",
+      "char": "A",
+      "count": 74,
+      "n_records": 60,
+      "record_ratio": 0.005399082156033475
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+003B",
+      "char": ";",
+      "count": 65,
+      "n_records": 60,
+      "record_ratio": 0.005399082156033475
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0048",
+      "char": "H",
+      "count": 61,
+      "n_records": 45,
+      "record_ratio": 0.004049311617025105
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0047",
+      "char": "G",
+      "count": 45,
+      "n_records": 43,
+      "record_ratio": 0.0038693422118239898
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+00CA",
+      "char": "Ê",
+      "count": 19,
+      "n_records": 18,
+      "record_ratio": 0.0016197246468100423
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+01AF",
+      "char": "Ư",
+      "count": 14,
+      "n_records": 14,
+      "record_ratio": 0.0012597858364078107
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0052",
+      "char": "R",
+      "count": 13,
+      "n_records": 13,
+      "record_ratio": 0.0011698011338072529
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0043",
+      "char": "C",
+      "count": 11,
+      "n_records": 7,
+      "record_ratio": 0.0006298929182039053
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+00D4",
+      "char": "Ô",
+      "count": 7,
+      "n_records": 7,
+      "record_ratio": 0.0006298929182039053
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+00C2",
+      "char": "Â",
+      "count": 5,
+      "n_records": 5,
+      "record_ratio": 0.0004499235130027895
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0056",
+      "char": "V",
+      "count": 5,
+      "n_records": 4,
+      "record_ratio": 0.0003599388104022316
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0331",
+      "char": "̱",
+      "count": 3,
+      "n_records": 2,
+      "record_ratio": 0.0001799694052011158
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+201C",
+      "char": "“",
+      "count": 3,
+      "n_records": 1,
+      "record_ratio": 8.99847026005579e-05
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0045",
+      "char": "E",
+      "count": 2,
+      "n_records": 2,
+      "record_ratio": 0.0001799694052011158
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0055",
+      "char": "U",
+      "count": 2,
+      "n_records": 2,
+      "record_ratio": 0.0001799694052011158
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+002F",
+      "char": "/",
+      "count": 2,
+      "n_records": 1,
+      "record_ratio": 8.99847026005579e-05
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0058",
+      "char": "X",
+      "count": 2,
+      "n_records": 2,
+      "record_ratio": 0.0001799694052011158
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0025",
+      "char": "%",
+      "count": 2,
+      "n_records": 2,
+      "record_ratio": 0.0001799694052011158
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+201D",
+      "char": "”",
+      "count": 2,
+      "n_records": 1,
+      "record_ratio": 8.99847026005579e-05
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0051",
+      "char": "Q",
+      "count": 2,
+      "n_records": 1,
+      "record_ratio": 8.99847026005579e-05
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0057",
+      "char": "W",
+      "count": 1,
+      "n_records": 1,
+      "record_ratio": 8.99847026005579e-05
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0102",
+      "char": "Ă",
+      "count": 1,
+      "n_records": 1,
+      "record_ratio": 8.99847026005579e-05
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+0021",
+      "char": "!",
+      "count": 1,
+      "n_records": 1,
+      "record_ratio": 8.99847026005579e-05
+    },
+    {
+      "scope": "full_clean_validation",
+      "code_point": "U+2013",
+      "char": "–",
+      "count": 1,
+      "n_records": 1,
+      "record_ratio": 8.99847026005579e-05
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+002C",
+      "char": ",",
+      "count": 17,
+      "n_records": 6,
+      "record_ratio": 0.12
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+002E",
+      "char": ".",
+      "count": 12,
+      "n_records": 8,
+      "record_ratio": 0.16
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+004B",
+      "char": "K",
+      "count": 7,
+      "n_records": 7,
+      "record_ratio": 0.14
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+0053",
+      "char": "S",
+      "count": 5,
+      "n_records": 4,
+      "record_ratio": 0.08
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+0059",
+      "char": "Y",
+      "count": 5,
+      "n_records": 3,
+      "record_ratio": 0.06
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+0022",
+      "char": "\"",
+      "count": 5,
+      "n_records": 3,
+      "record_ratio": 0.06
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+0042",
+      "char": "B",
+      "count": 3,
+      "n_records": 3,
+      "record_ratio": 0.06
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+004C",
+      "char": "L",
+      "count": 2,
+      "n_records": 1,
+      "record_ratio": 0.02
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+003B",
+      "char": ";",
+      "count": 1,
+      "n_records": 1,
+      "record_ratio": 0.02
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+004D",
+      "char": "M",
+      "count": 1,
+      "n_records": 1,
+      "record_ratio": 0.02
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+003F",
+      "char": "?",
+      "count": 1,
+      "n_records": 1,
+      "record_ratio": 0.02
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+0057",
+      "char": "W",
+      "count": 1,
+      "n_records": 1,
+      "record_ratio": 0.02
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+004E",
+      "char": "N",
+      "count": 1,
+      "n_records": 1,
+      "record_ratio": 0.02
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+003A",
+      "char": ":",
+      "count": 1,
+      "n_records": 1,
+      "record_ratio": 0.02
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+01A0",
+      "char": "Ơ",
+      "count": 1,
+      "n_records": 1,
+      "record_ratio": 0.02
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+0050",
+      "char": "P",
+      "count": 1,
+      "n_records": 1,
+      "record_ratio": 0.02
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+0049",
+      "char": "I",
+      "count": 1,
+      "n_records": 1,
+      "record_ratio": 0.02
+    },
+    {
+      "scope": "active_validation",
+      "code_point": "U+0044",
+      "char": "D",
+      "count": 1,
+      "n_records": 1,
+      "record_ratio": 0.02
+    }
+  ]
+}
