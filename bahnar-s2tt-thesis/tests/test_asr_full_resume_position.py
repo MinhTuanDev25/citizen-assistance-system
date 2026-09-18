@@ -11,6 +11,7 @@ import json
 import subprocess
 import sys
 import textwrap
+from collections import UserDict
 from pathlib import Path
 
 import pytest
@@ -60,8 +61,62 @@ class TestUidTravelsOnBatch:
         assert batch[PRIVATE_BATCH_UID_KEY] == ["u1"]
         assert all("record_uid" not in f for f in seen[0])
 
+    def test_collator_accepts_userdict_mapping_batch(self):
+        # Regression: HF pad returns UserDict-like BatchEncoding/BatchFeature, not dict.
+        sink = {}
+
+        def inner(_feats):
+            return UserDict({"input_values": [1, 2], "labels": [3]})
+
+        collate = make_uid_tracking_collator(inner, sink)
+        batch = collate([{"record_uid": "u42", "input_values": [0]}])
+        assert isinstance(batch, dict)
+        assert not isinstance(batch, UserDict)
+        assert batch[PRIVATE_BATCH_UID_KEY] == ["u42"]
+        assert batch["input_values"] == [1, 2]
+        assert batch["labels"] == [3]
+
+    def test_collator_accepts_transformers_batch_feature(self):
+        pytest.importorskip("transformers", reason="transformers not installed")
+        from transformers.feature_extraction_utils import BatchFeature
+
+        sink = {}
+
+        def inner(_feats):
+            return BatchFeature({"input_values": [[0.1]], "attention_mask": [[1]]})
+
+        collate = make_uid_tracking_collator(inner, sink)
+        batch = collate([{"record_uid": "uid-bf", "input_values": [0.0]}])
+        assert isinstance(batch, dict)
+        assert batch[PRIVATE_BATCH_UID_KEY] == ["uid-bf"]
+        assert batch["input_values"] == [[0.1]]
+        assert batch["attention_mask"] == [[1]]
+        assert set(batch) - {PRIVATE_BATCH_UID_KEY} == {"input_values", "attention_mask"}
+
+    def test_trainer_strips_private_uid_before_model_forward(self):
+        sink = {}
+        collate = make_uid_tracking_collator(
+            lambda _f: UserDict({"x": 1, "y": 2}),
+            sink,
+        )
+        seen_inputs = []
+
+        class Base:
+            def training_step(self, model, inputs, *a, **k):
+                seen_inputs.append(dict(inputs))
+                assert PRIVATE_BATCH_UID_KEY not in inputs
+                return "loss"
+
+        tracked = make_uid_tracking_trainer_cls(Base, sink)()
+        batch = collate([{"record_uid": "u7"}])
+        assert PRIVATE_BATCH_UID_KEY in batch
+        tracked.training_step(None, batch)
+        assert sink["first_consumed_uids"] == ["u7"]
+        assert seen_inputs == [{"x": 1, "y": 2}]
+        assert PRIVATE_BATCH_UID_KEY not in seen_inputs[0]
+
     def test_prefetch_eight_microbatches_still_records_first_training_step_uid(self):
-        """Collator may run ahead; only the first training_step inputs count."""
+        # Collator may run ahead; only the first training_step inputs count.
         sink = {}
         collate = make_uid_tracking_collator(lambda feats: {"x": 1}, sink)
 
@@ -71,14 +126,11 @@ class TestUidTravelsOnBatch:
                 return "loss"
 
         tracked = make_uid_tracking_trainer_cls(Base, sink)()
-        # Prefetch 8 collated batches (as if dataloader ran ahead).
         batches = [collate([{"record_uid": f"u{i}"}]) for i in range(8)]
-        # Resume skip consumes first 4 without training_step, then trains on u4.
         for batch in batches[4:5]:
             tracked.training_step(None, batch)
         assert sink["first_consumed_uids"] == ["u4"]
         assert sink["first_consumed_from_inputs"] is True
-        # Later steps do not overwrite the first-consumed proof.
         tracked.training_step(None, batches[5])
         assert sink["first_consumed_uids"] == ["u4"]
 
@@ -93,7 +145,6 @@ class TestUidTravelsOnBatch:
         tracked = make_uid_tracking_trainer_cls(Base, sink)()
         for uid in ("u0", "u1", "u2", "u3", "u4"):
             batch = collate([{"record_uid": uid}])
-        # Only the last collated batch is passed to training_step (after skips).
         tracked.training_step(None, batch)
         assert sink["first_consumed_uids"] == ["u4"]
 
@@ -106,11 +157,10 @@ class TestEvaluateDataPosition:
         assert "offset_matches" not in out
 
     def test_nonzero_skipped_offset_does_not_false_fail(self):
-        """Regression: previously comparing collate index to skip offset failed wrongly."""
+        # Regression: previously comparing collate index to skip offset failed wrongly.
         sink = {
             "first_consumed_uids": ["u32"],
             "first_consumed_from_inputs": True,
-            # Stale fields from older implementation must be ignored.
             "first_consumed_batch_index": 0,
             "collated_batches": [["u0"], ["u8"], ["u16"], ["u24"], ["u32"]],
         }

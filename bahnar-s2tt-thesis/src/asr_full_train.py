@@ -2187,10 +2187,13 @@ def make_uid_tracking_collator(inner_collator: Any, sink: Dict[str, Any]) -> Any
             for f in features
         ]
         batch = inner_collator(clean)
-        if not isinstance(batch, dict):
+        if not isinstance(batch, Mapping):
             raise TypeError(
-                "UID-tracking collator requires the inner collator to return a dict batch"
+                "UID-tracking collator requires the inner collator to return a mapping batch"
             )
+        # HF feature_extractor.pad(..., return_tensors="pt") yields BatchEncoding /
+        # BatchFeature (UserDict-like), not a plain dict — normalize before mutate.
+        batch = dict(batch)
         batch[PRIVATE_BATCH_UID_KEY] = list(uids)
         return batch
 
@@ -2209,8 +2212,8 @@ def make_uid_tracking_trainer_cls(base_cls: Any, sink: Dict[str, Any]) -> Any:
     class UidTrackingTrainer(base_cls):  # type: ignore[misc,valid-type]
         def training_step(self, model, inputs, *args, **kwargs):
             uids: List[str] = []
-            if isinstance(inputs, dict) and PRIVATE_BATCH_UID_KEY in inputs:
-                raw = inputs.pop(PRIVATE_BATCH_UID_KEY)
+            if isinstance(inputs, Mapping) and PRIVATE_BATCH_UID_KEY in inputs:
+                raw = inputs.pop(PRIVATE_BATCH_UID_KEY)  # type: ignore[union-attr]
                 uids = [str(u) for u in (raw or [])]
             if "first_consumed_uids" not in sink:
                 sink["first_consumed_uids"] = list(uids)
