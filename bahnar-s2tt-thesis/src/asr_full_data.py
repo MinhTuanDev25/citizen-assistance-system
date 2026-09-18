@@ -2,8 +2,8 @@
 Full-training data preparation for Notebook 03.
 
 Shard-sequential Parquet reading, deterministic filtering, durable prepare state.
-Does NOT write ~100k WAVs onto Google Drive — eligible CSVs/state go to
-FULL_STATE_DIR; optional local audio cache stays on local disk only.
+Does NOT write bulk WAVs onto durable storage — eligible CSVs/state go under
+the contract-scoped durable state dir; optional audio cache stays on LOCAL_ROOT.
 """
 from __future__ import annotations
 
@@ -21,6 +21,13 @@ from src.asr_utils import (
     classify_cache_status,
     is_forbidden_test_path,
 )
+from src.asr_runtime_paths import (
+    EFFECTIVE_EXCLUSIONS_CSV,
+    EFFECTIVE_MANIFEST_SUMMARY,
+    EFFECTIVE_TRAIN_MANIFEST,
+    EFFECTIVE_VAL_MANIFEST,
+    OVERLAP_POLICY_PAIR_KEY_TRAIN_DROP,
+)
 from src.data_utils import (
     encode_text_with_vocab,
     normalize_bahnar_ctc_v1,
@@ -34,15 +41,16 @@ STATUS_FULL_PREPARE = "SUCCESS_FULL_PREPARE"
 STATUS_FAILED = "FAILED"
 
 FULL_PREPARE_MIN_DURATION = 0.5
-FULL_PREPARE_MAX_DURATION = 30.0
+FULL_PREPARE_MAX_DURATION = 40.0
+
+PAIR_KEY_TRAIN_EXCLUSION_REASON = "train_validation_pair_key_overlap"
 
 ELIGIBLE_TRAIN_CSV = "full_train_eligible.csv"
 ELIGIBLE_VAL_CSV = "full_validation_eligible.csv"
 EXCLUSIONS_CSV = "full_data_exclusions.csv"
 SUMMARY_JSON = "full_data_summary.json"
-# Bumped when prepare artifacts change shape. Prepare has never been run against
-# Drive, so incompatible state is rejected outright rather than migrated.
-PREPARE_STATE_SCHEMA_VERSION = "full_prepare_v2_metadata_only"
+# Bumped for MAX=40 + pair_key train-drop policy + contract-scoped state dirs.
+PREPARE_STATE_SCHEMA_VERSION = "full_prepare_v3_max40_pairkey_drop"
 PREPARE_STATE_JSON = "full_prepare_state.json"
 
 EXCLUSION_COLUMNS = [
@@ -197,11 +205,160 @@ def check_split_overlaps(
     return overlaps
 
 
+def pair_keys_overlapping_validation(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    *,
+    pair_col: str = "pair_key",
+) -> Set[str]:
+    """``pair_key`` values present in both splits (empty string keys ignored)."""
+    if pair_col not in train_df.columns or pair_col not in val_df.columns:
+        raise RuntimeError(
+            f"pair_key overlap requires column {pair_col!r} on both frames (fail-closed)"
+        )
+    train_keys = {str(x) for x in train_df[pair_col].dropna().astype(str) if str(x)}
+    val_keys = {str(x) for x in val_df[pair_col].dropna().astype(str) if str(x)}
+    return train_keys & val_keys
+
+
+def drop_train_pair_key_overlaps(
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    *,
+    pair_col: str = "pair_key",
+    uid_col: str = "record_uid",
+    reason: str = PAIR_KEY_TRAIN_EXCLUSION_REASON,
+) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any]]:
+    """
+    Remove from **train only** every row whose ``pair_key`` appears in validation.
+
+    Validation is returned unchanged. Dropped train rows become an exclusions
+    frame with ``reason`` set; the count is derived from the data, never hardcoded.
+    Intra-train duplicate ``pair_key`` values that do not appear in validation
+    are left alone.
+    """
+    overlapping = pair_keys_overlapping_validation(train_df, val_df, pair_col=pair_col)
+    if not overlapping:
+        empty = pd.DataFrame(columns=EXCLUSION_COLUMNS)
+        return train_df.copy().reset_index(drop=True), empty, {
+            "overlap_policy": OVERLAP_POLICY_PAIR_KEY_TRAIN_DROP,
+            "overlapping_pair_keys": 0,
+            "train_rows_dropped": 0,
+            "validation_rows": int(len(val_df)),
+            "train_rows_kept": int(len(train_df)),
+        }
+
+    mask = train_df[pair_col].astype(str).isin(overlapping)
+    dropped = train_df.loc[mask].copy()
+    kept = train_df.loc[~mask].copy().reset_index(drop=True)
+    excl_rows: List[Dict[str, Any]] = []
+    for _, row in dropped.iterrows():
+        excl_rows.append(
+            {
+                "split": "train",
+                "record_uid": str(row.get(uid_col, "")),
+                "record_id": str(row.get("record_id", "")),
+                "group_id": str(row.get("group_id", "")),
+                "parquet_file": str(row.get("parquet_file", "")),
+                "shard_row_index": row.get("shard_row_index", ""),
+                "reason": reason,
+                "detail": f"{pair_col}={row.get(pair_col)}",
+            }
+        )
+    excl = pd.DataFrame(excl_rows, columns=EXCLUSION_COLUMNS)
+    report = {
+        "overlap_policy": OVERLAP_POLICY_PAIR_KEY_TRAIN_DROP,
+        "overlapping_pair_keys": int(len(overlapping)),
+        "train_rows_dropped": int(len(dropped)),
+        "validation_rows": int(len(val_df)),
+        "train_rows_kept": int(len(kept)),
+        "validation_unchanged": True,
+    }
+    return kept, excl, report
+
+
+def write_effective_manifests(
+    *,
+    state_dir: Union[str, Path],
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    train_exclusions: Optional[pd.DataFrame] = None,
+    source_train_path: Optional[str] = None,
+    source_val_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Persist effective train/validation manifests for Notebooks 03–05.
+
+    Does not modify the original ``rq1_*.csv`` files. Validation is written as
+    provided; train is the post-pair_key-drop frame.
+    """
+    from src.asr_full_shards import compute_manifest_content_hash
+
+    state_dir = Path(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    train_out = train_df.copy().reset_index(drop=True)
+    val_out = val_df.copy().reset_index(drop=True)
+    excl = (
+        train_exclusions
+        if train_exclusions is not None
+        else pd.DataFrame(columns=EXCLUSION_COLUMNS)
+    )
+    train_path = state_dir / EFFECTIVE_TRAIN_MANIFEST
+    val_path = state_dir / EFFECTIVE_VAL_MANIFEST
+    excl_path = state_dir / EFFECTIVE_EXCLUSIONS_CSV
+    _atomic_write_csv(train_path, train_out)
+    _atomic_write_csv(val_path, val_out)
+    _atomic_write_csv(excl_path, excl.reindex(columns=EXCLUSION_COLUMNS), EXCLUSION_COLUMNS)
+    summary = {
+        "overlap_policy": OVERLAP_POLICY_PAIR_KEY_TRAIN_DROP,
+        "source_train_path": source_train_path,
+        "source_validation_path": source_val_path,
+        "effective_train_path": str(train_path),
+        "effective_validation_path": str(val_path),
+        "effective_exclusions_path": str(excl_path),
+        "train_count": int(len(train_out)),
+        "validation_count": int(len(val_out)),
+        "exclusion_count": int(len(excl)),
+        "train_manifest_content_hash": compute_manifest_content_hash(train_out),
+        "validation_manifest_content_hash": compute_manifest_content_hash(val_out),
+        "written_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    (state_dir / EFFECTIVE_MANIFEST_SUMMARY).write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return summary
+
+
+def estimate_hydrate_wav_bytes(eligible_df: pd.DataFrame) -> int:
+    """Sum exact canonical WAV sizes from eligible ``n_samples`` (fail if missing)."""
+    from src.asr_full_pcm import wav_bytes_for_samples
+
+    if eligible_df is None or len(eligible_df) == 0:
+        return 0
+    if "n_samples" not in eligible_df.columns:
+        raise RuntimeError(
+            "Hydrate disk preflight requires n_samples on eligible rows (fail-closed)"
+        )
+    total = 0
+    for raw in eligible_df["n_samples"].tolist():
+        try:
+            n = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"Invalid n_samples in eligible frame: {raw!r}") from exc
+        if n < 0:
+            raise RuntimeError(f"Negative n_samples in eligible frame: {n}")
+        total += wav_bytes_for_samples(n)
+    return int(total)
+
+
+def assert_no_frozen_paths(paths: Iterable[Any]) -> None:
+    assert_no_forbidden_paths(paths)
+
+
 def assert_no_forbidden_paths(paths: Iterable[Any]) -> None:
     bad = [str(p) for p in paths if is_forbidden_test_path(str(p))]
     if bad:
         raise RuntimeError(f"Frozen-test path access forbidden: {bad[:5]}")
-
 
 def assert_row_accounting(
     *,
@@ -256,7 +413,7 @@ def verify_cached_wav_usable(
     expected_processing_version: str,
 ) -> Dict[str, Any]:
     """
-    Re-validate a cached WAV for training after Colab reset.
+    Re-validate a cached WAV for training after a session reset.
 
     Checks existence + sample rate + duration + finite + checksum + provenance
     via classify_cache_status (not mere path existence).
@@ -316,7 +473,7 @@ def assert_sidecar_required_fields(
     Fail-closed validation of an NB02 per-file cache sidecar.
 
     A sidecar without a valid ``cache_sha256`` cannot prove the WAV survived a
-    Colab reset intact, so it is rejected rather than trusted.
+    session reset intact, so it is rejected rather than trusted.
     """
     from src.data_utils import is_valid_sha256
 
@@ -544,12 +701,15 @@ def prefilter_clean_split(
     assert_no_forbidden_paths(
         [str(p) for p in clean_df.get("parquet_file", pd.Series(dtype=str)).dropna().astype(str).tolist()]
     )
-    # Forbidden split names in columns
+    # Forbidden split names in columns (case / hyphen insensitive).
     for col in ("source_split", "split"):
         if col in clean_df.columns:
-            vals = set(clean_df[col].dropna().astype(str).unique())
-            if vals & {"test", "rq1_test", "frozen_test"}:
-                raise RuntimeError(f"Forbidden split values in {col}: {vals}")
+            bad = {
+                raw for raw in clean_df[col].dropna().astype(str).unique()
+                if is_frozen_split_label(raw)
+            }
+            if bad:
+                raise RuntimeError(f"Forbidden split values in {col}: {bad}")
 
     dur_kept, dur_excl = filter_by_duration(
         clean_df, min_duration=min_duration, max_duration=max_duration

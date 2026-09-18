@@ -1,10 +1,10 @@
 """
 One-pass shard streaming prepare + per-shard audio hydrate for Notebook 03.
 
-Design (metadata-only on Drive):
-  * Google Drive (``FULL_STATE_DIR``) holds ONLY state, eligible/exclusion CSVs
+Design (metadata-only on durable storage):
+  * Durable ``FULL_STATE_DIR`` holds ONLY state, eligible/exclusion CSVs
     and one sidecar index per shard. Never bulk WAV, never ~92k JSON files.
-  * Bulk audio lives on local disk and is disposable: a new Colab session
+  * Bulk audio lives on local disk and is disposable: a new RunPod session
     re-hydrates it per shard straight from the pinned parquet snapshot and
     verifies bytes against the stored ``sha256_pcm`` — no re-running QA
     (duration gate / CTC feasibility / normalisation) for completed shards.
@@ -166,7 +166,7 @@ def assert_uid_set_accounting(
 
 
 # ---------------------------------------------------------------------------
-# Per-shard sidecar index (durable on Drive, one file per shard)
+# Per-shard sidecar index (durable on FULL_STATE_DIR, one file per shard)
 # ---------------------------------------------------------------------------
 
 def audio_index_dir(state_dir: Union[str, Path]) -> Path:
@@ -770,7 +770,7 @@ def hydrate_rows_audio(
     """
     Make local audio available for an arbitrary set of eligible rows.
 
-    Used by resume-test / train after a Colab reset: only the shards that own
+    Used by resume-test / train after a session reset: only the shards that own
     the requested rows are downloaded, and only the missing files are rewritten.
     """
     plans = build_shard_plans(
@@ -1117,7 +1117,7 @@ def run_full_prepare_streaming(
 
     Prepare is metadata-only by default (``write_audio=False``): audio is
     decoded, QA'd and hashed but no WAV is kept, because local audio does not
-    survive a Colab reset anyway. Stages that need audio hydrate it on demand.
+    survive a session reset anyway. Stages that need audio hydrate it on demand.
     """
     from src.asr_full_data import (
         ELIGIBLE_COLUMNS,

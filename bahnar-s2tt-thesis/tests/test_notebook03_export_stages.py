@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 NB_PATH = Path(__file__).resolve().parents[1] / "notebooks" / "03_asr_baseline_training.ipynb"
-EXPORT_CELL_MARKER = "Copy this run's artifacts to Drive"
+EXPORT_CELL_MARKER = "Export run artifacts to DURABLE_ROOT"
 
 
 def export_cell_source() -> str:
@@ -31,22 +31,26 @@ def export_cell_source() -> str:
 
 def _namespace(tmp_path: Path, *, full_stage: str, contract=None, best=None):
     """A minimal stand-in for the notebook globals the export cell reads."""
-    drive_root = tmp_path / "drive"
+    durable_root = tmp_path / "durable"
     artifacts = tmp_path / "artifacts"
     results = tmp_path / "results"
-    state_dir = drive_root / "full_state"
-    for d in (drive_root, artifacts, results, state_dir):
+    state_dir = durable_root / "bahnar_s2tt" / "full_state" / "contract_test"
+    for d in (durable_root, artifacts, results, state_dir):
         d.mkdir(parents=True, exist_ok=True)
     (artifacts / "artifact_manifest.json").write_text("{}", encoding="utf-8")
     (results / "run_summary.json").write_text("{}", encoding="utf-8")
 
     called = {"resolve_best": 0, "copied": []}
 
-    def _resolve_best(state, *, experiment_id, train_summary, expected_contract):
+    def _resolve_best(state, *, experiment_id, train_summary, expected_contract, local_experiment_dir=None):
         called["resolve_best"] += 1
+        called["local_experiment_dir"] = local_experiment_dir
         if best is None:
             raise RuntimeError("no valid best checkpoint")
         return best
+
+    class _RuntimePaths:
+        export_root = durable_root / "exports" / "notebook03_runs"
 
     return called, {
         "RUN_ID": "run-test",
@@ -54,8 +58,9 @@ def _namespace(tmp_path: Path, *, full_stage: str, contract=None, best=None):
         "FULL_STAGE": full_stage,
         "FULL_EXPERIMENT_ID": "full_xlsr300m_v1",
         "FULL_TRAIN_MARKER": "full_train",
-        "DRIVE_ROOT": drive_root,
-        "DRIVE_MOUNT_POINT": tmp_path / "mount",
+        "DURABLE_ROOT": durable_root,
+        "LOCAL_ROOT": tmp_path / "local",
+        "RUNTIME_PATHS": _RuntimePaths(),
         "FULL_STATE_DIR": state_dir,
         "LOCAL_CKPT_ROOT": tmp_path / "ckpt",
         "PATHS": {
@@ -66,9 +71,10 @@ def _namespace(tmp_path: Path, *, full_stage: str, contract=None, best=None):
         },
         "full_stage_contract": contract,
         "json": json,
-        "resolve_best_checkpoint_from_drive": _resolve_best,
+        "Path": Path,
+        "resolve_best_checkpoint_from_durable": _resolve_best,
         "experiment_checkpoint_dir": lambda root, exp, *, kind: Path(root) / kind / exp,
-        "drive_experiment_dir": lambda root, exp, *, kind: Path(root) / kind / exp,
+        "durable_experiment_dir": lambda root, exp, *, kind: Path(root) / kind / exp,
     }
 
 
@@ -78,7 +84,7 @@ def _run(ns: dict) -> dict:
 
 
 def _destination(ns: dict) -> Path:
-    return ns["DRIVE_ROOT"] / "Bahnar_S2TT_Thesis" / "notebook03_runs" / ns["RUN_ID"]
+    return Path(ns["RUNTIME_PATHS"].export_root) / ns["RUN_ID"]
 
 
 class TestPrepareStage:
@@ -149,6 +155,8 @@ class TestTrainAndEvaluateStages:
         _run(ns)
 
         assert called["resolve_best"] == 1
+        assert called["local_experiment_dir"] is not None
+        assert Path(called["local_experiment_dir"]).name == "full_xlsr300m_v1"
         pointer = json.loads(
             (_destination(ns) / "full_export_pointer.json").read_text(encoding="utf-8")
         )

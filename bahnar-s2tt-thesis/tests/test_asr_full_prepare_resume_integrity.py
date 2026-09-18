@@ -1,7 +1,7 @@
 """
 Resume integrity of the metadata-only prepare pass.
 
-Prepare for the full run spans several Colab sessions, so everything it commits
+Prepare for the full run spans several RunPod sessions, so everything it commits
 has to be provable on the next session rather than merely present. These tests
 cover the two ways that used to fail silently or crash: a split that legitimately
 has zero eligible rows, and durable artefacts whose bytes no longer match what

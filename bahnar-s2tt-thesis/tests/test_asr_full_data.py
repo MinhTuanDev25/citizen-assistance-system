@@ -74,9 +74,13 @@ class TestDurationAndTextFilters:
             _row("c", "3", "s0.parquet", 2, 30.0, "ok"),
             _row("d", "4", "s0.parquet", 3, 30.01, "ok"),
         ])
-        kept, excl = filter_by_duration(df)
+        kept, excl = filter_by_duration(df, min_duration=0.5, max_duration=30.0)
         assert set(kept["record_uid"]) == {"b", "c"}
         assert set(excl["record_uid"]) == {"a", "d"}
+        # Default gate is MAX=40: 30.01s is kept, 0.49s still excluded.
+        kept40, excl40 = filter_by_duration(df)
+        assert set(kept40["record_uid"]) == {"b", "c", "d"}
+        assert set(excl40["record_uid"]) == {"a"}
 
     def test_empty_normalized_excluded(self):
         df = pd.DataFrame([

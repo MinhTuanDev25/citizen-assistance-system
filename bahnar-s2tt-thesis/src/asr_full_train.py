@@ -5,18 +5,21 @@ Pilot and resume-test checkpoints must NEVER initialize full training.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import pandas as pd
 
 from src.asr_utils import checkpoint_belongs_to_run, is_forbidden_test_path, sample_pilot_data
-from src.asr_full_data import load_prepare_success
+from src.asr_full_data import is_frozen_split_label, load_prepare_success
+from src.asr_full_pcm import AUDIO_PCM_PIPELINE_VERSION
+from src.asr_runtime_paths import OVERLAP_POLICY_PAIR_KEY_TRAIN_DROP
 
 STATUS_FULL_RESUME_TEST = "SUCCESS_FULL_RESUME_TEST"
 STATUS_FULL_TRAINING = "SUCCESS_FULL_TRAINING"
@@ -29,7 +32,7 @@ FULL_TRAIN_MARKER = "full_train"
 RESUME_TEST_PHASE_A_STEPS = 100
 RESUME_TEST_PHASE_B_STEPS = 200
 
-STAGE_VERSION_PREPARE = "full_prepare_v1"
+STAGE_VERSION_PREPARE = "full_prepare_v2"
 STAGE_VERSION_RESUME_TEST = "full_resume_test_v1"
 STAGE_VERSION_TRAIN = "full_train_v1"
 STAGE_VERSION_EVALUATE = "full_evaluate_v1"
@@ -44,11 +47,14 @@ DATA_CONTRACT_KEYS = (
     "validation_manifest_content_hash",
     "vocab_fp",
     "processing_version",
+    # Canonical PCM encode/decode pipeline id (distinct from NB02 processing_version).
+    "audio_pcm_pipeline_version",
     "min_duration",
     "max_duration",
     "target_sr",
     "pretrained_model_id",
     "pretrained_model_revision",
+    "overlap_policy",
     "stage_version",
 )
 
@@ -61,8 +67,6 @@ def _stable_json(obj: Any) -> str:
 
 
 def contract_hash(payload: Dict[str, Any], *, keys: Sequence[str]) -> str:
-    import hashlib
-
     subset = {k: payload.get(k) for k in keys if k in payload}
     return hashlib.sha256(_stable_json(subset).encode("utf-8")).hexdigest()
 
@@ -81,11 +85,17 @@ def build_data_contract(
     target_sr: int,
     pretrained_model_id: str,
     pretrained_model_revision: str,
+    overlap_policy: str = OVERLAP_POLICY_PAIR_KEY_TRAIN_DROP,
     stage_version: str = STAGE_VERSION_PREPARE,
+    audio_pcm_pipeline_version: str = AUDIO_PCM_PIPELINE_VERSION,
 ) -> Dict[str, Any]:
     """Prepare-stage contract — no full-train hparams required."""
     if not str(parquet_revision or "").strip():
         raise ValueError("parquet_revision is required in the data contract")
+    if not str(overlap_policy or "").strip():
+        raise ValueError("overlap_policy is required in the data contract")
+    if not str(audio_pcm_pipeline_version or "").strip():
+        raise ValueError("audio_pcm_pipeline_version is required in the data contract")
     payload = {
         "dataset_id": str(dataset_id),
         "dataset_revision": str(dataset_revision),
@@ -94,11 +104,13 @@ def build_data_contract(
         "validation_manifest_content_hash": str(validation_manifest_content_hash),
         "vocab_fp": str(vocab_fp),
         "processing_version": str(processing_version),
+        "audio_pcm_pipeline_version": str(audio_pcm_pipeline_version),
         "min_duration": float(min_duration),
         "max_duration": float(max_duration),
         "target_sr": int(target_sr),
         "pretrained_model_id": str(pretrained_model_id),
         "pretrained_model_revision": str(pretrained_model_revision),
+        "overlap_policy": str(overlap_policy),
         "stage_version": str(stage_version),
     }
     payload["contract_hash"] = contract_hash(payload, keys=DATA_CONTRACT_KEYS)
@@ -169,8 +181,10 @@ def build_training_contract(
     pretrained_model_id: str,
     pretrained_model_revision: str,
     hparams: Optional[Dict[str, Any]] = None,
+    audio_pcm_pipeline_version: str = AUDIO_PCM_PIPELINE_VERSION,
+    overlap_policy: str = OVERLAP_POLICY_PAIR_KEY_TRAIN_DROP,
 ) -> Dict[str, Any]:
-    """Backward-compatible wrapper → train_contract when hparams provided, else data_contract+experiment."""
+    """Wrapper → train_contract when hparams provided, else data_contract+experiment."""
     data = build_data_contract(
         dataset_id=dataset_id,
         dataset_revision=dataset_revision,
@@ -184,6 +198,8 @@ def build_training_contract(
         target_sr=target_sr,
         pretrained_model_id=pretrained_model_id,
         pretrained_model_revision=pretrained_model_revision,
+        audio_pcm_pipeline_version=audio_pcm_pipeline_version,
+        overlap_policy=overlap_policy,
     )
     if hparams:
         return build_train_contract(experiment_id=experiment_id, data_contract=data, hparams=hparams)
@@ -447,7 +463,7 @@ def _fingerprint_for(checkpoint_path: Path) -> Optional[Dict[str, Any]]:
     Resolve the fingerprint for a checkpoint directory.
 
     The trainer writes ``checkpoint-N`` under the experiment root, while the
-    Drive store nests them one level deeper (``<exp>/ckpts/checkpoint-N``), so
+    Durable store nests them one level deeper (``<exp>/ckpts/checkpoint-N``), so
     walk up a bounded number of levels instead of assuming a fixed depth.
     """
     node = Path(checkpoint_path)
@@ -482,33 +498,66 @@ def assert_checkpoint_allowed_for_full_train(
     experiment_id: str,
     require_complete: bool = True,
     expected_contract: Optional[Dict[str, Any]] = None,
+    experiment_root: Optional[Union[str, Path]] = None,
 ) -> str:
     """
     Validate resume checkpoint for FULL_STAGE=train.
     Raises if missing fingerprint, wrong experiment, or pilot/resume_test origin.
-    Path must be under configured ``full_train/<experiment_id>/``.
+    Path must lie under the configured ``full_train/<experiment_id>/`` root
+    (exact root when ``experiment_root`` is provided; otherwise the path's own
+    ``full_train/<experiment_id>`` parent must match).
     """
     if not checkpoint_path:
         raise RuntimeError("Resume checkpoint path is empty")
     cp = Path(checkpoint_path)
     if not cp.exists():
         raise RuntimeError(f"Resume checkpoint does not exist: {cp}")
+    cp_resolved = cp.resolve()
+    if experiment_root is not None:
+        root = Path(experiment_root).resolve()
+        try:
+            cp_resolved.relative_to(root)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Checkpoint must lie exactly under configured "
+                f"'{FULL_TRAIN_MARKER}/{experiment_id}/' root {root}, got {cp}"
+            ) from exc
+        if root.name != str(experiment_id) or root.parent.name != FULL_TRAIN_MARKER:
+            raise RuntimeError(
+                f"Configured experiment_root must be .../{FULL_TRAIN_MARKER}/{experiment_id}, "
+                f"got {root}"
+            )
+        # Direct child only: full_train/<experiment_id>/checkpoint-N (not nested archives).
+        parent = cp_resolved.parent if cp_resolved.name.startswith("checkpoint-") else cp_resolved
+        if parent != root:
+            raise RuntimeError(
+                f"Checkpoint must sit exactly under configured experiment_root {root}, "
+                f"got parent={parent}"
+            )
+    else:
+        parts = [p.lower() for p in cp.parts]
+        if FULL_TRAIN_MARKER not in parts:
+            raise RuntimeError(
+                f"Checkpoint must live under a '{FULL_TRAIN_MARKER}/' directory: {cp}"
+            )
+        try:
+            ft_idx = parts.index(FULL_TRAIN_MARKER)
+            exp_part = parts[ft_idx + 1] if ft_idx + 1 < len(parts) else ""
+        except ValueError:
+            exp_part = ""
+        if exp_part != str(experiment_id).lower():
+            raise RuntimeError(
+                f"Checkpoint experiment_id mismatch: must live under the configured root "
+                f"'{FULL_TRAIN_MARKER}/{experiment_id}/' but found segment {exp_part!r}: {cp}"
+            )
+        # Exact parent: checkpoint-N must sit directly in full_train/<experiment_id>/.
+        parent = cp.parent if cp.name.startswith("checkpoint-") else cp
+        if parent.name != str(experiment_id) or parent.parent.name != FULL_TRAIN_MARKER:
+            raise RuntimeError(
+                f"Checkpoint must sit exactly under '{FULL_TRAIN_MARKER}/{experiment_id}/', "
+                f"got parent={parent}"
+            )
     parts = [p.lower() for p in cp.parts]
-    if FULL_TRAIN_MARKER not in parts:
-        raise RuntimeError(
-            f"Checkpoint must live under a '{FULL_TRAIN_MARKER}/' directory: {cp}"
-        )
-    # Exact experiment directory segment after full_train
-    try:
-        ft_idx = parts.index(FULL_TRAIN_MARKER)
-        exp_part = parts[ft_idx + 1] if ft_idx + 1 < len(parts) else ""
-    except ValueError:
-        exp_part = ""
-    if exp_part != str(experiment_id).lower():
-        raise RuntimeError(
-            f"Checkpoint experiment_id mismatch: must live under the configured root "
-            f"'{FULL_TRAIN_MARKER}/{experiment_id}/' but found segment {exp_part!r}: {cp}"
-        )
     if PILOT_MARKER in parts or RESUME_TEST_MARKER in parts:
         raise RuntimeError(
             "Refusing to initialize full training from pilot or resume_test checkpoint path: "
@@ -624,15 +673,16 @@ def resolve_resume_checkpoint(
 
 
 # ---------------------------------------------------------------------------
-# Atomic checkpoint copy (local → Drive FULL_STATE_DIR)
+# Atomic checkpoint copy (local → durable FULL_STATE_DIR)
 # ---------------------------------------------------------------------------
 
 def atomic_restore_checkpoint_dir(src: Union[str, Path], dst: Union[str, Path]) -> Path:
     """
-    Copy one checkpoint/snapshot directory into place atomically.
+    Replace ``dst`` with a copy of ``src`` using rename-over with backup.
 
-    Scoped to a single checkpoint on purpose: pointing this at an experiment root
-    would replace the whole Drive tree and destroy the versioned snapshot store.
+    Sequence: copy → ``dst`` to ``.bak_replace`` → ``.tmp_copy`` to ``dst`` →
+    drop backup. A crash mid-flight leaves ``.bak_replace`` and/or ``.tmp_copy``
+    for the next call to recover or clean.
     """
     src = Path(src)
     dst = Path(dst)
@@ -640,22 +690,39 @@ def atomic_restore_checkpoint_dir(src: Union[str, Path], dst: Union[str, Path]) 
         raise FileNotFoundError(src)
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.parent / (dst.name + ".tmp_copy")
+    bak = dst.parent / (dst.name + ".bak_replace")
+
+    # Recover / clean debris from an interrupted prior replace.
+    if bak.exists() and not dst.exists():
+        os.replace(str(bak), str(dst))
+    elif bak.exists():
+        if bak.is_dir():
+            shutil.rmtree(bak)
+        else:
+            bak.unlink()
     if tmp.exists():
-        shutil.rmtree(tmp)
+        if tmp.is_dir():
+            shutil.rmtree(tmp)
+        else:
+            tmp.unlink()
+
     if src.is_dir():
         shutil.copytree(src, tmp)
     else:
         shutil.copy2(src, tmp)
+
     if dst.exists():
-        if dst.is_dir():
-            shutil.rmtree(dst)
-        else:
-            dst.unlink()
+        os.replace(str(dst), str(bak))
     os.replace(str(tmp), str(dst))
+    if bak.exists():
+        if bak.is_dir():
+            shutil.rmtree(bak)
+        else:
+            bak.unlink()
     return dst
 
 
-def drive_experiment_dir(
+def durable_experiment_dir(
     full_state_dir: Union[str, Path],
     experiment_id: str,
     *,
@@ -666,7 +733,103 @@ def drive_experiment_dir(
 
 CHECKPOINT_STORE_DIRNAME = "ckpts"
 SNAPSHOT_MANIFEST_NAME = "manifest.json"
-DEFAULT_DRIVE_CHECKPOINT_BUDGET_BYTES = 15 * 1024 ** 3
+ENV_DURABLE_CHECKPOINT_BUDGET_BYTES = "BAHNAR_DURABLE_CHECKPOINT_BUDGET_BYTES"
+
+
+def resolve_durable_checkpoint_budget_bytes(
+    value: Any = None,
+    *,
+    env: Optional[Mapping[str, str]] = None,
+    required: bool = True,
+) -> Optional[int]:
+    """
+    Resolve durable upload budget for checkpoint sync stages only.
+
+    No numeric default (including no 15GiB). When ``required`` is True (sync /
+    on_save paths), missing or non-positive values fail closed. Prepare and
+    evaluate must not call this with required=True.
+    """
+    raw: Any = value
+    if raw is None:
+        source = env if env is not None else os.environ
+        raw = source.get(ENV_DURABLE_CHECKPOINT_BUDGET_BYTES)
+    if raw is None or str(raw).strip() == "":
+        if required:
+            raise RuntimeError(
+                f"Durable checkpoint budget required for sync stages: set "
+                f"{ENV_DURABLE_CHECKPOINT_BUDGET_BYTES} to a positive byte count "
+                f"(no default). Prepare/evaluate do not need this."
+            )
+        return None
+    try:
+        budget = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"Invalid {ENV_DURABLE_CHECKPOINT_BUDGET_BYTES}={raw!r}; expected positive int bytes"
+        ) from exc
+    if budget <= 0:
+        raise RuntimeError(
+            f"Invalid durable checkpoint budget {budget}: must be a positive byte count"
+        )
+    return budget
+
+
+def collect_referenced_checkpoint_names(
+    *,
+    planned_names: Sequence[str],
+    lkg_names: Optional[Sequence[str]] = None,
+    rollback_names: Optional[Sequence[str]] = None,
+) -> List[str]:
+    """Unique checkpoint directory names referenced by planned + LKG/rollback."""
+    ordered: List[str] = []
+    seen = set()
+    for group in (planned_names, lkg_names or (), rollback_names or ()):
+        for name in group:
+            key = str(name)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            ordered.append(key)
+    return ordered
+
+
+def measure_unique_checkpoint_bytes(
+    store: Union[str, Path],
+    names: Sequence[str],
+    *,
+    local_sources: Optional[Dict[str, Path]] = None,
+    prefer_local: bool = False,
+) -> Dict[str, Any]:
+    """
+    Sum on-disk bytes for unique checkpoint names without double-counting.
+
+    Prefer durable store copies by default; set ``prefer_local=True`` when sizing
+    pending re-uploads so incomplete store debris is not mistaken for the full
+    payload that will be copied from local.
+    """
+    root = Path(store)
+    sources = dict(local_sources or {})
+    per: Dict[str, int] = {}
+    for name in names:
+        key = str(name)
+        src = sources.get(key)
+        if prefer_local and src is not None and Path(src).is_dir():
+            per[key] = measure_dir_bytes(src)
+            continue
+        target = root / key
+        if target.is_dir():
+            per[key] = measure_dir_bytes(target)
+            continue
+        if src is not None and Path(src).is_dir():
+            per[key] = measure_dir_bytes(src)
+        else:
+            per[key] = 0
+    return {
+        "names": list(per.keys()),
+        "per_checkpoint_bytes": per,
+        "total_bytes": int(sum(per.values())),
+    }
+
 
 
 def measure_dir_bytes(path: Union[str, Path]) -> int:
@@ -721,11 +884,11 @@ def plan_checkpoint_retention(
     save_total_limit: int = 2,
 ) -> Dict[str, Any]:
     """
-    Which checkpoint steps Drive should persist, in priority order.
+    Which checkpoint steps durable storage should persist, in priority order.
 
-    Latest is needed to resume, best is what evaluate loads, previous-latest is
-    the rollback. Ordinary step-ordered pruning would delete ``best`` as soon as
-    two newer checkpoints exist, which silently breaks evaluate.
+    Latest is needed to resume, best is what evaluate loads, previous-latest/LKG
+    is the rollback. Ordinary step-ordered pruning would delete ``best`` as soon
+    as two newer checkpoints exist, which silently breaks evaluate.
     """
     steps = sorted({int(s) for s in candidate_steps})
     if not steps:
@@ -743,14 +906,14 @@ def plan_checkpoint_retention(
     if prev is not None and prev in steps and prev not in reasons:
         priority.append(prev)
         reasons[prev] = "previous_latest"
-    limit = max(1, int(save_total_limit))
-    # Latest and best are mandatory; previous-latest is a bonus if the limit allows.
-    mandatory = [s for s in priority if reasons[s] in ("latest", "best")]
+    # latest + best + previous-latest/LKG are always protected when present.
+    mandatory = [s for s in priority if reasons[s] in ("latest", "best", "previous_latest")]
+    limit = max(len(mandatory), int(save_total_limit))
     keep = mandatory[:]
     for step in priority:
         if step in keep:
             continue
-        if len(keep) >= max(limit, len(mandatory)):
+        if len(keep) >= limit:
             break
         keep.append(step)
     keep = sorted(set(keep))
@@ -764,37 +927,63 @@ def plan_checkpoint_retention(
     }
 
 
-def drive_experiment_protected_bytes(
+def durable_experiment_protected_bytes(
     full_state_dir: Union[str, Path],
     experiment_id: str,
     *,
     kind: str,
 ) -> int:
-    """Bytes the current LATEST snapshot (the last-known-good) already occupies."""
-    snapshot = resolve_drive_latest_snapshot(full_state_dir, experiment_id, kind=kind)
-    if snapshot is None:
-        return 0
-    total = measure_dir_bytes(snapshot)
-    for ck in resolve_snapshot_checkpoints(snapshot):
-        total += measure_dir_bytes(ck)
-    return total
+    """
+    Unique durable bytes already occupied by every retained snapshot.
 
+    Matches sync accounting: LATEST ∪ rollback snapshot checkpoint refs (not
+    LATEST alone). Snapshot metadata directories are included once each.
+    """
+    dest_root = durable_experiment_dir(full_state_dir, experiment_id, kind=kind)
+    store = dest_root / CHECKPOINT_STORE_DIRNAME
+    names: List[str] = []
+    meta_bytes = 0
+    for ver in _snapshot_versions(dest_root):
+        snap = dest_root / "snapshots" / f"v{ver}"
+        if snap.is_dir():
+            meta_bytes += measure_dir_bytes(snap)
+        names.extend(list_snapshot_checkpoint_names(snap))
+    # Legacy flat LATEST / inline layout fallback.
+    latest = resolve_durable_latest_snapshot(full_state_dir, experiment_id, kind=kind)
+    if latest is not None and latest.parent.name != "snapshots":
+        meta_bytes += measure_dir_bytes(latest)
+        names.extend(list_snapshot_checkpoint_names(latest))
+    referenced = collect_referenced_checkpoint_names(
+        planned_names=(),
+        rollback_names=names,
+    )
+    if not store.is_dir():
+        return int(meta_bytes)
+    report = measure_unique_checkpoint_bytes(
+        store,
+        [n for n in referenced if (store / n).is_dir()],
+    )
+    return int(report["total_bytes"] + meta_bytes)
 
-def assert_drive_checkpoint_budget(
+def assert_durable_checkpoint_budget(
     *,
     protected_bytes: int,
     upload_bytes: int,
-    budget_bytes: int = DEFAULT_DRIVE_CHECKPOINT_BUDGET_BYTES,
-    label: str = "drive checkpoints",
+    budget_bytes: int,
+    label: str = "durable checkpoints",
     detail: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Budget gate for Drive using explicit accounting.
+    Budget gate for durable storage using explicit accounting.
 
-    ``/content/drive`` is a FUSE mount whose ``shutil.disk_usage`` does not
-    reflect the account quota, so the ceiling has to be configured and the bytes
-    counted by us. Never resolved by deleting the last-known-good.
+    ``budget_bytes`` must be supplied by the caller (resolved from
+    ``BAHNAR_DURABLE_CHECKPOINT_BUDGET_BYTES``); there is no numeric default.
+    Never resolved by deleting the last-known-good.
     """
+    if budget_bytes is None or int(budget_bytes) <= 0:
+        raise RuntimeError(
+            f"Durable checkpoint budget missing/invalid for {label}: {budget_bytes!r}"
+        )
     protected = int(protected_bytes)
     upload = int(upload_bytes)
     peak = protected + upload
@@ -809,14 +998,39 @@ def assert_drive_checkpoint_budget(
     }
     if not report["ok"]:
         raise RuntimeError(
-            f"Drive checkpoint budget exceeded for {label}: "
+            f"Durable checkpoint budget exceeded for {label}: "
             f"protected={protected / 1e9:.1f}GB + upload={upload / 1e9:.1f}GB "
             f"= {peak / 1e9:.1f}GB > budget={int(budget_bytes) / 1e9:.1f}GB. "
             f"Refusing to drop the last-known-good to make room; raise "
-            f"DRIVE_CHECKPOINT_BUDGET_BYTES or lower save_total_limit. "
+            f"{ENV_DURABLE_CHECKPOINT_BUDGET_BYTES} or lower save_total_limit. "
             f"detail={report['detail']}"
         )
     return report
+
+
+def plan_local_checkpoint_disk_peak(
+    *,
+    existing_checkpoint_bytes: int,
+    new_checkpoint_bytes: int,
+    hydrated_wav_bytes: int = 0,
+) -> Dict[str, Any]:
+    """
+    Peak local bytes before a durable upload finishes.
+
+    Existing checkpoints stay on disk while a new checkpoint is written, so the
+    peak is existing + temporary new — not max(existing, new). Hydrated WAV is
+    counted once by the caller (do not pass both a union estimate and a duplicate).
+    """
+    existing = max(0, int(existing_checkpoint_bytes))
+    new = max(0, int(new_checkpoint_bytes))
+    wav = max(0, int(hydrated_wav_bytes))
+    return {
+        "existing_checkpoint_bytes": existing,
+        "new_checkpoint_bytes": new,
+        "hydrated_wav_bytes": wav,
+        "checkpoint_peak_bytes": existing + new,
+        "total_peak_bytes": existing + new + wav,
+    }
 REQUIRED_CHECKPOINT_FILES = ("trainer_state.json", "optimizer.pt", "scheduler.pt", "rng_state.pth")
 MODEL_FILE_CANDIDATES = ("model.safetensors", "pytorch_model.bin")
 
@@ -830,15 +1044,66 @@ def _verify_checkpoint_dir_complete(path: Path) -> None:
         raise RuntimeError(f"Checkpoint incomplete after copy (missing {missing}): {path}")
 
 
-def _verify_checkpoint_tree(root: Path, *, experiment_id: str, kind: str) -> None:
-    fp = read_checkpoint_fingerprint(root)
-    if not fp or fp.get("kind") != kind or str(fp.get("experiment_id")) != str(experiment_id):
-        raise RuntimeError(f"Snapshot fingerprint invalid under {root}: {fp}")
-    steps = list_step_checkpoints(root)
-    if not steps:
-        # Allow empty freshly-initialized tree only if fingerprint present with step 0
-        if int(fp.get("global_step") or 0) > 0:
-            raise RuntimeError(f"Snapshot claims global_step>0 but has no checkpoints: {root}")
+def checkpoint_content_digest(checkpoint_dir: Union[str, Path]) -> Dict[str, Any]:
+    """
+    Content identity for one checkpoint directory.
+
+    Digest covers every regular file's relative path, size, and SHA-256 so a
+    same-named durable directory with different model bytes cannot be reused.
+    """
+    root = Path(checkpoint_dir)
+    if not root.is_dir():
+        raise FileNotFoundError(root)
+    files: List[Dict[str, Any]] = []
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        rel = path.relative_to(root).as_posix()
+        hasher = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        files.append(
+            {
+                "path": rel,
+                "size": int(path.stat().st_size),
+                "sha256": hasher.hexdigest(),
+            }
+        )
+    digest = hashlib.sha256(_stable_json({"files": files}).encode("utf-8")).hexdigest()
+    return {"digest": digest, "files": files, "n_files": len(files)}
+
+
+def list_snapshot_checkpoint_names(snapshot_dir: Union[str, Path]) -> List[str]:
+    """Names declared by a snapshot manifest (or inline legacy layout). No I/O verify."""
+    snap = Path(snapshot_dir)
+    manifest = read_snapshot_manifest(snap)
+    if manifest is None:
+        return [p.name for p in list_step_checkpoints(snap)]
+    return [str(name) for name in (manifest.get("checkpoints") or [])]
+
+
+def known_snapshot_checkpoint_digests(
+    dest_root: Union[str, Path],
+) -> Dict[str, str]:
+    """Latest known digest per checkpoint name across retained snapshots."""
+    root = Path(dest_root)
+    out: Dict[str, str] = {}
+    for ver in _snapshot_versions(root):
+        snap = root / "snapshots" / f"v{ver}"
+        manifest = read_snapshot_manifest(snap) or {}
+        digests = manifest.get("checkpoint_digests") or {}
+        for name, value in digests.items():
+            digest = value.get("digest") if isinstance(value, dict) else value
+            if digest:
+                out[str(name)] = str(digest)
+    return out
+
+
+def _checkpoint_dir_is_complete(path: Path) -> bool:
+    try:
+        _verify_checkpoint_dir_complete(path)
+        return True
+    except RuntimeError:
+        return False
 
 
 def _snapshot_versions(dest_root: Path) -> List[int]:
@@ -858,19 +1123,19 @@ def read_snapshot_manifest(snapshot_dir: Union[str, Path]) -> Optional[Dict[str,
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def sync_experiment_checkpoints_to_drive(
+def sync_experiment_checkpoints_to_durable(
     local_experiment_dir: Union[str, Path],
     full_state_dir: Union[str, Path],
     *,
     experiment_id: str,
     kind: str,
-    require_drive: bool = True,
+    require_durable: bool = True,
     best_checkpoint_name: Optional[str] = None,
     save_total_limit: int = 2,
-    budget_bytes: int = DEFAULT_DRIVE_CHECKPOINT_BUDGET_BYTES,
+    budget_bytes: Optional[int] = None,
 ) -> Optional[Path]:
     """
-    Incremental versioned sync: upload only checkpoints Drive does not have yet,
+    Incremental versioned sync: upload only checkpoints durable storage does not have yet,
     verify them, then commit a new ``snapshots/vN`` manifest and flip ``LATEST``.
 
     Copying the whole experiment tree on every save re-uploads gigabytes of
@@ -881,82 +1146,176 @@ def sync_experiment_checkpoints_to_drive(
     """
     local = Path(local_experiment_dir)
     if not local.is_dir():
-        if require_drive:
-            raise RuntimeError(f"Local experiment checkpoint dir missing for Drive sync: {local}")
+        if require_durable:
+            raise RuntimeError(f"Local experiment checkpoint dir missing for durable sync: {local}")
         return None
-    drive_root = Path(full_state_dir)
-    if not drive_root.exists():
-        if require_drive:
+    durable_root = Path(full_state_dir)
+    if not durable_root.exists():
+        if require_durable:
             raise RuntimeError(
-                f"Drive FULL_STATE_DIR missing for checkpoint sync (fail-closed): {drive_root}"
+                f"Durable FULL_STATE_DIR missing for checkpoint sync (fail-closed): {durable_root}"
             )
         return None
     fp_name = "full_experiment_fingerprint.json"
     if not (local / fp_name).is_file():
-        raise RuntimeError(f"Refusing Drive sync without local fingerprint: {local / fp_name}")
+        raise RuntimeError(f"Refusing durable sync without local fingerprint: {local / fp_name}")
 
-    dest_root = drive_experiment_dir(drive_root, experiment_id, kind=kind)
+    dest_root = durable_experiment_dir(durable_root, experiment_id, kind=kind)
     store = dest_root / CHECKPOINT_STORE_DIRNAME
     store.mkdir(parents=True, exist_ok=True)
 
     # The snapshot about to be replaced is the last-known-good until LATEST flips.
-    lkg_snapshot = resolve_drive_latest_snapshot(drive_root, experiment_id, kind=kind)
-    lkg_step = snapshot_max_step(lkg_snapshot) if lkg_snapshot else None
+    lkg_snapshot = resolve_durable_latest_snapshot(durable_root, experiment_id, kind=kind)
+    if lkg_snapshot is not None:
+        # Fail-closed: LATEST must resolve fully (all declared checkpoints present + digests).
+        lkg_resolved = resolve_snapshot_checkpoints(
+            lkg_snapshot, require_complete=True, verify_digests=True,
+        )
+        lkg_names = {p.name for p in lkg_resolved}
+        lkg_step = max((int(n.split("-")[-1]) for n in lkg_names), default=-1)
+    else:
+        lkg_names = set()
+        lkg_step = None
 
     local_steps = list_step_checkpoints(local)
     # Uploads can only come from local; the store is the destination, and a
     # partial copy there must never be mistaken for a usable source.
     sources: Dict[str, Path] = {p.name: p for p in local_steps}
-    store_names = {
-        p.name for p in store.iterdir() if p.is_dir() and p.name.startswith("checkpoint-")
-    }
+    # Only snapshot-referenced store dirs participate in retention — orphan
+    # complete debris must not be kept alive by name alone.
+    snap_ref_names: set = set()
+    for ver in _snapshot_versions(dest_root):
+        snap_ref_names.update(
+            list_snapshot_checkpoint_names(dest_root / "snapshots" / f"v{ver}")
+        )
+    prior_digests = known_snapshot_checkpoint_digests(dest_root)
+    digest_cache: Dict[str, str] = {}
+
+    def _digest_of(path: Path) -> str:
+        key = str(path.resolve())
+        if key not in digest_cache:
+            digest_cache[key] = str(checkpoint_content_digest(path)["digest"])
+        return digest_cache[key]
 
     def _step_of(name: str) -> int:
         return int(str(name).split("-")[-1])
 
+    candidate_names = set(sources) | {
+        n for n in snap_ref_names if (store / n).is_dir()
+    }
     retention = plan_checkpoint_retention(
-        candidate_steps=[_step_of(n) for n in set(sources) | store_names],
+        candidate_steps=[_step_of(n) for n in candidate_names],
         best_step=_step_of(best_checkpoint_name) if best_checkpoint_name else None,
         previous_latest_step=lkg_step if lkg_step and lkg_step >= 0 else None,
         save_total_limit=save_total_limit,
     )
     keep_names = [f"checkpoint-{s}" for s in retention["keep"]]
 
-    # Budget is checked before any upload: protected bytes already on Drive plus
-    # the temporary peak of what we are about to copy.
-    pending = [n for n in keep_names if not (store / n).is_dir()]
-    protected_bytes = sum(measure_dir_bytes(store / n) for n in keep_names if (store / n).is_dir())
-    upload_bytes = sum(measure_dir_bytes(sources[n]) for n in pending if n in sources)
-    budget_report = assert_drive_checkpoint_budget(
-        protected_bytes=protected_bytes,
-        upload_bytes=upload_bytes,
-        budget_bytes=budget_bytes,
-        label=f"{kind}/{experiment_id}",
-        detail={"keep": keep_names, "uploading": pending, "lkg_step": lkg_step},
+    # Budget only at sync: resolve explicit config (no 15GiB default).
+    resolved_budget = resolve_durable_checkpoint_budget_bytes(budget_bytes, required=True)
+
+    # Protected = unique bytes of everything still on disk that prune will keep
+    # until after LATEST flips: every existing snapshot (LATEST + rollback) plus
+    # the planned keep set. Omitting rollback-only names undercounts peak usage.
+    existing_snap_names: List[str] = list(snap_ref_names)
+    referenced = collect_referenced_checkpoint_names(
+        planned_names=keep_names,
+        lkg_names=sorted(lkg_names),
+        rollback_names=existing_snap_names,
     )
 
-    uploaded: List[str] = []
+    def _store_reusable(name: str, source: Optional[Path]) -> bool:
+        target = store / name
+        if not (target.is_dir() and _checkpoint_dir_is_complete(target)):
+            return False
+        store_digest = _digest_of(target)
+        if source is not None and Path(source).is_dir():
+            return store_digest == _digest_of(Path(source))
+        known = prior_digests.get(name)
+        if known is not None:
+            return store_digest == known
+        # Legacy store entry with no prior digest: refuse silent trust.
+        return False
+
+    pending: List[str] = []
     for name in keep_names:
         source = sources.get(name)
-        target = store / name
-        if target.is_dir():
-            try:
-                _verify_checkpoint_dir_complete(target)
-                continue  # already durable, do not re-upload
-            except RuntimeError:
-                shutil.rmtree(target, ignore_errors=True)  # partial from an interrupted run
-        if source is None or not source.is_dir():
+        if _store_reusable(name, source):
             continue
+        # Snapshot-referenced store entries are immutable content: never overwrite.
+        if name in snap_ref_names:
+            raise RuntimeError(
+                f"Refusing to mutate snapshot-referenced durable checkpoint {name} "
+                f"under {store}: local digest differs or store entry is incomplete. "
+                f"LATEST and rollback left unchanged."
+            )
+        if source is None or not Path(source).is_dir():
+            raise RuntimeError(
+                f"Cannot publish durable checkpoint {name}: no local source under {local}"
+            )
+        pending.append(name)
+    protected_names = [n for n in referenced if (store / n).is_dir()]
+    for name in pending:
+        if (store / name).is_dir() and name not in protected_names:
+            protected_names.append(name)
+    protected_report = measure_unique_checkpoint_bytes(store, protected_names)
+    upload_report = measure_unique_checkpoint_bytes(
+        store,
+        pending,
+        local_sources=sources,
+        prefer_local=True,
+    )
+    budget_report = assert_durable_checkpoint_budget(
+        protected_bytes=protected_report["total_bytes"],
+        upload_bytes=upload_report["total_bytes"],
+        budget_bytes=int(resolved_budget),
+        label=f"{kind}/{experiment_id}",
+        detail={
+            "keep": keep_names,
+            "referenced": referenced,
+            "uploading": pending,
+            "lkg_step": lkg_step,
+            "protected_names": protected_report["names"],
+            "upload_names": upload_report["names"],
+        },
+    )
+
+    def _recover_store_swap(target: Path) -> None:
+        tmp = store / f"{target.name}.tmp_copy"
+        bak = store / f"{target.name}.bak_replace"
+        if bak.exists() and not target.exists():
+            os.replace(str(bak), str(target))
+        elif bak.exists() and target.exists():
+            shutil.rmtree(bak, ignore_errors=True)
+        if tmp.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    uploaded: List[str] = []
+    for name in pending:
+        source = Path(sources[name])
+        target = store / name
+        _recover_store_swap(target)
         tmp = store / f"{name}.tmp_copy"
+        bak = store / f"{name}.bak_replace"
         if tmp.exists():
             shutil.rmtree(tmp)
+        if bak.exists():
+            shutil.rmtree(bak, ignore_errors=True)
+        # Orphan/new only: stage fully before touching the live target.
         shutil.copytree(source, tmp)
         _verify_checkpoint_dir_complete(tmp)
+        staged_digest = checkpoint_content_digest(tmp)["digest"]
+        digest_cache[str(tmp.resolve())] = str(staged_digest)
+        if target.exists():
+            os.replace(str(target), str(bak))
         os.replace(str(tmp), str(target))
+        if bak.exists():
+            shutil.rmtree(bak, ignore_errors=True)
+        digest_cache[str(target.resolve())] = str(staged_digest)
         uploaded.append(name)
 
     names = sorted(
-        (n for n in keep_names if (store / n).is_dir()),
+        (n for n in keep_names if (store / n).is_dir() and _checkpoint_dir_is_complete(store / n)),
         key=_step_of,
     )
     if not names:
@@ -966,6 +1325,13 @@ def sync_experiment_checkpoints_to_drive(
         )
     for name in names:
         _verify_checkpoint_dir_complete(store / name)
+
+    checkpoint_digests = {name: _digest_of(store / name) for name in names}
+    if set(checkpoint_digests) != set(names):
+        raise RuntimeError(
+            f"Refusing snapshot with incomplete checkpoint_digests: "
+            f"digests={sorted(checkpoint_digests)} checkpoints={names}"
+        )
 
     version = (max(_snapshot_versions(dest_root)) + 1) if _snapshot_versions(dest_root) else 1
     snap_dir = dest_root / "snapshots" / f"v{version}"
@@ -981,6 +1347,7 @@ def sync_experiment_checkpoints_to_drive(
         "kind": str(kind),
         "global_step": int(fp.get("global_step") or 0),
         "checkpoints": names,
+        "checkpoint_digests": checkpoint_digests,
         "uploaded_now": uploaded,
         "store_dir": CHECKPOINT_STORE_DIRNAME,
         "retention": retention,
@@ -994,7 +1361,9 @@ def sync_experiment_checkpoints_to_drive(
     os.replace(str(tmp_snap), str(snap_dir))
 
     # Verify the committed snapshot resolves before advertising it as LATEST.
-    resolved = resolve_snapshot_checkpoints(snap_dir)
+    resolved = resolve_snapshot_checkpoints(
+        snap_dir, require_complete=True, verify_digests=True,
+    )
     if len(resolved) != len(names):
         raise RuntimeError(
             f"Snapshot v{version} references {len(names)} checkpoints but only "
@@ -1007,15 +1376,22 @@ def sync_experiment_checkpoints_to_drive(
     shutil.copy2(local / fp_name, dest_root / fp_name)
 
     # Only now is the new snapshot the last-known-good, so only now may old data
-    # go. Anything the committed snapshot still references is untouchable.
-    keep_set = set(names)
+    # go. Anything still referenced by the committed snapshot OR the retained
+    # previous snapshot (rollback) is untouchable.
+    referenced_keep: set = set(names)
+    for old in _snapshot_versions(dest_root):
+        if old < version - 1:
+            continue
+        referenced_keep.update(
+            list_snapshot_checkpoint_names(dest_root / "snapshots" / f"v{old}")
+        )
     for entry in sorted(store.iterdir()):
         if not entry.is_dir():
             continue
-        if entry.name.endswith(".tmp_copy"):
+        if entry.name.endswith(".tmp_copy") or entry.name.endswith(".bak_replace"):
             shutil.rmtree(entry, ignore_errors=True)
             continue
-        if entry.name.startswith("checkpoint-") and entry.name not in keep_set:
+        if entry.name.startswith("checkpoint-") and entry.name not in referenced_keep:
             shutil.rmtree(entry, ignore_errors=True)
     for old in _snapshot_versions(dest_root):
         if old >= version - 1:
@@ -1024,37 +1400,114 @@ def sync_experiment_checkpoints_to_drive(
     return snap_dir
 
 
-def resolve_snapshot_checkpoints(snapshot_dir: Union[str, Path]) -> List[Path]:
-    """Checkpoint directories a snapshot points at (manifest-based or inline)."""
+def resolve_snapshot_checkpoints(
+    snapshot_dir: Union[str, Path],
+    *,
+    require_complete: bool = True,
+    verify_digests: bool = True,
+) -> List[Path]:
+    """
+    Checkpoint directories a snapshot points at (manifest-based or inline).
+
+    When ``require_complete`` is true (default), every name declared in the
+    manifest must exist under the store — missing entries fail closed instead of
+    returning a silently truncated list. When digests are recorded, on-disk
+    content must match.
+    """
     snap = Path(snapshot_dir)
     manifest = read_snapshot_manifest(snap)
     if manifest is None:
         return list_step_checkpoints(snap)  # legacy inline snapshot
     store = snap.parent.parent / str(manifest.get("store_dir") or CHECKPOINT_STORE_DIRNAME)
-    out = []
-    for name in manifest.get("checkpoints") or []:
-        p = store / str(name)
-        if p.is_dir():
-            out.append(p)
+    declared = [str(name) for name in (manifest.get("checkpoints") or [])]
+    digests = manifest.get("checkpoint_digests") or {}
+    if require_complete and verify_digests:
+        digest_keys = {str(k) for k in digests}
+        declared_set = set(declared)
+        if digest_keys != declared_set:
+            raise RuntimeError(
+                f"Snapshot {snap} checkpoint_digests keys {sorted(digest_keys)} "
+                f"!= checkpoints {sorted(declared_set)}"
+            )
+    missing: List[str] = []
+    mismatched: List[str] = []
+    out: List[Path] = []
+    for name in declared:
+        p = store / name
+        if not p.is_dir():
+            missing.append(name)
+            continue
+        if verify_digests:
+            expected = digests[name]
+            if isinstance(expected, dict):
+                expected = expected.get("digest")
+            actual = checkpoint_content_digest(p)["digest"]
+            if not expected or actual != expected:
+                mismatched.append(name)
+                continue
+        out.append(p)
+    if require_complete and missing:
+        raise RuntimeError(
+            f"Snapshot {snap} references missing checkpoints {missing} under {store}"
+        )
+    if require_complete and mismatched:
+        raise RuntimeError(
+            f"Snapshot {snap} digest mismatch for checkpoints {mismatched} under {store}"
+        )
     return sorted(out, key=lambda p: int(p.name.split("-")[-1]))
 
 
-def resolve_drive_latest_snapshot(
+def resolve_durable_latest_snapshot(
     full_state_dir: Union[str, Path],
     experiment_id: str,
     *,
     kind: str,
 ) -> Optional[Path]:
-    dest_root = drive_experiment_dir(full_state_dir, experiment_id, kind=kind)
+    """
+    Resolve the snapshot named by ``LATEST``.
+
+    Returns ``None`` only when the durable experiment tree is completely empty
+    (no LATEST, no snapshots/, no ckpts/). Any half-initialized state fails closed.
+    Never auto-selects the highest snapshot version.
+    """
+    dest_root = durable_experiment_dir(full_state_dir, experiment_id, kind=kind)
     latest = dest_root / "LATEST"
+    store = dest_root / CHECKPOINT_STORE_DIRNAME
+    snap_root = dest_root / "snapshots"
+
+    def _nonempty_dir(path: Path) -> bool:
+        return path.is_dir() and any(path.iterdir())
+
+    def _has_store_checkpoints() -> bool:
+        if not store.is_dir():
+            return False
+        return any(
+            p.is_dir() and p.name.startswith("checkpoint-")
+            for p in store.iterdir()
+        )
+
+    residue = (
+        _nonempty_dir(snap_root)
+        or _has_store_checkpoints()
+        or bool(list_step_checkpoints(dest_root))
+    )
+
     if latest.is_file():
         version = latest.read_text(encoding="utf-8").strip()
+        if not version:
+            raise RuntimeError(f"Durable LATEST pointer is empty under {dest_root}")
         snap = dest_root / "snapshots" / version
-        if snap.is_dir():
-            return snap
-    # Legacy flat layout fallback
-    if dest_root.is_dir() and list_step_checkpoints(dest_root):
-        return dest_root
+        if not snap.is_dir():
+            raise RuntimeError(
+                f"Durable LATEST points to missing snapshot {snap} under {dest_root}"
+            )
+        return snap
+
+    if residue:
+        raise RuntimeError(
+            f"Durable experiment has snapshots/ckpts residue but no usable LATEST "
+            f"under {dest_root}; refusing to auto-select a snapshot"
+        )
     return None
 
 
@@ -1063,21 +1516,25 @@ def snapshot_max_step(snapshot_dir: Union[str, Path]) -> int:
     return max(steps) if steps else -1
 
 
-def make_drive_checkpoint_sync_callback(
+def make_durable_checkpoint_sync_callback(
     *,
     local_experiment_dir: Union[str, Path],
     full_state_dir: Union[str, Path],
     experiment_id: str,
     kind: str = FULL_TRAIN_MARKER,
     training_contract: Optional[Dict[str, Any]] = None,
+    save_total_limit: int = 2,
+    budget_bytes: Optional[int] = None,
+    best_checkpoint_name: Optional[str] = None,
 ):
-    """HF TrainerCallback: versioned Drive sync on every save."""
+    """HF TrainerCallback: versioned durable sync on every save."""
+    resolved_budget = resolve_durable_checkpoint_budget_bytes(budget_bytes, required=True)
     try:
         from transformers import TrainerCallback
     except Exception as exc:  # pragma: no cover
         raise RuntimeError(f"transformers TrainerCallback unavailable: {exc}") from exc
 
-    class DriveCheckpointSyncCallback(TrainerCallback):
+    class DurableCheckpointSyncCallback(TrainerCallback):
         def on_save(self, args, state, control, **kwargs):
             try:
                 extra = dict(training_contract or {})
@@ -1090,83 +1547,197 @@ def make_drive_checkpoint_sync_callback(
                     overwrite=True,
                     preserve_existing=True,
                 )
-                sync_experiment_checkpoints_to_drive(
+                # Enforce experiment fingerprint/contract on the local root before sync.
+                ensure_experiment_fingerprint(
+                    local_experiment_dir,
+                    experiment_id=experiment_id,
+                    kind=kind,
+                    expected_contract=training_contract,
+                    allow_create_if_empty=False,
+                )
+                best_name = best_checkpoint_name
+                best = getattr(state, "best_model_checkpoint", None)
+                if best:
+                    best_name = Path(str(best)).name
+                    if kind == FULL_TRAIN_MARKER and training_contract is not None:
+                        assert_checkpoint_allowed_for_full_train(
+                            best,
+                            experiment_id=experiment_id,
+                            expected_contract=training_contract,
+                            experiment_root=local_experiment_dir,
+                            require_complete=False,
+                        )
+                limit = getattr(args, "save_total_limit", None)
+                if limit is None:
+                    limit = save_total_limit
+                sync_experiment_checkpoints_to_durable(
                     local_experiment_dir,
                     full_state_dir,
                     experiment_id=experiment_id,
                     kind=kind,
-                    require_drive=True,
+                    require_durable=True,
+                    best_checkpoint_name=best_name,
+                    save_total_limit=int(limit) if limit is not None else int(save_total_limit),
+                    budget_bytes=resolved_budget,
                 )
             except Exception as sync_exc:
                 raise RuntimeError(
-                    f"Drive checkpoint sync failed at step={getattr(state, 'global_step', None)}: "
+                    f"Durable checkpoint sync failed at step={getattr(state, 'global_step', None)}: "
                     f"{type(sync_exc).__name__}: {sync_exc}"
                 ) from sync_exc
             return control
 
-    return DriveCheckpointSyncCallback()
+    return DurableCheckpointSyncCallback()
 
 
-def restore_experiment_checkpoints_from_drive(
+def restore_experiment_checkpoints_from_durable(
     local_experiment_dir: Union[str, Path],
     full_state_dir: Union[str, Path],
     *,
     experiment_id: str,
     kind: str,
+    expected_contract: Optional[Dict[str, Any]] = None,
 ) -> Optional[Path]:
     """
-    Merge the LATEST Drive snapshot into the local experiment dir.
+    Merge the LATEST durable snapshot into the local experiment dir.
 
-    Local is not automatically preferred: a Colab session may hold a truncated
-    local tree while Drive has newer steps (or vice versa), so both sides are
-    validated and every checkpoint the snapshot references is materialised
-    locally. Existing local checkpoints are kept, never overwritten blindly.
+    Durable is authoritative for every checkpoint name the snapshot references:
+    same-named local directories are replaced from durable (never kept by default).
+
+    Fail-closed before any mutation: a local tree that already has step
+    checkpoints but no fingerprint is refused (never stamped with a durable
+    fingerprint that would legitimize orphan weights). Contract / ahead
+    conflicts are also checked before any copy.
     """
     local = Path(local_experiment_dir)
-    snap = resolve_drive_latest_snapshot(full_state_dir, experiment_id, kind=kind)
+    snap = resolve_durable_latest_snapshot(full_state_dir, experiment_id, kind=kind)
     local_steps = list_step_checkpoints(local) if local.is_dir() else []
+    fp_name = "full_experiment_fingerprint.json"
+    local_fp = read_checkpoint_fingerprint(local) if local.is_dir() and (local / fp_name).is_file() else None
+
+    # C1: never copy a durable fingerprint onto a local tree that already has
+    # checkpoints but no identity document.
+    if local_steps and local_fp is None:
+        raise RuntimeError(
+            f"Experiment dir has checkpoints but missing fingerprint (fail-closed); "
+            f"refusing durable restore that would stamp a new identity over orphan "
+            f"weights: {local}"
+        )
+
     if snap is None:
         if local_steps:
             ensure_experiment_fingerprint(
-                local, experiment_id=experiment_id, kind=kind, allow_create_if_empty=False
+                local,
+                experiment_id=experiment_id,
+                kind=kind,
+                expected_contract=expected_contract,
+                allow_create_if_empty=False,
             )
             return local
         return None
+
     fp = read_checkpoint_fingerprint(snap)
     if not fp or fp.get("kind") != kind or str(fp.get("experiment_id")) != str(experiment_id):
         raise RuntimeError(
-            f"Drive checkpoint fingerprint mismatch for restore: {snap} fp={fp}"
+            f"Durable checkpoint fingerprint mismatch for restore: {snap} fp={fp}"
         )
-    if local_steps:
-        ensure_experiment_fingerprint(
-            local, experiment_id=experiment_id, kind=kind, allow_create_if_empty=False
+    if expected_contract is not None:
+        assert_training_contract(
+            extract_training_contract(fp),
+            expected_contract,
+            label=f"durable restore {snap}",
+            require_hparams=bool(expected_contract.get("hparams")),
         )
-    local.mkdir(parents=True, exist_ok=True)
-    fp_name = "full_experiment_fingerprint.json"
+
+    if local_fp is not None:
+        if local_fp.get("kind") != kind or str(local_fp.get("experiment_id")) != str(experiment_id):
+            raise RuntimeError(
+                f"Local experiment fingerprint mismatch before restore: {local} fp={local_fp}"
+            )
+
+    # Verify fingerprint, checkpoint list, and digests before any local mutation.
+    snap_cks = list(
+        resolve_snapshot_checkpoints(snap, require_complete=True, verify_digests=True)
+    )
+    snap_names = {p.name for p in snap_cks}
+    snap_max = max((int(p.name.split("-")[-1]) for p in snap_cks), default=-1)
     local_max = max((int(p.name.split("-")[-1]) for p in local_steps), default=-1)
-    if not (local / fp_name).is_file() or snapshot_max_step(snap) > local_max:
+
+    durable_contract = extract_training_contract(fp) or {}
+    local_contract = extract_training_contract(local_fp) if local_fp else None
+    contracts_differ = False
+    if local_fp is not None and durable_contract:
+        contracts_differ = not training_contract_matches(
+            local_contract or {},
+            durable_contract,
+            require_hparams=bool(durable_contract.get("hparams")),
+        )
+    elif local_fp is not None and not durable_contract:
+        contracts_differ = bool(extract_training_contract(local_fp))
+
+    # Validate ahead/contract conflicts before mutating local bytes.
+    if contracts_differ and local_max > snap_max:
+        raise RuntimeError(
+            f"Local tree is ahead of durable while training_contract differs; "
+            f"refusing fingerprint upgrade that would mix identities: {local}"
+        )
+    if expected_contract is not None and local_fp is not None:
+        local_matches = training_contract_matches(
+            local_contract or {},
+            expected_contract,
+            require_hparams=bool(expected_contract.get("hparams")),
+        )
+        if not local_matches and local_max > snap_max:
+            raise RuntimeError(
+                f"Local training_contract mismatches expected_contract while local "
+                f"is ahead of durable: {local}"
+            )
+
+    upgrade_fp = (
+        not (local.is_dir() and (local / fp_name).is_file())
+        or local_max <= snap_max
+        or contracts_differ
+    )
+
+    local.mkdir(parents=True, exist_ok=True)
+
+    # Materialise snapshot checkpoints from durable (replace same names).
+    for ck in snap_cks:
+        atomic_restore_checkpoint_dir(ck, local / ck.name)
+
+    if upgrade_fp:
+        for p in list_step_checkpoints(local):
+            step = int(p.name.split("-")[-1])
+            if p.name not in snap_names and step <= snap_max:
+                shutil.rmtree(p, ignore_errors=True)
         src_fp = snap / fp_name
         if src_fp.is_file():
             shutil.copy2(src_fp, local / fp_name)
-    have = {p.name for p in local_steps}
-    for ck in resolve_snapshot_checkpoints(snap):
-        if ck.name in have:
-            continue
-        atomic_restore_checkpoint_dir(ck, local / ck.name)
+    elif local_steps or (local / fp_name).is_file():
+        ensure_experiment_fingerprint(
+            local,
+            experiment_id=experiment_id,
+            kind=kind,
+            expected_contract=expected_contract,
+            allow_create_if_empty=False,
+        )
     return local
 
 
-def resolve_best_checkpoint_from_drive(
+def resolve_best_checkpoint_from_durable(
     full_state_dir: Union[str, Path],
     *,
     experiment_id: str,
     train_summary: Dict[str, Any],
+    local_experiment_dir: Union[str, Path],
     expected_contract: Optional[Dict[str, Any]] = None,
-    local_experiment_dir: Optional[Union[str, Path]] = None,
 ) -> str:
     """
-    Restore LATEST snapshot then resolve the *best* checkpoint from train summary.
-    Never silently substitutes latest step checkpoint for best.
+    Restore LATEST snapshot into ``local_experiment_dir`` then resolve best.
+
+    ``local_experiment_dir`` is required: durable store paths live under
+    ``.../ckpts/checkpoint-N`` and cannot satisfy the direct-parent experiment
+    root guard used for full-train validation.
     """
     preferred = train_summary.get("best_checkpoint")
     if not preferred:
@@ -1175,24 +1746,15 @@ def resolve_best_checkpoint_from_drive(
     if not name.startswith("checkpoint-"):
         raise RuntimeError(f"train summary best_checkpoint is not a step checkpoint: {preferred!r}")
 
-    if local_experiment_dir is not None:
-        restored = restore_experiment_checkpoints_from_drive(
-            local_experiment_dir, full_state_dir,
-            experiment_id=experiment_id, kind=FULL_TRAIN_MARKER,
-        )
-        if restored is None:
-            raise RuntimeError("No Drive LATEST snapshot available for evaluate")
-        root = Path(local_experiment_dir)
-        candidate = root / name
-    else:
-        snap = resolve_drive_latest_snapshot(
-            full_state_dir, experiment_id, kind=FULL_TRAIN_MARKER
-        )
-        if snap is None:
-            raise RuntimeError("No Drive LATEST snapshot available for evaluate")
-        root = snap
-        by_name = {p.name: p for p in resolve_snapshot_checkpoints(snap)}
-        candidate = by_name.get(name, snap / name)
+    restored = restore_experiment_checkpoints_from_durable(
+        local_experiment_dir, full_state_dir,
+        experiment_id=experiment_id, kind=FULL_TRAIN_MARKER,
+        expected_contract=expected_contract,
+    )
+    if restored is None:
+        raise RuntimeError("No durable LATEST snapshot available for evaluate")
+    root = Path(local_experiment_dir)
+    candidate = root / name
     if not candidate.exists():
         raise RuntimeError(
             f"Best checkpoint {name} not found under restored tree {root} — "
@@ -1202,6 +1764,7 @@ def resolve_best_checkpoint_from_drive(
         candidate,
         experiment_id=experiment_id,
         expected_contract=expected_contract,
+        experiment_root=local_experiment_dir,
     )
     if expected_contract is not None:
         assert_training_contract(
@@ -1243,7 +1806,7 @@ def assert_cross_session_resume(
     Fail-closed proof that Phase A and Phase B ran in two different processes.
 
     Same-process resume can pass every state check while still reusing live
-    weights, so the resume test would prove nothing about a Colab reset.
+    weights, so the resume test would prove nothing about a Pod/session reset.
     """
     a = dict((phase_a_payload or {}).get("session") or {})
     if not a:
@@ -1289,7 +1852,7 @@ def _model_param_probe(model: Any, *, n_tensors: int = 6, n_values: int = 2048) 
     """
     Hash a deterministic slice of a few parameters instead of the full state dict.
 
-    Loading 1.2GB of weights twice inside a Colab session to compare them is
+    Loading 1.2GB of weights twice inside one session to compare them is
     wasteful; evenly spaced slices are enough to detect a non-restored model.
     """
     import hashlib
@@ -1600,12 +2163,16 @@ def make_sequential_sampler_trainer_cls(base_cls: Any) -> Any:
     return SequentialSamplerTrainer
 
 
+PRIVATE_BATCH_UID_KEY = "_bahnar_record_uids"
+
+
 def make_uid_tracking_collator(inner_collator: Any, sink: Dict[str, Any]) -> Any:
     """
-    Wrap a data collator so every collated batch records its record UIDs.
+    Wrap a data collator so each batch carries its record UIDs privately.
 
-    Requires ``dataloader_num_workers=0`` (and therefore no prefetching) so that
-    the most recently collated batch is the one about to be trained on.
+    UIDs travel on the batch dict under ``PRIVATE_BATCH_UID_KEY``. Prefetching
+    extra microbatches cannot confuse the proof: ``training_step`` reads UIDs
+    from the exact ``inputs`` it receives, not from a global last-collated sink.
     """
 
     def collate(features):
@@ -1615,12 +2182,20 @@ def make_uid_tracking_collator(inner_collator: Any, sink: Dict[str, Any]) -> Any
             if isinstance(f, dict) and f.get("record_uid") is not None
         ]
         sink.setdefault("collated_batches", []).append(uids)
-        sink["last_collated_uids"] = uids
         clean = [
             {k: v for k, v in f.items() if k != "record_uid"} if isinstance(f, dict) else f
             for f in features
         ]
-        return inner_collator(clean)
+        batch = inner_collator(clean)
+        if not isinstance(batch, Mapping):
+            raise TypeError(
+                "UID-tracking collator requires the inner collator to return a mapping batch"
+            )
+        # HF feature_extractor.pad(..., return_tensors="pt") yields BatchEncoding /
+        # BatchFeature (UserDict-like), not a plain dict — normalize before mutate.
+        batch = dict(batch)
+        batch[PRIVATE_BATCH_UID_KEY] = list(uids)
+        return batch
 
     return collate
 
@@ -1629,18 +2204,20 @@ def make_uid_tracking_trainer_cls(base_cls: Any, sink: Dict[str, Any]) -> Any:
     """
     Trainer subclass that records the first microbatch ``training_step`` consumes.
 
-    ``Dataset.__getitem__`` and the collator both run for batches that resume
-    *skips*, so neither can identify the first consumed sample on its own; only
-    reaching ``training_step`` proves consumption.
+    Reads UIDs from the private field on ``inputs`` (attached by the tracking
+    collator), then strips that field before the model forward. Skipped resume
+    batches never reach ``training_step``, so prefetch cannot steal the proof.
     """
 
     class UidTrackingTrainer(base_cls):  # type: ignore[misc,valid-type]
         def training_step(self, model, inputs, *args, **kwargs):
+            uids: List[str] = []
+            if isinstance(inputs, Mapping) and PRIVATE_BATCH_UID_KEY in inputs:
+                raw = inputs.pop(PRIVATE_BATCH_UID_KEY)  # type: ignore[union-attr]
+                uids = [str(u) for u in (raw or [])]
             if "first_consumed_uids" not in sink:
-                sink["first_consumed_uids"] = list(sink.get("last_collated_uids") or [])
-                sink["first_consumed_batch_index"] = max(
-                    0, len(sink.get("collated_batches") or []) - 1
-                )
+                sink["first_consumed_uids"] = list(uids)
+                sink["first_consumed_from_inputs"] = True
             return super().training_step(model, inputs, *args, **kwargs)
 
     return UidTrackingTrainer
@@ -1650,12 +2227,13 @@ def evaluate_data_position(
     sink: Dict[str, Any],
     *,
     expected_uid: Optional[str],
-    expected_offset: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Compare the first UID actually trained on after resume with Phase A's plan.
 
-    Fail-closed: no recorded UID means no proof, which is a failure, not a pass.
+    Proof is UID-only (plus restore/RNG gates elsewhere). Observed collate/skip
+    batch indexes are never compared to an expected offset — HF Trainer's
+    ``skip_first_batches`` accounting is not a reliable proof surface.
     """
     consumed = list(sink.get("first_consumed_uids") or [])
     actual = consumed[0] if consumed else None
@@ -1673,26 +2251,14 @@ def evaluate_data_position(
         }
     ok = str(actual) == str(expected_uid)
     detail = "ok" if ok else f"consumed {actual!r} but expected {expected_uid!r}"
-    out = {
+    return {
         "data_position_ok": bool(ok),
         "data_position_detail": detail,
         "consumed_first_uid": str(actual),
         "expected_first_uid": str(expected_uid),
         "consumed_batch_uids": consumed,
-        "batches_collated_before_first_step": int(
-            sink.get("first_consumed_batch_index") or 0
-        ),
+        "first_consumed_from_inputs": bool(sink.get("first_consumed_from_inputs")),
     }
-    if expected_offset is not None:
-        out["expected_offset"] = int(expected_offset)
-        actual_offset = int(sink.get("first_consumed_batch_index") or 0)
-        out["offset_matches"] = actual_offset == int(expected_offset)
-        if not out["offset_matches"]:
-            out["data_position_ok"] = False
-            out["data_position_detail"] = (
-                f"{detail}; resumed at batch {actual_offset}, expected {int(expected_offset)}"
-            )
-    return out
 
 
 def plan_expected_resume_position(
@@ -1701,24 +2267,50 @@ def plan_expected_resume_position(
     resume_step: int,
     per_device_train_batch_size: int,
     gradient_accumulation_steps: int = 1,
+    dataloader_length: Optional[int] = None,
+    drop_last: bool = False,
 ) -> Dict[str, Any]:
     """
     Phase A's record of where Phase B must pick up.
 
-    With a sequential sampler and a fixed seed the sample order is deterministic,
-    so the resume point is an exact UID rather than an approximation.
+    Matches HuggingFace Trainer resume semantics: within the current epoch it
+    skips ``(global_step % num_update_steps_per_epoch) * gradient_accumulation_steps``
+    dataloader batches, then the first batch that reaches ``training_step`` is the
+    proof UID. Absolute ``global_step * gradient_accumulation`` is incorrect once
+    training wraps past one epoch.
     """
     uids = [str(u) for u in ordered_uids]
+    if not uids:
+        raise ValueError("ordered_uids must be non-empty for resume position planning")
     per_batch = max(1, int(per_device_train_batch_size))
-    microbatches_consumed = int(resume_step) * max(1, int(gradient_accumulation_steps))
-    index = microbatches_consumed * per_batch
+    accum = max(1, int(gradient_accumulation_steps))
+    n = len(uids)
+    if dataloader_length is None:
+        if drop_last:
+            dl_len = max(1, n // per_batch) if n >= per_batch else 1
+        else:
+            dl_len = max(1, (n + per_batch - 1) // per_batch)
+    else:
+        dl_len = max(1, int(dataloader_length))
+    num_update_steps_per_epoch = max(1, dl_len // accum)
+    step = int(resume_step)
+    steps_in_epoch = step % num_update_steps_per_epoch
+    batches_skipped = steps_in_epoch * accum
+    sample_index = batches_skipped * per_batch
+    if sample_index >= n:
+        sample_index = sample_index % n
     return {
         "ordered_uids": uids,
-        "resume_step": int(resume_step),
-        "expected_batch_offset": microbatches_consumed,
-        "expected_sample_index": index,
-        "expected_first_uid": uids[index] if 0 <= index < len(uids) else None,
-        "wrapped_epoch": index >= len(uids),
+        "resume_step": step,
+        "dataloader_length": int(dl_len),
+        "num_update_steps_per_epoch": int(num_update_steps_per_epoch),
+        "steps_trained_in_current_epoch": int(steps_in_epoch),
+        "expected_batch_offset": int(batches_skipped),
+        "expected_sample_index": int(sample_index),
+        "expected_sample_index_in_epoch": int(sample_index),
+        "expected_first_uid": uids[sample_index],
+        "wrapped_epoch": step >= num_update_steps_per_epoch,
+        "n_epochs_wrapped": int(step // num_update_steps_per_epoch),
     }
 
 
@@ -1726,7 +2318,6 @@ def summarize_resume_proof(
     sink: Dict[str, Any],
     *,
     expected_first_uid: Optional[str] = None,
-    expected_offset: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Flatten the callback sink into the flags the status gate consumes."""
     restore = dict(sink.get("restore") or {})
@@ -1739,9 +2330,7 @@ def summarize_resume_proof(
         raise RuntimeError(
             "RNG proof missing: on_step_begin never fired (no step ran after resume)"
         )
-    position = evaluate_data_position(
-        sink, expected_uid=expected_first_uid, expected_offset=expected_offset
-    )
+    position = evaluate_data_position(sink, expected_uid=expected_first_uid)
     return {
         **restore,
         **position,
@@ -1751,10 +2340,6 @@ def summarize_resume_proof(
         "first_step_global_step": sink.get("first_step_global_step"),
     }
 
-
-# ---------------------------------------------------------------------------
-# Resume-test subset + status
-# ---------------------------------------------------------------------------
 
 def build_resume_test_subset(
     eligible_train_df: pd.DataFrame,
@@ -1838,7 +2423,7 @@ def derive_resume_test_status_from_proof(
 def derive_full_evaluate_status(
     *,
     full_train_success: bool,
-    best_checkpoint_from_drive_valid: bool,
+    best_checkpoint_from_durable_valid: bool,
     metrics_finite: bool,
     frozen_test_accessed: bool,
     contract_matches: bool,
@@ -1846,7 +2431,7 @@ def derive_full_evaluate_status(
     """Evaluate succeeds only when every upstream gate holds (fail-closed)."""
     checks = {
         "full_train_success": bool(full_train_success),
-        "best_checkpoint_from_drive_valid": bool(best_checkpoint_from_drive_valid),
+        "best_checkpoint_from_durable_valid": bool(best_checkpoint_from_durable_valid),
         "metrics_finite": bool(metrics_finite),
         "no_frozen_test_access": frozen_test_accessed is False,
         "contract_matches": bool(contract_matches),
@@ -2133,9 +2718,8 @@ def assert_no_frozen_test_access(paths: Sequence[Any], splits: Sequence[Any]) ->
     for p in paths:
         if is_forbidden_test_path(str(p)):
             raise RuntimeError(f"Frozen-test path accessed during full training: {p}")
-    forbidden = {"test", "rq1_test", "frozen_test"}
     for s in splits:
-        if str(s).strip().lower() in forbidden:
+        if is_frozen_split_label(s):
             raise RuntimeError(f"Frozen-test split accessed during full training: {s}")
 
 
@@ -2167,7 +2751,7 @@ def resolve_eligible_audio_path(
     row: Any,
     cache_roots: Sequence[Union[str, Path]],
 ) -> Optional[Path]:
-    """Resolve WAV under local / NB02 cache roots (never Drive bulk WAV)."""
+    """Resolve WAV under local / NB02 cache roots (never durable bulk WAV)."""
     from src.data_utils import safe_cache_filename
 
     uid = str(row["record_uid"] if hasattr(row, "__getitem__") else row.get("record_uid"))
@@ -2209,7 +2793,7 @@ def assert_eligible_audio_available(
     Hard-fail if any eligible row lacks a usable local WAV.
 
     When verify=True (default), re-check sr/duration/finite/checksum/provenance —
-    existence alone is not enough after Colab reset.
+    existence alone is not enough after a session reset.
 
     Frames produced by the streaming prepare carry ``sha256_pcm`` per row, so
     verification is a single PCM hash compare instead of re-deriving NB02
@@ -2354,3 +2938,50 @@ def select_best_checkpoint_by_cer(
             best = dict(row)
             best["cer"] = cer_f
     return best
+
+
+def probe_gpu_memory_for_duration(
+    *,
+    model,
+    processor,
+    duration_seconds: float = 40.0,
+    target_sr: int = 16000,
+    device=None,
+    vocab_size: int = 140,
+):
+    """
+    Forward+backward one synthetic utterance of ``duration_seconds``.
+
+    Manual preflight only — do not call from Run-all stages.
+    """
+    import torch
+
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    n_samples = max(1, int(float(duration_seconds) * int(target_sr)))
+    wav = torch.zeros(n_samples, dtype=torch.float32)
+    feats = processor(wav.numpy(), sampling_rate=int(target_sr), return_tensors="pt")
+    input_values = feats["input_values"].to(device)
+    labels = torch.randint(0, max(2, int(vocab_size) - 1), (1, 8), device=device)
+    model = model.to(device)
+    model.train()
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.empty_cache()
+    before = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
+    out = model(input_values=input_values, labels=labels)
+    loss = out.loss
+    loss.backward()
+    after = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
+    peak = torch.cuda.max_memory_allocated() if torch.cuda.is_available() else after
+    model.zero_grad(set_to_none=True)
+    return {
+        "ok": True,
+        "duration_seconds": float(duration_seconds),
+        "n_samples": int(n_samples),
+        "device": str(device),
+        "allocated_before_bytes": int(before),
+        "allocated_after_bytes": int(after),
+        "peak_allocated_bytes": int(peak),
+        "loss": float(loss.detach().cpu()),
+    }
