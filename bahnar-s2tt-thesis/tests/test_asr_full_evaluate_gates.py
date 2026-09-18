@@ -103,7 +103,7 @@ class TestEvaluateStatusGate:
     def _verdict(self, **overrides):
         kwargs = dict(
             full_train_success=True,
-            best_checkpoint_from_drive_valid=True,
+            best_checkpoint_from_durable_valid=True,
             metrics_finite=True,
             frozen_test_accessed=False,
             contract_matches=True,
@@ -116,7 +116,7 @@ class TestEvaluateStatusGate:
 
     @pytest.mark.parametrize("field,value", [
         ("full_train_success", False),
-        ("best_checkpoint_from_drive_valid", False),
+        ("best_checkpoint_from_durable_valid", False),
         ("metrics_finite", False),
         ("frozen_test_accessed", True),
         ("contract_matches", False),

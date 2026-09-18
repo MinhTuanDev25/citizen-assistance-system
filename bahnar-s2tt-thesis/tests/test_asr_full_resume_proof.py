@@ -258,7 +258,7 @@ class TestProofFeedsTheStatusGate:
             "first_consumed_batch_index": 32,
         }
         proof = summarize_resume_proof(
-            sink, expected_first_uid="uid-32", expected_offset=32,
+            sink, expected_first_uid="uid-32",
         )
         proof["final_global_step"] = 200
         verdict = derive_resume_test_status_from_proof(
@@ -284,7 +284,7 @@ class TestProofFeedsTheStatusGate:
             "first_consumed_batch_index": 32,
         }
         proof = summarize_resume_proof(
-            sink, expected_first_uid="uid-32", expected_offset=32,
+            sink, expected_first_uid="uid-32",
         )
         proof["final_global_step"] = 200
         verdict = derive_resume_test_status_from_proof(

@@ -990,10 +990,10 @@ def verify_notebook03_prerequisites(
 # ---------------------------------------------------------------------------
 
 def get_environment_info() -> Dict[str, Any]:
-    """Collect environment information for reproducibility."""
+    """Collect environment information for reproducibility (audit metadata only)."""
     import torch
     import transformers
-    
+
     info = {
         "python_version": sys.version,
         "platform": platform.platform(),
@@ -1004,11 +1004,23 @@ def get_environment_info() -> Dict[str, Any]:
         "mps_available": hasattr(torch.backends, "mps") and torch.backends.mps.is_available(),
         "PYTORCH_ENABLE_MPS_FALLBACK": os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK"),
     }
-    
+
+    package_versions = {
+        "torch": torch.__version__,
+        "transformers": transformers.__version__,
+    }
+    for name in ("accelerate", "datasets", "pyarrow", "safetensors", "tokenizers", "numpy"):
+        try:
+            mod = __import__(name)
+            package_versions[name] = getattr(mod, "__version__", None)
+        except Exception:
+            package_versions[name] = None
+    info["package_versions"] = package_versions
+
     if torch.cuda.is_available():
         info["cuda_device_count"] = torch.cuda.device_count()
         info["cuda_device_name"] = torch.cuda.get_device_name(0)
-    
+
     return info
 
 

@@ -2,7 +2,7 @@
 Static contract between Notebook 03 and ``src``.
 
 The notebook is never executed in CI, so drift between a cell and a helper
-signature is otherwise only discovered mid-training on Colab. These tests parse
+signature is otherwise only discovered mid-training on RunPod. These tests parse
 every code cell and check imports, keyword arguments and undefined names.
 """
 from __future__ import annotations
@@ -219,8 +219,9 @@ class TestPrepareCellWiring:
         assert match, "EXPECTED_PARQUET_REVISION must be a 40-hex commit sha"
         assert "refs/convert/parquet" not in match.group(1)
         assert "HF_PARQUET_CACHE_DIR" in cfg
-        assert "/content/drive" not in _config_value(cfg, "HF_PARQUET_CACHE_DIR")
-        assert "/content/drive" not in _config_value(cfg, "LOCAL_AUDIO_CACHE_DIR")
+        assert "resolve_runtime_paths" in cfg
+        assert "LOCAL_ROOT" in cfg and "DURABLE_ROOT" in cfg
+        assert "MAX_AUDIO_DURATION = 40.0" in cfg
 
 
 def _config_value(cell: str, name: str) -> str:
@@ -268,7 +269,7 @@ class TestTrainAndEvaluateCellWiring:
         assert "build_full_training_hparams" in f4
         assert "hp_expected" in f4 and "hp_recorded" in f4
         assert "derive_full_evaluate_status" in f4
-        assert "resolve_best_checkpoint_from_drive" in f4
+        assert "resolve_best_checkpoint_from_durable" in f4
         # Status must come from the gate, never from a literal.
         assert '"status": "SUCCESS_FULL_EVALUATE"' not in f4
         assert 'full_status = "SUCCESS_FULL_EVALUATE"' not in f4
@@ -278,11 +279,12 @@ class TestExportCell:
     def test_export_uses_run_id_and_paths(self):
         export = None
         for _idx, source in _code_cells():
-            if "Bahnar_S2TT_Thesis" in source and "notebook03_runs" in source:
+            if "export_pointer" in source and "RUNTIME_PATHS.export_root" in source:
                 export = source
         assert export is not None, "export cell not found"
         assert "RUN_ID" in export
         assert 'PATHS["artifacts"]' in export and 'PATHS["results"]' in export
-        assert "experiment_checkpoint_dir" in export
+        assert "experiment_checkpoint_dir" in export or "full_state_dir" in export
         assert not re.search(r'run_id\s*=\s*"[0-9a-f]{8}-', export), "hardcoded run id in export"
-        assert "/content/bahnar-s2tt-thesis" not in export
+        assert "/content/" not in export
+        assert "DURABLE_ROOT" in export

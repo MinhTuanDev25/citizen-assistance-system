@@ -14,11 +14,11 @@ from src.asr_full_train import (
     assert_ready_for_full_evaluate,
     build_training_contract,
     experiment_checkpoint_dir,
-    make_drive_checkpoint_sync_callback,
+    make_durable_checkpoint_sync_callback,
     resolve_full_stage_status,
     resolve_resume_checkpoint,
-    restore_experiment_checkpoints_from_drive,
-    sync_experiment_checkpoints_to_drive,
+    restore_experiment_checkpoints_from_durable,
+    sync_experiment_checkpoints_to_durable,
     write_checkpoint_fingerprint,
     write_full_train_summary,
 )
@@ -113,14 +113,14 @@ class TestNotebookOrchestrationWiring:
     def test_helpers_integrated_in_notebook(self):
         cells = _nb_code_cells()
         f2, f3, f4, c28 = cells["F2"], cells["F3"], cells["F4"], cells["C28"]
-        assert "restore_experiment_checkpoints_from_drive" in f2
-        assert "restore_experiment_checkpoints_from_drive" in f3
-        assert "make_drive_checkpoint_sync_callback" in f3
-        assert "callbacks=[drive_sync_cb]" in f3
+        assert "restore_experiment_checkpoints_from_durable" in f2
+        assert "restore_experiment_checkpoints_from_durable" in f3
+        assert "make_durable_checkpoint_sync_callback" in f3
+        assert "callbacks=[durable_sync_cb]" in f3
         assert "assert_ready_for_full_evaluate" in f4
         assert "resolve_full_stage_status" in c28
         # restore before resolve in F3
-        assert f3.index("restore_experiment_checkpoints_from_drive") < f3.index("resolve_resume_checkpoint")
+        assert f3.index("restore_experiment_checkpoints_from_durable") < f3.index("resolve_resume_checkpoint")
         # true restart in F2
         assert "model_b = Wav2Vec2ForCTC.from_pretrained" in f2
         assert "del trainer_a, model_a" in f2
@@ -141,7 +141,7 @@ class TestNotebookOrchestrationWiring:
             assert "list(opened_splits)" not in src
 
 
-class TestFingerprintAndDriveFailClosed:
+class TestFingerprintAndDurableFailClosed:
     def test_fingerprint_preserves_contract_on_step_update(self, tmp_path: Path):
         root = experiment_checkpoint_dir(tmp_path, "expA", kind=FULL_TRAIN_MARKER)
         contract = _contract()
@@ -162,16 +162,16 @@ class TestFingerprintAndDriveFailClosed:
         exp = experiment_checkpoint_dir(tmp_path / "local", "expA", kind=FULL_TRAIN_MARKER)
         exp.mkdir(parents=True)
         with pytest.raises(RuntimeError, match="FULL_STATE_DIR missing|fail-closed"):
-            sync_experiment_checkpoints_to_drive(
+            sync_experiment_checkpoints_to_durable(
                 exp, tmp_path / "missing_drive", experiment_id="expA", kind=FULL_TRAIN_MARKER,
-                require_drive=True,
+                require_durable=True,
             )
 
     def test_on_save_callback_fail_closed(self, tmp_path: Path):
         exp = experiment_checkpoint_dir(tmp_path / "local", "expA", kind=FULL_TRAIN_MARKER)
         write_checkpoint_fingerprint(exp, experiment_id="expA", kind=FULL_TRAIN_MARKER, global_step=0)
         _complete_ckpt(exp / "checkpoint-100", 100)
-        cb = make_drive_checkpoint_sync_callback(
+        cb = make_durable_checkpoint_sync_callback(
             local_experiment_dir=exp,
             full_state_dir=tmp_path / "no_drive",
             experiment_id="expA",
@@ -179,18 +179,21 @@ class TestFingerprintAndDriveFailClosed:
             training_contract=_contract(),
         )
         state = type("S", (), {"global_step": 100})()
-        with pytest.raises(RuntimeError, match="Drive checkpoint sync failed"):
+        with pytest.raises(RuntimeError, match="Durable checkpoint sync failed"):
             cb.on_save(None, state, type("C", (), {})())
 
     def test_restore_before_resolve_order(self, tmp_path: Path):
         drive_state = tmp_path / "drive"
         drive_state.mkdir()
         local_root = tmp_path / "local"
-        drive_exp = experiment_checkpoint_dir(drive_state / "checkpoints", "expA", kind=FULL_TRAIN_MARKER)
-        write_checkpoint_fingerprint(drive_exp, experiment_id="expA", kind=FULL_TRAIN_MARKER, global_step=100)
-        _complete_ckpt(drive_exp / "checkpoint-100", 100)
+        seeded = experiment_checkpoint_dir(tmp_path / "seed", "expA", kind=FULL_TRAIN_MARKER)
+        write_checkpoint_fingerprint(seeded, experiment_id="expA", kind=FULL_TRAIN_MARKER, global_step=100)
+        _complete_ckpt(seeded / "checkpoint-100", 100)
+        sync_experiment_checkpoints_to_durable(
+            seeded, drive_state, experiment_id="expA", kind=FULL_TRAIN_MARKER,
+        )
         fresh = experiment_checkpoint_dir(local_root, "expA", kind=FULL_TRAIN_MARKER)
-        restored = restore_experiment_checkpoints_from_drive(
+        restored = restore_experiment_checkpoints_from_durable(
             fresh, drive_state, experiment_id="expA", kind=FULL_TRAIN_MARKER,
         )
         assert restored is not None

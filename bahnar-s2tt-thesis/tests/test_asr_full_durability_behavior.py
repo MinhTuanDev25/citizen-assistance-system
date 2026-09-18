@@ -1,7 +1,7 @@
 """
 Behavioural durability tests for full training.
 
-Covers the scenarios that only show up on Colab: a session reset wiping local
+Covers the scenarios that only show up after a session reset: a session reset wiping local
 audio, a shard interrupted mid-write, a manifest edited in place, an interrupted
 Drive sync, orphan/mixed checkpoints and a two-process resume.
 """
@@ -45,15 +45,15 @@ from src.asr_full_train import (
     build_train_contract,
     derive_full_evaluate_status,
     derive_resume_test_status_from_proof,
-    drive_experiment_dir,
+    durable_experiment_dir,
     ensure_experiment_fingerprint,
     experiment_checkpoint_dir,
     metrics_are_finite,
     new_session_token,
-    resolve_best_checkpoint_from_drive,
-    restore_experiment_checkpoints_from_drive,
+    resolve_best_checkpoint_from_durable,
+    restore_experiment_checkpoints_from_durable,
     summarize_resume_proof,
-    sync_experiment_checkpoints_to_drive,
+    sync_experiment_checkpoints_to_durable,
     write_checkpoint_fingerprint,
     write_full_train_summary,
 )
@@ -434,7 +434,7 @@ class TestManifestContentBinding:
             ), field
 
 
-class TestColabResetWithExclusions:
+class TestSessionResetWithExclusions:
     """A wiped session must rehydrate eligible rows only, without re-running QA."""
 
     def _mixed_source(self):
@@ -451,7 +451,7 @@ class TestColabResetWithExclusions:
         assert excluded, "fixture must produce at least one exclusion"
         assert not (set(eligible["record_uid"].astype(str)) & excluded)
 
-        # Simulate a new Colab session: nothing local survives.
+        # Simulate a new session: nothing local survives.
         for wav in (tmp_path / "audio").glob("*.wav"):
             wav.unlink()
         source.opens.clear()
@@ -532,16 +532,16 @@ class TestUidSetAccounting:
 
 
 # ---------------------------------------------------------------------------
-# Colab reset / hydrate
+# Session reset / hydrate
 # ---------------------------------------------------------------------------
 
-class TestColabResetHydrate:
+class TestSessionResetHydrate:
     def test_wiped_local_audio_is_rehydrated_without_requalifying(self, tmp_path: Path):
         source = _two_shard_source()
         res = _prepare(tmp_path, source)
         audio_dir = tmp_path / "audio"
         for wav in audio_dir.glob("*.wav"):
-            wav.unlink()  # simulate a new Colab session
+            wav.unlink()  # simulate a new session
         source.opens.clear()
 
         report = hydrate_rows_audio(
@@ -738,10 +738,10 @@ class TestCheckpointSnapshotLKG:
         local = experiment_checkpoint_dir(tmp_path / "local", "expA", kind=FULL_TRAIN_MARKER)
         write_checkpoint_fingerprint(local, experiment_id="expA", kind=FULL_TRAIN_MARKER, global_step=100)
         _complete_ckpt(local / "checkpoint-100", 100)
-        assert sync_experiment_checkpoints_to_drive(
+        assert sync_experiment_checkpoints_to_durable(
             local, drive, experiment_id="expA", kind=FULL_TRAIN_MARKER
         ) is not None
-        dest = drive_experiment_dir(drive, "expA", kind=FULL_TRAIN_MARKER)
+        dest = durable_experiment_dir(drive, "expA", kind=FULL_TRAIN_MARKER)
         assert (dest / "LATEST").read_text(encoding="utf-8").strip() == "v1"
 
         # An interrupted next sync leaves debris but must not move LATEST or
@@ -751,7 +751,7 @@ class TestCheckpointSnapshotLKG:
         assert (dest / "LATEST").read_text(encoding="utf-8").strip() == "v1"
         assert (dest / "ckpts" / "checkpoint-100" / "optimizer.pt").is_file()
 
-        restored = restore_experiment_checkpoints_from_drive(
+        restored = restore_experiment_checkpoints_from_durable(
             experiment_checkpoint_dir(tmp_path / "fresh", "expA", kind=FULL_TRAIN_MARKER),
             drive, experiment_id="expA", kind=FULL_TRAIN_MARKER,
         )
@@ -763,12 +763,18 @@ class TestCheckpointSnapshotLKG:
         local = experiment_checkpoint_dir(tmp_path / "local", "expA", kind=FULL_TRAIN_MARKER)
         write_checkpoint_fingerprint(local, experiment_id="expA", kind=FULL_TRAIN_MARKER, global_step=100)
         _complete_ckpt(local / "checkpoint-100", 100)
-        dest = drive_experiment_dir(drive, "expA", kind=FULL_TRAIN_MARKER)
-        truncated = dest / "ckpts" / "checkpoint-100"
-        truncated.mkdir(parents=True)
-        (truncated / "trainer_state.json").write_text("{}", encoding="utf-8")  # missing the rest
-        sync_experiment_checkpoints_to_drive(
+        sync_experiment_checkpoints_to_durable(
             local, drive, experiment_id="expA", kind=FULL_TRAIN_MARKER
+        )
+        # Incomplete orphan (not snapshot-referenced) must be replaced atomically.
+        dest = durable_experiment_dir(drive, "expA", kind=FULL_TRAIN_MARKER)
+        truncated = dest / "ckpts" / "checkpoint-200"
+        truncated.mkdir(parents=True)
+        (truncated / "trainer_state.json").write_text("{}", encoding="utf-8")
+        _complete_ckpt(local / "checkpoint-200", 200)
+        write_checkpoint_fingerprint(local, experiment_id="expA", kind=FULL_TRAIN_MARKER, global_step=200)
+        sync_experiment_checkpoints_to_durable(
+            local, drive, experiment_id="expA", kind=FULL_TRAIN_MARKER, save_total_limit=2,
         )
         assert (truncated / "optimizer.pt").is_file()
 
@@ -778,7 +784,7 @@ class TestCheckpointSnapshotLKG:
         local = experiment_checkpoint_dir(tmp_path / "local", "expA", kind=FULL_TRAIN_MARKER)
         _complete_ckpt(local / "checkpoint-100", 100)
         with pytest.raises(RuntimeError, match="without local fingerprint"):
-            sync_experiment_checkpoints_to_drive(
+            sync_experiment_checkpoints_to_durable(
                 local, drive, experiment_id="expA", kind=FULL_TRAIN_MARKER
             )
 
@@ -786,8 +792,8 @@ class TestCheckpointSnapshotLKG:
         local = experiment_checkpoint_dir(tmp_path / "local", "expA", kind=FULL_TRAIN_MARKER)
         write_checkpoint_fingerprint(local, experiment_id="expA", kind=FULL_TRAIN_MARKER, global_step=1)
         _complete_ckpt(local / "checkpoint-1", 1)
-        with pytest.raises(RuntimeError, match="Drive FULL_STATE_DIR missing"):
-            sync_experiment_checkpoints_to_drive(
+        with pytest.raises(RuntimeError, match="Durable FULL_STATE_DIR missing"):
+            sync_experiment_checkpoints_to_durable(
                 local, tmp_path / "no_drive", experiment_id="expA", kind=FULL_TRAIN_MARKER
             )
 
@@ -798,7 +804,7 @@ class TestCheckpointSnapshotLKG:
         write_checkpoint_fingerprint(local, experiment_id="expA", kind=FULL_TRAIN_MARKER, global_step=200)
         _complete_ckpt(local / "checkpoint-100", 100)
         _complete_ckpt(local / "checkpoint-200", 200)
-        sync_experiment_checkpoints_to_drive(
+        sync_experiment_checkpoints_to_durable(
             local, drive, experiment_id="expA", kind=FULL_TRAIN_MARKER
         )
         # A resumed session where only the older checkpoint survived locally.
@@ -806,7 +812,7 @@ class TestCheckpointSnapshotLKG:
         stale.mkdir(parents=True)
         _complete_ckpt(stale / "checkpoint-100", 100)
         write_checkpoint_fingerprint(stale, experiment_id="expA", kind=FULL_TRAIN_MARKER, global_step=100)
-        restored = restore_experiment_checkpoints_from_drive(
+        restored = restore_experiment_checkpoints_from_durable(
             stale, drive, experiment_id="expA", kind=FULL_TRAIN_MARKER
         )
         assert (restored / "checkpoint-200" / "optimizer.pt").is_file()
@@ -818,7 +824,7 @@ class TestCheckpointSnapshotLKG:
         local = experiment_checkpoint_dir(tmp_path / "local", "expA", kind=FULL_TRAIN_MARKER)
         write_checkpoint_fingerprint(local, experiment_id="expA", kind=FULL_TRAIN_MARKER, global_step=100)
         _complete_ckpt(local / "checkpoint-100", 100)
-        snap = sync_experiment_checkpoints_to_drive(
+        snap = sync_experiment_checkpoints_to_durable(
             local, drive, experiment_id="expA", kind=FULL_TRAIN_MARKER
         )
         fp_path = snap / "full_experiment_fingerprint.json"
@@ -826,7 +832,7 @@ class TestCheckpointSnapshotLKG:
         payload["kind"] = "resume_test"
         fp_path.write_text(json.dumps(payload), encoding="utf-8")
         with pytest.raises(RuntimeError, match="fingerprint mismatch"):
-            restore_experiment_checkpoints_from_drive(
+            restore_experiment_checkpoints_from_durable(
                 experiment_checkpoint_dir(tmp_path / "fresh", "expA", kind=FULL_TRAIN_MARKER),
                 drive, experiment_id="expA", kind=FULL_TRAIN_MARKER,
             )
@@ -951,11 +957,11 @@ class TestContractsAndEvaluate:
         _complete_ckpt(local / "checkpoint-100", 100)
         best = _complete_ckpt(local / "checkpoint-300", 300)
         _complete_ckpt(local / "checkpoint-500", 500)
-        sync_experiment_checkpoints_to_drive(
+        sync_experiment_checkpoints_to_durable(
             local, drive, experiment_id="expA", kind=FULL_TRAIN_MARKER
         )
         fresh = experiment_checkpoint_dir(tmp_path / "fresh", "expA", kind=FULL_TRAIN_MARKER)
-        resolved = resolve_best_checkpoint_from_drive(
+        resolved = resolve_best_checkpoint_from_durable(
             drive, experiment_id="expA",
             train_summary={"best_checkpoint": str(best), "status": "SUCCESS_FULL_TRAINING", **train_c},
             expected_contract=train_c, local_experiment_dir=fresh,
@@ -973,12 +979,12 @@ class TestContractsAndEvaluate:
             local, experiment_id="expA", kind=FULL_TRAIN_MARKER, global_step=500, extra=train_c
         )
         _complete_ckpt(local / "checkpoint-500", 500)
-        sync_experiment_checkpoints_to_drive(
+        sync_experiment_checkpoints_to_durable(
             local, drive, experiment_id="expA", kind=FULL_TRAIN_MARKER
         )
         fresh = experiment_checkpoint_dir(tmp_path / "fresh", "expA", kind=FULL_TRAIN_MARKER)
         with pytest.raises(RuntimeError, match="not found under restored tree"):
-            resolve_best_checkpoint_from_drive(
+            resolve_best_checkpoint_from_durable(
                 drive, experiment_id="expA",
                 train_summary={"best_checkpoint": "checkpoint-300", **train_c},
                 expected_contract=train_c, local_experiment_dir=fresh,
@@ -988,25 +994,28 @@ class TestContractsAndEvaluate:
         drive = tmp_path / "drive"
         drive.mkdir()
         with pytest.raises(RuntimeError, match="missing best_checkpoint"):
-            resolve_best_checkpoint_from_drive(
-                drive, experiment_id="expA", train_summary={"status": "SUCCESS_FULL_TRAINING"},
+            resolve_best_checkpoint_from_durable(
+                drive,
+                experiment_id="expA",
+                train_summary={"status": "SUCCESS_FULL_TRAINING"},
+                local_experiment_dir=tmp_path / "local",
             )
 
     def test_evaluate_gate_is_fail_closed(self):
         ok = derive_full_evaluate_status(
-            full_train_success=True, best_checkpoint_from_drive_valid=True,
+            full_train_success=True, best_checkpoint_from_durable_valid=True,
             metrics_finite=True, frozen_test_accessed=False, contract_matches=True,
         )
         assert ok["status"] == "SUCCESS_FULL_EVALUATE" and ok["failed_checks"] == []
         for kwargs in (
             {"full_train_success": False},
-            {"best_checkpoint_from_drive_valid": False},
+            {"best_checkpoint_from_durable_valid": False},
             {"metrics_finite": False},
             {"frozen_test_accessed": True},
             {"contract_matches": False},
         ):
             base = dict(
-                full_train_success=True, best_checkpoint_from_drive_valid=True,
+                full_train_success=True, best_checkpoint_from_durable_valid=True,
                 metrics_finite=True, frozen_test_accessed=False, contract_matches=True,
             )
             base.update(kwargs)

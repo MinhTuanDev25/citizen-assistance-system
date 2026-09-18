@@ -30,11 +30,11 @@ from src.asr_full_train import (
     find_latest_valid_checkpoint,
     is_forbidden_init_checkpoint,
     load_full_train_success,
-    make_drive_checkpoint_sync_callback,
+    make_durable_checkpoint_sync_callback,
     resolve_full_stage_status,
     resolve_resume_checkpoint,
-    restore_experiment_checkpoints_from_drive,
-    sync_experiment_checkpoints_to_drive,
+    restore_experiment_checkpoints_from_durable,
+    sync_experiment_checkpoints_to_durable,
     write_checkpoint_fingerprint,
     write_full_train_summary,
     write_resume_test_summary,
@@ -311,7 +311,7 @@ class TestFullTrainGates:
             assert_no_frozen_test_access([], ["rq1_test"])
 
 
-class TestDriveSyncRestore:
+class TestDurableSyncRestore:
     def test_sync_and_restore_roundtrip(self, tmp_path: Path):
         local_root = tmp_path / "local_ckpts"
         drive_state = tmp_path / "drive_state"
@@ -319,26 +319,26 @@ class TestDriveSyncRestore:
         exp = experiment_checkpoint_dir(local_root, "expA", kind=FULL_TRAIN_MARKER)
         write_checkpoint_fingerprint(exp, experiment_id="expA", kind=FULL_TRAIN_MARKER, global_step=100)
         _complete_ckpt(exp / "checkpoint-100", 100)
-        synced = sync_experiment_checkpoints_to_drive(
+        synced = sync_experiment_checkpoints_to_durable(
             exp, drive_state, experiment_id="expA", kind=FULL_TRAIN_MARKER
         )
         assert synced is not None and synced.is_dir()
 
         fresh_local = experiment_checkpoint_dir(tmp_path / "fresh", "expA", kind=FULL_TRAIN_MARKER)
-        restored = restore_experiment_checkpoints_from_drive(
+        restored = restore_experiment_checkpoints_from_durable(
             fresh_local, drive_state, experiment_id="expA", kind=FULL_TRAIN_MARKER
         )
         assert restored is not None
         assert (restored / "checkpoint-100" / "optimizer.pt").is_file()
 
-    def test_on_save_callback_syncs_to_drive(self, tmp_path: Path):
+    def test_on_save_callback_syncs_to_durable(self, tmp_path: Path):
         local_root = tmp_path / "local_ckpts"
         drive_state = tmp_path / "drive_state"
         drive_state.mkdir()
         exp = experiment_checkpoint_dir(local_root, "expA", kind=FULL_TRAIN_MARKER)
         write_checkpoint_fingerprint(exp, experiment_id="expA", kind=FULL_TRAIN_MARKER, global_step=0)
         _complete_ckpt(exp / "checkpoint-500", 500)
-        cb = make_drive_checkpoint_sync_callback(
+        cb = make_durable_checkpoint_sync_callback(
             local_experiment_dir=exp,
             full_state_dir=drive_state,
             experiment_id="expA",
