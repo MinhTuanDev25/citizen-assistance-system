@@ -1,9 +1,24 @@
-# Bahnar→Vietnamese MT (Cascaded stage 2) — placeholder
-model_name: VinAIResearch/bartpho-syllable
-batch_size: 16
+# Bahnar→Vietnamese MT (Cascaded stage 2) — Notebook 04
+# Locked BARTPho syllable direct fine-tuning baseline (not BARTBahnar / BV-BARTpho).
+
+model_name: vinai/bartpho-syllable
+model_revision: 36eee8b4d648dd99da56462edcda3c5c97f7f3de
+experiment_id: mt_bartpho_syllable_v1
+metric_for_best_model: eval_sacrebleu
+greater_is_better: true
+hard_max_unk_rate: 0.05
+hard_max_truncation_rate: 0.05
+mt_monitor_size: 512
+
+batch_size: 4
 learning_rate: 2.0e-5
-num_epochs: 10
+num_epochs: 3
 seed: 42
+max_source_length: 256
+max_target_length: 256
+generation_max_length: 256
+num_beams: 4
+
 manifest_train: data/manifests/rq1_train.csv
 manifest_validation: data/manifests/rq1_validation.csv
 checkpoint_dir: checkpoints/mt
