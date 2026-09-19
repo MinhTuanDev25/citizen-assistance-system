@@ -19,6 +19,7 @@ tokenizers>=0.15,<1
 sentencepiece>=0.2,<1
 protobuf>=4,<6
 jiwer>=3.0,<4
+sacrebleu>=2.3,<3
 tqdm>=4.66,<5
 ipykernel>=6.29,<7
 jupyter>=1.0,<2
