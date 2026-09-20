@@ -45,6 +45,7 @@ from src.mt_full_train import (
     assert_ready_for_mt_full_train,
     build_mt_resume_test_subset,
     build_mt_validation_monitor_subset,
+    compute_mt_seq2seq_metrics,
     count_generated_tokens,
     derive_frozen_test_accessed,
     derive_mt_evaluate_status,
@@ -1008,4 +1009,66 @@ class TestNotebook04SourceGates:
         assert commit_idx >= 0
         assert success_idx > commit_idx
         assert "load_durable_tokenizer_audit" in joined
+        assert "compute_mt_seq2seq_metrics" in joined
         assert "except Exception:\n    pass" not in joined.split("Stage-aware status")[-1]
+
+
+class TestMtSeq2SeqComputeMetrics:
+    class _Tok:
+        pad_token_id = 0
+
+        def batch_decode(self, ids, skip_special_tokens=True):
+            import numpy as np
+
+            arr = np.asarray(ids)
+            if (arr == -100).any():
+                raise KeyError(-100)
+            # Map simple token ids to deterministic strings for metric contract.
+            out = []
+            for row in arr:
+                toks = [int(x) for x in row.tolist() if int(x) != 0]
+                out.append(" ".join(str(t) for t in toks) if toks else "")
+            return out
+
+    def test_preds_with_neg100_do_not_crash(self):
+        import numpy as np
+
+        preds = np.array([[1, 2, -100], [3, -100, -100]], dtype=np.int64)
+        labels = np.array([[1, 2, 0], [3, 0, 0]], dtype=np.int64)
+        out = compute_mt_seq2seq_metrics((preds, labels), tokenizer=self._Tok())
+        assert set(out) == {"sacrebleu", "chrfpp", "monitor_n"}
+        assert out["monitor_n"] == 2
+
+    def test_labels_with_neg100_do_not_crash(self):
+        import numpy as np
+
+        preds = np.array([[1, 2, 0]], dtype=np.int64)
+        labels = np.array([[1, 2, -100]], dtype=np.int64)
+        out = compute_mt_seq2seq_metrics((preds, labels), tokenizer=self._Tok())
+        assert set(out) == {"sacrebleu", "chrfpp", "monitor_n"}
+
+    def test_both_preds_and_labels_neg100_decode_ok(self):
+        import numpy as np
+
+        preds = np.array([[5, -100], [6, 7]], dtype=np.int64)
+        labels = np.array([[5, -100], [6, -100]], dtype=np.int64)
+        out = compute_mt_seq2seq_metrics((preds, labels), tokenizer=self._Tok())
+        assert out["monitor_n"] == 2
+        assert isinstance(out["sacrebleu"], float)
+        assert isinstance(out["chrfpp"], float)
+
+    def test_preds_tuple_unwrapped(self):
+        import numpy as np
+
+        preds = (np.array([[1, -100]], dtype=np.int64), np.array([0.1]))
+        labels = np.array([[1, -100]], dtype=np.int64)
+        out = compute_mt_seq2seq_metrics((preds, labels), tokenizer=self._Tok())
+        assert set(out) == {"sacrebleu", "chrfpp", "monitor_n"}
+
+    def test_metric_keys_contract_unchanged(self):
+        import numpy as np
+
+        preds = np.array([[1, 2]], dtype=np.int64)
+        labels = np.array([[1, 2]], dtype=np.int64)
+        out = compute_mt_seq2seq_metrics((preds, labels), tokenizer=self._Tok())
+        assert list(out.keys()) == ["sacrebleu", "chrfpp", "monitor_n"]

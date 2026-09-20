@@ -14,6 +14,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
+import numpy as np
 import pandas as pd
 
 from src.asr_full_train import (
@@ -1536,6 +1537,36 @@ def generate_mt_predictions(
                     }
                 )
     return rows
+
+
+def compute_mt_seq2seq_metrics(
+    eval_preds: Any,
+    *,
+    tokenizer: Any,
+) -> Dict[str, Any]:
+    """
+    Monitor-set metrics for Seq2SeqTrainer.compute_metrics.
+
+    Replaces ignore-index ``-100`` in both predictions and labels before
+    ``batch_decode`` (Trainer may pad preds with -100; BARTPho cannot decode it).
+    """
+    if isinstance(eval_preds, (tuple, list)) and len(eval_preds) >= 2:
+        preds, labels = eval_preds[0], eval_preds[1]
+    else:
+        raise RuntimeError(f"Unexpected eval_preds shape/type: {type(eval_preds)!r}")
+    if isinstance(preds, tuple):
+        preds = preds[0]
+    pad_id = getattr(tokenizer, "pad_token_id", None)
+    if pad_id is None:
+        raise RuntimeError("tokenizer.pad_token_id is required for MT compute_metrics")
+    preds_arr = np.asarray(preds)
+    labels_arr = np.asarray(labels)
+    preds_arr = np.where(preds_arr != -100, preds_arr, int(pad_id))
+    labels_arr = np.where(labels_arr != -100, labels_arr, int(pad_id))
+    pred_str = tokenizer.batch_decode(preds_arr, skip_special_tokens=True)
+    label_str = tokenizer.batch_decode(labels_arr, skip_special_tokens=True)
+    m = mt_corpus_metrics(pred_str, label_str)
+    return {"sacrebleu": m["sacrebleu"], "chrfpp": m["chrfpp"], "monitor_n": m["n"]}
 
 
 def evaluate_mt_predictions(pred_rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
