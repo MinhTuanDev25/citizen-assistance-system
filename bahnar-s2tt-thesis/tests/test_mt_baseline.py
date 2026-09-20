@@ -1072,3 +1072,15 @@ class TestMtSeq2SeqComputeMetrics:
         labels = np.array([[1, 2]], dtype=np.int64)
         out = compute_mt_seq2seq_metrics((preds, labels), tokenizer=self._Tok())
         assert list(out.keys()) == ["sacrebleu", "chrfpp", "monitor_n"]
+
+    def test_evalprediction_object_accepted(self):
+        """HF Trainer passes EvalPrediction, not a bare (preds, labels) tuple."""
+        import numpy as np
+        from types import SimpleNamespace
+
+        preds = np.array([[1, 2, -100]], dtype=np.int64)
+        labels = np.array([[1, 2, -100]], dtype=np.int64)
+        ep = SimpleNamespace(predictions=preds, label_ids=labels)
+        out = compute_mt_seq2seq_metrics(ep, tokenizer=self._Tok())
+        assert set(out) == {"sacrebleu", "chrfpp", "monitor_n"}
+        assert out["monitor_n"] == 1

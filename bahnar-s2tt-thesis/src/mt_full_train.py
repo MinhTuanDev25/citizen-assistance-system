@@ -1547,10 +1547,16 @@ def compute_mt_seq2seq_metrics(
     """
     Monitor-set metrics for Seq2SeqTrainer.compute_metrics.
 
+    Accepts either a ``(preds, labels)`` tuple/list or
+    ``transformers.trainer_utils.EvalPrediction``.
+
     Replaces ignore-index ``-100`` in both predictions and labels before
     ``batch_decode`` (Trainer may pad preds with -100; BARTPho cannot decode it).
     """
-    if isinstance(eval_preds, (tuple, list)) and len(eval_preds) >= 2:
+    if hasattr(eval_preds, "predictions") and hasattr(eval_preds, "label_ids"):
+        preds = eval_preds.predictions
+        labels = eval_preds.label_ids
+    elif isinstance(eval_preds, (tuple, list)) and len(eval_preds) >= 2:
         preds, labels = eval_preds[0], eval_preds[1]
     else:
         raise RuntimeError(f"Unexpected eval_preds shape/type: {type(eval_preds)!r}")
