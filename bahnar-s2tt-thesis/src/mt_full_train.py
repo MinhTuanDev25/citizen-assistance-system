@@ -752,10 +752,12 @@ def load_mt_resume_test_success(
         "scheduler_restored",
         "rng_restored",
         "data_position_ok",
-        "true_restart",
     ):
-        if proof.get(key) is not True and data.get(key) is not True:
+        if proof.get(key) is not True:
             raise RuntimeError(f"MT resume_test proof missing/false: {key}")
+    checks = data.get("checks") or {}
+    if checks.get("true_restart") is not True:
+        raise RuntimeError("MT resume_test checks.true_restart is not True")
     cross = data.get("cross_session") or {}
     if cross.get("two_sessions") is not True:
         raise RuntimeError("MT resume_test cross_session.two_sessions is not True")

@@ -73,13 +73,13 @@ def _complete_ckpt(path: Path, step: int, *, tag: bytes = b"x") -> Path:
 
 
 def _proof_payload() -> dict:
+    # Matches notebook Phase B summary schema: true_restart lives under checks, not proof.
     return {
         "model_restored": True,
         "optimizer_restored": True,
         "scheduler_restored": True,
         "rng_restored": True,
         "data_position_ok": True,
-        "true_restart": True,
     }
 
 
@@ -90,6 +90,7 @@ def _success_summary(*, contract_hash: str, commit: dict) -> dict:
         "experiment_id": EXP,
         "failed_checks": [],
         "proof": _proof_payload(),
+        "checks": {"true_restart": True},
         "cross_session": {"two_sessions": True},
         "durable_commit_ok": True,
         "attempt_id": commit.get("attempt_id"),
@@ -965,3 +966,121 @@ class TestNotebook04ReviewBundleChecksums:
             assert meta["checksum_scheme"] == "payload_inside_zip__zip_sha_external_only"
             assert meta["payload_sha256sums_sha256"] == info["payload_sha256sums_sha256"]
             assert info["zip_sha256"] not in zf.read("artifacts/notebook04/PAYLOAD_SHA256SUMS.txt").decode()
+
+
+class TestLoadMtResumeTestSuccessSchema:
+    """Gate must match notebook summary schema: true_restart in checks, not proof."""
+
+    def _ready_state(self, tmp_path: Path):
+        state = tmp_path / "state"
+        state.mkdir()
+        contract = _locked_contract()
+        persist_mt_prepare_artifacts(
+            state,
+            train_eligible=pd.DataFrame(
+                [{"record_uid": "t1", "text_bahnar": "a", "text_vi": "b"}]
+            ),
+            val_eligible=pd.DataFrame(
+                [{"record_uid": "v1", "text_bahnar": "c", "text_vi": "d"}]
+            ),
+            exclusions=pd.DataFrame(columns=["record_uid", "split", "reason"]),
+            summary={"ok": True},
+            contract=contract,
+        )
+        local = _local_exp(tmp_path)
+        _seed_phase_a_and_b(local, a_tag=b"phase-a", b_tag=b"phase-b", global_step=PHASE_B)
+        commit = commit_mt_resume_test_phase_b_durable(
+            local,
+            state,
+            experiment_id=EXP,
+            phase_a_steps=PHASE_A,
+            phase_b_steps=PHASE_B,
+            budget_bytes=BUDGET,
+        )
+        return state, contract, commit
+
+    def test_real_notebook_schema_passes(self, tmp_path: Path):
+        state, contract, commit = self._ready_state(tmp_path)
+        summary = _success_summary(contract_hash=contract["contract_hash"], commit=commit)
+        assert "true_restart" not in summary["proof"]
+        assert summary["checks"]["true_restart"] is True
+        write_mt_resume_test_summary(state, summary)
+        loaded = load_mt_resume_test_success(
+            state,
+            expected_contract_hash=contract["contract_hash"],
+            experiment_id=EXP,
+        )
+        assert loaded["checks"]["true_restart"] is True
+        assert_ready_for_mt_full_train(state, contract=contract)
+
+    def test_checks_true_restart_false_fails(self, tmp_path: Path):
+        state, contract, commit = self._ready_state(tmp_path)
+        summary = _success_summary(contract_hash=contract["contract_hash"], commit=commit)
+        summary["checks"] = {"true_restart": False}
+        write_mt_resume_test_summary(state, summary)
+        with pytest.raises(RuntimeError, match="checks.true_restart"):
+            load_mt_resume_test_success(
+                state,
+                expected_contract_hash=contract["contract_hash"],
+                experiment_id=EXP,
+            )
+
+    def test_checks_true_restart_missing_fails(self, tmp_path: Path):
+        state, contract, commit = self._ready_state(tmp_path)
+        summary = _success_summary(contract_hash=contract["contract_hash"], commit=commit)
+        summary.pop("checks", None)
+        summary["proof"] = {**summary["proof"], "true_restart": True}
+        write_mt_resume_test_summary(state, summary)
+        with pytest.raises(RuntimeError, match="checks.true_restart"):
+            load_mt_resume_test_success(
+                state,
+                expected_contract_hash=contract["contract_hash"],
+                experiment_id=EXP,
+            )
+
+    def test_cross_session_two_sessions_false_fails(self, tmp_path: Path):
+        state, contract, commit = self._ready_state(tmp_path)
+        summary = _success_summary(contract_hash=contract["contract_hash"], commit=commit)
+        summary["cross_session"] = {"two_sessions": False}
+        write_mt_resume_test_summary(state, summary)
+        with pytest.raises(RuntimeError, match="two_sessions"):
+            load_mt_resume_test_success(
+                state,
+                expected_contract_hash=contract["contract_hash"],
+                experiment_id=EXP,
+            )
+
+    def test_cross_session_missing_fails(self, tmp_path: Path):
+        state, contract, commit = self._ready_state(tmp_path)
+        summary = _success_summary(contract_hash=contract["contract_hash"], commit=commit)
+        summary.pop("cross_session", None)
+        write_mt_resume_test_summary(state, summary)
+        with pytest.raises(RuntimeError, match="two_sessions"):
+            load_mt_resume_test_success(
+                state,
+                expected_contract_hash=contract["contract_hash"],
+                experiment_id=EXP,
+            )
+
+    def test_proof_flag_false_fails(self, tmp_path: Path):
+        state, contract, commit = self._ready_state(tmp_path)
+        summary = _success_summary(contract_hash=contract["contract_hash"], commit=commit)
+        summary["proof"]["optimizer_restored"] = False
+        write_mt_resume_test_summary(state, summary)
+        with pytest.raises(RuntimeError, match="proof missing/false: optimizer_restored"):
+            load_mt_resume_test_success(
+                state,
+                expected_contract_hash=contract["contract_hash"],
+                experiment_id=EXP,
+            )
+
+    def test_does_not_require_proof_true_restart(self, tmp_path: Path):
+        state, contract, commit = self._ready_state(tmp_path)
+        summary = _success_summary(contract_hash=contract["contract_hash"], commit=commit)
+        assert "true_restart" not in summary["proof"]
+        write_mt_resume_test_summary(state, summary)
+        load_mt_resume_test_success(
+            state,
+            expected_contract_hash=contract["contract_hash"],
+            experiment_id=EXP,
+        )
