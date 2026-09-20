@@ -3,10 +3,13 @@ Export helpers for Notebook 04 runs (SHA256 artifact manifests).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
+import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Union
 
 from src.data_utils import sha256_file
 
@@ -74,6 +77,8 @@ def collect_notebook04_export_sources(
             "mt_validation_monitor_manifest.json",
             "mt_resume_test_summary.json",
             "mt_resume_test_phase_a.json",
+            "mt_resume_test_contract.json",
+            "mt_resume_test_durable_commit.json",
             "mt_training_contract.json",
             "mt_train_summary.json",
             "mt_evaluate_summary.json",
@@ -138,3 +143,168 @@ def export_notebook04_run(
 
     write_artifact_manifest(dest, copied)
     return dest
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _sha256_path(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def collect_notebook04_review_bundle_files(project_root: Union[str, Path]) -> List[Path]:
+    """Payload files for the Notebook 04 review zip (no parquet / venv / caches)."""
+    root = Path(project_root).resolve()
+    include: List[Path] = []
+    for f in (root / "src").rglob("*.py"):
+        include.append(f)
+    for f in (root / "tests").rglob("*.py"):
+        include.append(f)
+    for f in (root / "notebooks").glob("*.ipynb"):
+        include.append(f)
+    for rel in ("configs/mt.yaml", "requirements.txt", "README.md", "AGENTS.md"):
+        p = root / rel
+        if p.is_file():
+            include.append(p)
+    for base in ("data/manifests", "data/audit"):
+        p = root / base
+        if p.is_dir():
+            for f in p.rglob("*"):
+                if f.is_file() and f.suffix.lower() in {".csv", ".json", ".md", ".txt"}:
+                    include.append(f)
+    # Stable unique, skip caches.
+    seen = set()
+    out: List[Path] = []
+    for path in sorted(include, key=lambda p: str(p.relative_to(root))):
+        if not path.is_file():
+            continue
+        if any(x in path.parts for x in (".venv", "__pycache__", ".pycache", ".git")):
+            continue
+        rel = str(path.relative_to(root))
+        if rel in seen:
+            continue
+        seen.add(rel)
+        out.append(path)
+    return out
+
+
+def build_notebook04_review_bundle(
+    project_root: Union[str, Path],
+    *,
+    out_dir: Optional[Union[str, Path]] = None,
+    stamp: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Build a self-consistent Notebook 04 review zip.
+
+    Checksum strategy (avoids self-referential ZIP hash loops):
+      * Inside ZIP: ``PAYLOAD_SHA256SUMS.txt`` — sha256 of each packaged file
+        (pre-zip payload only). Also ``BUNDLE_META.json`` describing that the
+        *final ZIP* sha256 lives only in external sidecars.
+      * Outside ZIP: ``SHA256SUMS.txt`` + ``LATEST_BUNDLE.txt`` — sha256 of the
+        final ``.zip`` file itself. These are NOT embedded as claiming to be
+        the zip's own hash inside the archive.
+    """
+    root = Path(project_root).resolve()
+    art = Path(out_dir) if out_dir is not None else (root / "artifacts" / "notebook04")
+    art.mkdir(parents=True, exist_ok=True)
+    ts = stamp or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    zip_name = f"notebook04_mt_review_bundle_{ts}.zip"
+    zip_path = art / zip_name
+
+    for old in art.glob("notebook04_mt_*.zip"):
+        old.unlink()
+
+    payload_files = collect_notebook04_review_bundle_files(root)
+    payload_lines = [
+        f"{_sha256_path(p)}  {p.relative_to(root).as_posix()}"
+        for p in payload_files
+    ]
+    payload_body = "\n".join(payload_lines) + ("\n" if payload_lines else "")
+    payload_digest = _sha256_bytes(payload_body.encode("utf-8"))
+
+    readme = (
+        "# Notebook 04 Review Bundle\n\n"
+        f"Generated: {datetime.now(timezone.utc).isoformat()}\n\n"
+        "## Checksums\n"
+        "- **Inside ZIP** `artifacts/notebook04/PAYLOAD_SHA256SUMS.txt`: "
+        "sha256 of each packaged payload file (pre-zip).\n"
+        "- **Inside ZIP** `artifacts/notebook04/BUNDLE_META.json`: payload digest + zip name; "
+        "does **not** claim to be the final ZIP sha256.\n"
+        "- **Outside ZIP** `SHA256SUMS.txt` / `LATEST_BUNDLE.txt`: sha256 of the final `.zip`.\n"
+    )
+    meta = {
+        "zip_name": zip_name,
+        "checksum_scheme": "payload_inside_zip__zip_sha_external_only",
+        "payload_sha256sums_sha256": payload_digest,
+        "payload_file_count": len(payload_files),
+        "note": (
+            "Final ZIP sha256 is written only to external SHA256SUMS.txt / LATEST_BUNDLE.txt "
+            "beside the archive. It is intentionally not self-embedded inside the ZIP."
+        ),
+    }
+
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path in payload_files:
+            zf.write(path, path.relative_to(root).as_posix())
+        zf.writestr("artifacts/notebook04/README_NOTEBOOK04_BUNDLE.md", readme)
+        zf.writestr("artifacts/notebook04/PAYLOAD_SHA256SUMS.txt", payload_body)
+        zf.writestr(
+            "artifacts/notebook04/BUNDLE_META.json",
+            json.dumps(meta, ensure_ascii=False, indent=2) + "\n",
+        )
+
+    zip_digest = _sha256_path(zip_path)
+    latest_text = (
+        f"{zip_name}\n"
+        f"ZIP_SHA256={zip_digest}\n"
+        f"PAYLOAD_SHA256SUMS_SHA256={payload_digest}\n"
+        f"checksum_scheme=payload_inside_zip__zip_sha_external_only\n"
+    )
+    sums_text = (
+        f"{zip_digest}  {zip_name}\n"
+        f"# payload_sha256sums_sha256 (content of PAYLOAD_SHA256SUMS.txt inside zip) "
+        f"= {payload_digest}\n"
+    )
+    (art / "LATEST_BUNDLE.txt").write_text(latest_text, encoding="utf-8")
+    (art / "SHA256SUMS.txt").write_text(sums_text, encoding="utf-8")
+    (art / "PAYLOAD_SHA256SUMS.txt").write_text(payload_body, encoding="utf-8")
+    (art / "BUNDLE_META.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    (art / "README_NOTEBOOK04_BUNDLE.md").write_text(readme, encoding="utf-8")
+
+    # Verify: inside zip must NOT contain a stale ZIP_SHA256 claiming to be this archive.
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        names = set(zf.namelist())
+        assert "artifacts/notebook04/PAYLOAD_SHA256SUMS.txt" in names
+        assert "artifacts/notebook04/BUNDLE_META.json" in names
+        inner_meta = json.loads(zf.read("artifacts/notebook04/BUNDLE_META.json"))
+        assert inner_meta.get("zip_name") == zip_name
+        assert inner_meta.get("payload_sha256sums_sha256") == payload_digest
+        # No misleading self-hash of the zip inside.
+        for banned in ("LATEST_BUNDLE.txt", "SHA256SUMS.txt"):
+            inner = f"artifacts/notebook04/{banned}"
+            if inner in names:
+                text = zf.read(inner).decode("utf-8")
+                if "ZIP_SHA256=" in text or (
+                    zip_digest in text and banned == "SHA256SUMS.txt"
+                ):
+                    raise RuntimeError(
+                        f"Bundle zip embeds misleading final-zip checksum in {inner}"
+                    )
+
+    return {
+        "zip_path": str(zip_path),
+        "zip_name": zip_name,
+        "zip_sha256": zip_digest,
+        "payload_sha256sums_sha256": payload_digest,
+        "n_payload_files": len(payload_files),
+        "latest_path": str(art / "LATEST_BUNDLE.txt"),
+        "sha256sums_path": str(art / "SHA256SUMS.txt"),
+    }

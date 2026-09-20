@@ -451,16 +451,14 @@ class TestGates:
         )
         with pytest.raises(RuntimeError):
             assert_ready_for_mt_full_train(state, contract=contract)
+        # Stale SUCCESS without durable_commit_ok must not open the full-train gate.
         write_mt_resume_test_summary(
             state, {"status": "SUCCESS_MT_RESUME_TEST", "contract_hash": contract["contract_hash"]}
         )
-        assert_ready_for_mt_full_train(state, contract=contract)
+        with pytest.raises(RuntimeError, match="durable_commit_ok"):
+            assert_ready_for_mt_full_train(state, contract=contract)
         with pytest.raises(RuntimeError):
             assert_ready_for_mt_evaluate(state, contract=contract)
-        write_mt_train_summary(
-            state, {"status": "SUCCESS_MT_TRAINING", "contract_hash": contract["contract_hash"]}
-        )
-        assert_ready_for_mt_evaluate(state, contract=contract)
 
 
 class TestTrainingContract:
@@ -659,6 +657,10 @@ class TestExport:
         state.mkdir()
         (state / "mt_contract.json").write_text("{}", encoding="utf-8")
         (state / "mt_train_summary.json").write_text("{}", encoding="utf-8")
+        (state / "mt_resume_test_summary.json").write_text("{}", encoding="utf-8")
+        (state / "mt_resume_test_phase_a.json").write_text("{}", encoding="utf-8")
+        (state / "mt_resume_test_contract.json").write_text("{}", encoding="utf-8")
+        (state / "mt_resume_test_durable_commit.json").write_text("{}", encoding="utf-8")
         dest = export_notebook04_run(
             export_root=tmp_path / "exports",
             run_id="r1",
@@ -671,6 +673,10 @@ class TestExport:
         assert (dest / "artifact_manifest.json").is_file()
         assert (dest / "run_config.json").is_file()
         assert (dest / "state" / "mt_contract.json").is_file()
+        assert (dest / "state" / "mt_resume_test_contract.json").is_file()
+        assert (dest / "state" / "mt_resume_test_durable_commit.json").is_file()
+        assert (dest / "state" / "mt_resume_test_summary.json").is_file()
+        assert (dest / "state" / "mt_resume_test_phase_a.json").is_file()
         man = json.loads((dest / "artifact_manifest.json").read_text())
         assert any(e["sha256"] for e in man["files"])
 
@@ -989,5 +995,17 @@ class TestNotebook04SourceGates:
         assert "ensure_mt_full_train_fingerprint" in joined
         assert "derive_started_from_base_or_same_experiment" in joined
         assert "write_mt_resume_test_contract" in joined
+        assert "commit_mt_resume_test_phase_b_durable" in joined
+        assert "durable_commit_ok" in joined
+        resume_cell = next(
+            "".join(c.get("source", []))
+            for c in nb["cells"]
+            if "commit_mt_resume_test_phase_b_durable(" in "".join(c.get("source", []))
+        )
+        commit_idx = resume_cell.find("commit_mt_resume_test_phase_b_durable(")
+        # Final SUCCESS summary (durable_commit_ok True) must follow the commit helper.
+        success_idx = resume_cell.find('"durable_commit_ok": True')
+        assert commit_idx >= 0
+        assert success_idx > commit_idx
         assert "load_durable_tokenizer_audit" in joined
         assert "except Exception:\n    pass" not in joined.split("Stage-aware status")[-1]
