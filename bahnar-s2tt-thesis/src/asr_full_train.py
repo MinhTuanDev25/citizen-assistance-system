@@ -1917,6 +1917,53 @@ def _checkpoint_param_probe(
     return out
 
 
+def _optimizer_step_counters(state_dict: Mapping[str, Any]) -> List[int]:
+    """Collect unique Adam-style per-parameter ``step`` counters from an optimizer state_dict."""
+    entries = list((state_dict.get("state") or {}).values())
+    steps: List[int] = []
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        raw = entry.get("step")
+        if raw is None:
+            continue
+        steps.append(int(raw.item()) if hasattr(raw, "item") else int(raw))
+    return sorted(set(steps))
+
+
+def _optimizer_state_fingerprint(
+    state_dict: Mapping[str, Any],
+    *,
+    n_params: int = 4,
+    n_values: int = 64,
+) -> Dict[str, str]:
+    """
+    Light fingerprint of a few Adam moments (exp_avg / exp_avg_sq).
+
+    Samples only the first ``n_params`` state entries and the first ``n_values``
+    floats of each tensor — enough to detect a non-restored optimizer without
+    hashing the full multi-GB state.
+    """
+    import hashlib
+
+    import torch
+
+    state = state_dict.get("state") or {}
+    keys = sorted(state.keys(), key=lambda k: str(k))[: int(n_params)]
+    out: Dict[str, str] = {}
+    for key in keys:
+        entry = state[key]
+        if not isinstance(entry, Mapping):
+            continue
+        for moment in ("exp_avg", "exp_avg_sq"):
+            tensor = entry.get(moment)
+            if tensor is None or not hasattr(tensor, "detach"):
+                continue
+            flat = tensor.detach().reshape(-1)[: int(n_values)].to(torch.float32).cpu().numpy()
+            out[f"{key}:{moment}"] = hashlib.sha256(flat.tobytes()).hexdigest()
+    return out
+
+
 def capture_resume_proof(
     trainer: Any,
     *,
@@ -1934,7 +1981,10 @@ def capture_resume_proof(
 
     Each flag is derived from real state:
       * model      — parameter slice hashes equal the checkpoint's
-      * optimizer  — Adam per-parameter ``step`` counter equals ``global_step``
+      * optimizer  — live Adam step counters (+ light moment fingerprint) equal
+                     ``optimizer.pt`` from the checkpoint (NOT Trainer.global_step;
+                     AdamW ``step`` is an update count and need not equal
+                     ``global_step`` under gradient accumulation)
       * scheduler  — live ``state_dict()`` equals ``scheduler.pt``
       * data pos.  — ``global_step`` and derived epoch/batch offset match
     """
@@ -1978,28 +2028,50 @@ def capture_resume_proof(
     proof["model_restored"] = bool(model_restored)
     proof["model_detail"] = model_detail
 
-    # --- optimizer (Adam step counter is the ground truth, no 2.4GB reload)
+    # --- optimizer: compare live vs checkpoint.optimizer.pt (not vs global_step)
     opt = getattr(trainer, "optimizer", None)
     opt_restored, opt_detail, opt_steps = False, "no_optimizer", None
-    if opt is not None and hasattr(opt, "state_dict"):
-        sd = opt.state_dict()
-        entries = list((sd.get("state") or {}).values())
-        if not entries:
-            opt_detail = "optimizer_state_empty"
-        else:
-            steps = []
-            for entry in entries:
-                raw = entry.get("step")
-                if raw is None:
-                    continue
-                steps.append(int(raw.item()) if hasattr(raw, "item") else int(raw))
-            opt_steps = sorted(set(steps))
-            if not opt_steps:
-                opt_detail = "no_step_counter"
-            elif opt_steps == [expected]:
-                opt_restored, opt_detail = True, "ok"
+    opt_path = ck / "optimizer.pt"
+    proof["checkpoint_optimizer_step_counters"] = None
+    proof["optimizer_fingerprint_ok"] = None
+    if opt is None or not hasattr(opt, "state_dict"):
+        opt_detail = "no_optimizer"
+    elif not opt_path.is_file():
+        opt_detail = "optimizer.pt_missing"
+    else:
+        try:
+            live_sd = opt.state_dict()
+            live_entries = list((live_sd.get("state") or {}).values())
+            if not live_entries:
+                opt_detail = "optimizer_state_empty"
             else:
-                opt_detail = f"step_counter={opt_steps[:3]} != {expected}"
+                live_steps = _optimizer_step_counters(live_sd)
+                opt_steps = live_steps
+                if not live_steps:
+                    opt_detail = "no_step_counter"
+                else:
+                    disk_sd = _torch_load(opt_path) or {}
+                    disk_steps = _optimizer_step_counters(disk_sd)
+                    proof["checkpoint_optimizer_step_counters"] = disk_steps
+                    if not disk_steps:
+                        opt_detail = "checkpoint_optimizer_no_step_counter"
+                    elif live_steps != disk_steps:
+                        opt_detail = (
+                            f"step_counter_live={live_steps[:5]} "
+                            f"!= checkpoint={disk_steps[:5]}"
+                        )
+                    else:
+                        live_fp = _optimizer_state_fingerprint(live_sd)
+                        disk_fp = _optimizer_state_fingerprint(disk_sd)
+                        shared_fp = [k for k in live_fp if k in disk_fp]
+                        if shared_fp and any(live_fp[k] != disk_fp[k] for k in shared_fp):
+                            proof["optimizer_fingerprint_ok"] = False
+                            opt_detail = "moment_fingerprint_mismatch"
+                        else:
+                            proof["optimizer_fingerprint_ok"] = bool(shared_fp) if shared_fp else None
+                            opt_restored, opt_detail = True, "ok"
+        except Exception as exc:  # noqa: BLE001
+            opt_detail = f"error:{type(exc).__name__}:{exc}"
     proof["optimizer_restored"] = bool(opt_restored)
     proof["optimizer_detail"] = opt_detail
     proof["optimizer_step_counters"] = opt_steps
