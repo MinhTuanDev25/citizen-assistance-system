@@ -45,6 +45,7 @@ from src.mt_full_train import (
     assert_ready_for_mt_full_train,
     build_mt_resume_test_subset,
     build_mt_validation_monitor_subset,
+    compute_mt_seq2seq_metrics,
     count_generated_tokens,
     derive_frozen_test_accessed,
     derive_mt_evaluate_status,
@@ -451,16 +452,14 @@ class TestGates:
         )
         with pytest.raises(RuntimeError):
             assert_ready_for_mt_full_train(state, contract=contract)
+        # Stale SUCCESS without durable_commit_ok must not open the full-train gate.
         write_mt_resume_test_summary(
             state, {"status": "SUCCESS_MT_RESUME_TEST", "contract_hash": contract["contract_hash"]}
         )
-        assert_ready_for_mt_full_train(state, contract=contract)
+        with pytest.raises(RuntimeError, match="durable_commit_ok"):
+            assert_ready_for_mt_full_train(state, contract=contract)
         with pytest.raises(RuntimeError):
             assert_ready_for_mt_evaluate(state, contract=contract)
-        write_mt_train_summary(
-            state, {"status": "SUCCESS_MT_TRAINING", "contract_hash": contract["contract_hash"]}
-        )
-        assert_ready_for_mt_evaluate(state, contract=contract)
 
 
 class TestTrainingContract:
@@ -659,6 +658,10 @@ class TestExport:
         state.mkdir()
         (state / "mt_contract.json").write_text("{}", encoding="utf-8")
         (state / "mt_train_summary.json").write_text("{}", encoding="utf-8")
+        (state / "mt_resume_test_summary.json").write_text("{}", encoding="utf-8")
+        (state / "mt_resume_test_phase_a.json").write_text("{}", encoding="utf-8")
+        (state / "mt_resume_test_contract.json").write_text("{}", encoding="utf-8")
+        (state / "mt_resume_test_durable_commit.json").write_text("{}", encoding="utf-8")
         dest = export_notebook04_run(
             export_root=tmp_path / "exports",
             run_id="r1",
@@ -671,6 +674,10 @@ class TestExport:
         assert (dest / "artifact_manifest.json").is_file()
         assert (dest / "run_config.json").is_file()
         assert (dest / "state" / "mt_contract.json").is_file()
+        assert (dest / "state" / "mt_resume_test_contract.json").is_file()
+        assert (dest / "state" / "mt_resume_test_durable_commit.json").is_file()
+        assert (dest / "state" / "mt_resume_test_summary.json").is_file()
+        assert (dest / "state" / "mt_resume_test_phase_a.json").is_file()
         man = json.loads((dest / "artifact_manifest.json").read_text())
         assert any(e["sha256"] for e in man["files"])
 
@@ -989,5 +996,91 @@ class TestNotebook04SourceGates:
         assert "ensure_mt_full_train_fingerprint" in joined
         assert "derive_started_from_base_or_same_experiment" in joined
         assert "write_mt_resume_test_contract" in joined
+        assert "commit_mt_resume_test_phase_b_durable" in joined
+        assert "durable_commit_ok" in joined
+        resume_cell = next(
+            "".join(c.get("source", []))
+            for c in nb["cells"]
+            if "commit_mt_resume_test_phase_b_durable(" in "".join(c.get("source", []))
+        )
+        commit_idx = resume_cell.find("commit_mt_resume_test_phase_b_durable(")
+        # Final SUCCESS summary (durable_commit_ok True) must follow the commit helper.
+        success_idx = resume_cell.find('"durable_commit_ok": True')
+        assert commit_idx >= 0
+        assert success_idx > commit_idx
         assert "load_durable_tokenizer_audit" in joined
+        assert "compute_mt_seq2seq_metrics" in joined
         assert "except Exception:\n    pass" not in joined.split("Stage-aware status")[-1]
+
+
+class TestMtSeq2SeqComputeMetrics:
+    class _Tok:
+        pad_token_id = 0
+
+        def batch_decode(self, ids, skip_special_tokens=True):
+            import numpy as np
+
+            arr = np.asarray(ids)
+            if (arr == -100).any():
+                raise KeyError(-100)
+            # Map simple token ids to deterministic strings for metric contract.
+            out = []
+            for row in arr:
+                toks = [int(x) for x in row.tolist() if int(x) != 0]
+                out.append(" ".join(str(t) for t in toks) if toks else "")
+            return out
+
+    def test_preds_with_neg100_do_not_crash(self):
+        import numpy as np
+
+        preds = np.array([[1, 2, -100], [3, -100, -100]], dtype=np.int64)
+        labels = np.array([[1, 2, 0], [3, 0, 0]], dtype=np.int64)
+        out = compute_mt_seq2seq_metrics((preds, labels), tokenizer=self._Tok())
+        assert set(out) == {"sacrebleu", "chrfpp", "monitor_n"}
+        assert out["monitor_n"] == 2
+
+    def test_labels_with_neg100_do_not_crash(self):
+        import numpy as np
+
+        preds = np.array([[1, 2, 0]], dtype=np.int64)
+        labels = np.array([[1, 2, -100]], dtype=np.int64)
+        out = compute_mt_seq2seq_metrics((preds, labels), tokenizer=self._Tok())
+        assert set(out) == {"sacrebleu", "chrfpp", "monitor_n"}
+
+    def test_both_preds_and_labels_neg100_decode_ok(self):
+        import numpy as np
+
+        preds = np.array([[5, -100], [6, 7]], dtype=np.int64)
+        labels = np.array([[5, -100], [6, -100]], dtype=np.int64)
+        out = compute_mt_seq2seq_metrics((preds, labels), tokenizer=self._Tok())
+        assert out["monitor_n"] == 2
+        assert isinstance(out["sacrebleu"], float)
+        assert isinstance(out["chrfpp"], float)
+
+    def test_preds_tuple_unwrapped(self):
+        import numpy as np
+
+        preds = (np.array([[1, -100]], dtype=np.int64), np.array([0.1]))
+        labels = np.array([[1, -100]], dtype=np.int64)
+        out = compute_mt_seq2seq_metrics((preds, labels), tokenizer=self._Tok())
+        assert set(out) == {"sacrebleu", "chrfpp", "monitor_n"}
+
+    def test_metric_keys_contract_unchanged(self):
+        import numpy as np
+
+        preds = np.array([[1, 2]], dtype=np.int64)
+        labels = np.array([[1, 2]], dtype=np.int64)
+        out = compute_mt_seq2seq_metrics((preds, labels), tokenizer=self._Tok())
+        assert list(out.keys()) == ["sacrebleu", "chrfpp", "monitor_n"]
+
+    def test_evalprediction_object_accepted(self):
+        """HF Trainer passes EvalPrediction, not a bare (preds, labels) tuple."""
+        import numpy as np
+        from types import SimpleNamespace
+
+        preds = np.array([[1, 2, -100]], dtype=np.int64)
+        labels = np.array([[1, 2, -100]], dtype=np.int64)
+        ep = SimpleNamespace(predictions=preds, label_ids=labels)
+        out = compute_mt_seq2seq_metrics(ep, tokenizer=self._Tok())
+        assert set(out) == {"sacrebleu", "chrfpp", "monitor_n"}
+        assert out["monitor_n"] == 1

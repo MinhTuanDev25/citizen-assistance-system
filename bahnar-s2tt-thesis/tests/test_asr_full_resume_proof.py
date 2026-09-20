@@ -164,6 +164,83 @@ class TestCaptureResumeProof:
         assert proof["optimizer_restored"] is False
         assert "step_counter" in proof["optimizer_detail"]
 
+    def test_optimizer_counters_match_checkpoint_not_global_step(self, tmp_path: Path):
+        """AdamW step may lag Trainer.global_step under grad accumulation — still PASS."""
+        model = TinyModel()
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: 1.0)
+        opt_updates = 47
+        trainer_global = 50
+        _advance(model, optimizer, scheduler, opt_updates)
+
+        ck = tmp_path / f"checkpoint-{trainer_global}"
+        ck.mkdir(parents=True, exist_ok=True)
+        from safetensors.torch import save_file
+
+        save_file({k: v.contiguous() for k, v in model.state_dict().items()},
+                  str(ck / "model.safetensors"))
+        torch.save(optimizer.state_dict(), ck / "optimizer.pt")
+        torch.save(scheduler.state_dict(), ck / "scheduler.pt")
+        (ck / "trainer_state.json").write_text(
+            json.dumps({"global_step": trainer_global}), encoding="utf-8"
+        )
+
+        model2, optimizer2, scheduler2 = _restored_from(ck)
+        proof = capture_resume_proof(
+            FakeTrainer(model2, optimizer2, scheduler2, trainer_global),
+            checkpoint_dir=ck, expected_resume_step=trainer_global,
+        )
+        assert proof["optimizer_restored"] is True, proof["optimizer_detail"]
+        assert proof["optimizer_step_counters"] == [opt_updates]
+        assert proof["checkpoint_optimizer_step_counters"] == [opt_updates]
+        assert proof["optimizer_step_counters"] != [trainer_global]
+
+    def test_optimizer_live_counter_mismatch_fails(self, tmp_path: Path):
+        model = TinyModel()
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: 1.0)
+        _advance(model, optimizer, scheduler, 47)
+        ck = tmp_path / "checkpoint-50"
+        ck.mkdir(parents=True, exist_ok=True)
+        from safetensors.torch import save_file
+
+        save_file({k: v.contiguous() for k, v in model.state_dict().items()},
+                  str(ck / "model.safetensors"))
+        torch.save(optimizer.state_dict(), ck / "optimizer.pt")
+        torch.save(scheduler.state_dict(), ck / "scheduler.pt")
+        (ck / "trainer_state.json").write_text(json.dumps({"global_step": 50}), encoding="utf-8")
+
+        model2, optimizer2, scheduler2 = _restored_from(ck)
+        _advance(model2, optimizer2, scheduler2, 1)  # live now [48], checkpoint [47]
+        proof = capture_resume_proof(
+            FakeTrainer(model2, optimizer2, scheduler2, 50),
+            checkpoint_dir=ck, expected_resume_step=50,
+        )
+        assert proof["optimizer_restored"] is False
+        assert "step_counter_live" in proof["optimizer_detail"]
+
+    def test_missing_optimizer_pt_fails(self, tmp_path: Path):
+        ck, *_ = _make_checkpoint(tmp_path)
+        model, optimizer, scheduler = _restored_from(ck)
+        (ck / "optimizer.pt").unlink()
+        proof = capture_resume_proof(
+            FakeTrainer(model, optimizer, scheduler, STEP),
+            checkpoint_dir=ck, expected_resume_step=STEP,
+        )
+        assert proof["optimizer_restored"] is False
+        assert proof["optimizer_detail"] == "optimizer.pt_missing"
+
+    def test_live_optimizer_empty_fails(self, tmp_path: Path):
+        ck, *_ = _make_checkpoint(tmp_path)
+        model, _optimizer, scheduler = _restored_from(ck)
+        fresh = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        proof = capture_resume_proof(
+            FakeTrainer(model, fresh, scheduler, STEP),
+            checkpoint_dir=ck, expected_resume_step=STEP,
+        )
+        assert proof["optimizer_restored"] is False
+        assert proof["optimizer_detail"] == "optimizer_state_empty"
+
     def test_unrestored_scheduler_is_detected(self, tmp_path: Path):
         ck, *_ = _make_checkpoint(tmp_path)
         model, optimizer, _scheduler = _restored_from(ck)
