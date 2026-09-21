@@ -28,8 +28,7 @@ monitor_size: 256
 nb03:
   train_count: 102486
   validation_count: 11112
-  # Pin these from the completed NB03 eligible CSVs before FULL_STAGE=prepare.
-  train_eligible_uid_set_hash: ""
-  validation_eligible_uid_set_hash: ""
-  train_eligible_file_sha256: ""
-  validation_eligible_file_sha256: ""
+  train_eligible_uid_set_hash: "99413b9569b65e70f04a3fe83b9c179f367c32c703d611e60c4bd3b71db49943"
+  validation_eligible_uid_set_hash: "4602c73b085ebd08e320655261de8cd2f32007cfe2c03a193809033a18ab7e0c"
+  train_eligible_file_sha256: "be391981ea2925b47989c19c0f0af4c0201936f74b26e41e295f430af149f654"
+  validation_eligible_file_sha256: "14110cfd1ecd47e8abf949df1e50763074fe184ae84936180717c35f5cda88dd"
