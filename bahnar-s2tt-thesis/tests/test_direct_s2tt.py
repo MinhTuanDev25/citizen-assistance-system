@@ -67,7 +67,12 @@ from src.direct_full_train import (
     monitor_manifest,
     _reference_from_frame,
 )
-from src.direct_model import audit_direct_targets_by_split, audit_target_tokenizer
+from src.direct_model import (
+    audit_direct_targets_by_split,
+    audit_target_tokenizer,
+    copy_mbart_seq2seq_embeddings,
+    load_direct_model,
+)
 from src.direct_runtime_paths import resolve_direct_runtime_paths
 
 
@@ -1364,6 +1369,179 @@ def test_locked_runtime_rejects_wrong_transformers():
         "transformers_version": "4.57.6",
         "accelerate_version": "1.10.1",
     })
+
+
+def test_copy_mbart_seq2seq_embeddings_copies_shared_and_lm_head(monkeypatch):
+    import torch
+
+    class Weight:
+        def __init__(self, fill, shape=(2, 3)):
+            self.data = torch.full(shape, float(fill))
+            self.shape = self.data.shape
+
+    class Linear:
+        def __init__(self, fill, shape=(2, 3)):
+            self.weight = Weight(fill, shape=shape)
+
+    class Seq2Seq:
+        def __init__(self):
+            self.model = type("M", (), {})()
+            self.model.shared = Linear(7.0)
+            self.lm_head = Linear(9.0)
+
+    class Decoder:
+        def __init__(self, shape=(2, 3)):
+            self._emb = Linear(0.0, shape=shape)
+            self.lm_head = Linear(0.0, shape=shape)
+
+        def get_input_embeddings(self):
+            return self._emb
+
+    monkeypatch.setattr(
+        "transformers.models.mbart.modeling_mbart.MBartForConditionalGeneration.from_pretrained",
+        classmethod(lambda cls, *a, **k: Seq2Seq()),
+    )
+    dec = Decoder()
+    copy_mbart_seq2seq_embeddings(dec, decoder_id=LOCKED_DECODER_ID, decoder_revision=LOCKED_DECODER_REVISION)
+    assert torch.equal(dec.get_input_embeddings().weight.data, torch.full((2, 3), 7.0))
+    assert torch.equal(dec.lm_head.weight.data, torch.full((2, 3), 9.0))
+
+
+def test_copy_mbart_seq2seq_embeddings_shape_mismatch_fails(monkeypatch):
+    import torch
+
+    class Weight:
+        def __init__(self, fill, shape):
+            self.data = torch.full(shape, float(fill))
+            self.shape = self.data.shape
+
+    class Linear:
+        def __init__(self, fill, shape):
+            self.weight = Weight(fill, shape)
+
+    class Seq2Seq:
+        def __init__(self):
+            self.model = type("M", (), {})()
+            self.model.shared = Linear(7.0, (4, 3))
+            self.lm_head = Linear(9.0, (4, 3))
+
+    class Decoder:
+        def __init__(self):
+            self._emb = Linear(0.0, (2, 3))
+            self.lm_head = Linear(0.0, (2, 3))
+
+        def get_input_embeddings(self):
+            return self._emb
+
+    monkeypatch.setattr(
+        "transformers.models.mbart.modeling_mbart.MBartForConditionalGeneration.from_pretrained",
+        classmethod(lambda cls, *a, **k: Seq2Seq()),
+    )
+    with pytest.raises(RuntimeError, match="embed_tokens shape"):
+        copy_mbart_seq2seq_embeddings(
+            Decoder(), decoder_id=LOCKED_DECODER_ID, decoder_revision=LOCKED_DECODER_REVISION
+        )
+
+
+def test_load_direct_model_sets_trainer_accepts_loss_kwargs_false(monkeypatch, tmp_path):
+    """Trainer must read model.accepts_loss_kwargs=False — not a decoder.forward monkey-patch."""
+    import torch
+    import torch.nn as nn
+    from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments
+
+    class Tok:
+        lang_code_to_id = {LOCKED_TARGET_LANG: 250007}
+        eos_token_id = 2
+        pad_token_id = 1
+
+    class Encoder(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin = nn.Linear(2, 2)
+            self.frozen = False
+
+        def freeze_feature_encoder(self):
+            self.frozen = True
+
+    class Decoder(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin = nn.Linear(2, 2)
+
+        def forward(self, **kwargs):
+            if "num_items_in_batch" in kwargs:
+                raise TypeError(
+                    "MBartForCausalLM.forward() got an unexpected keyword argument 'num_items_in_batch'"
+                )
+            return kwargs
+
+    class Cfg:
+        def __init__(self):
+            self.decoder = type("D", (), {"vocab_size": 10})()
+            self.pad_token_id = 1
+            self.eos_token_id = 2
+            self.decoder_start_token_id = 2
+            self.vocab_size = 10
+            self.is_encoder_decoder = True
+            self.use_cache = False
+
+    class Gen:
+        decoder_start_token_id = 2
+        pad_token_id = 1
+        eos_token_id = 2
+        forced_bos_token_id = 0
+
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = Encoder()
+            self.decoder = Decoder()
+            self.config = Cfg()
+            self.generation_config = Gen()
+
+        def forward(self, **kwargs):
+            # VAR_KEYWORD present: without accepts_loss_kwargs Trainer would inject loss kwargs.
+            return type("O", (), {"loss": torch.tensor(0.0, requires_grad=True)})()
+
+    monkeypatch.setattr(
+        "transformers.SpeechEncoderDecoderModel.from_encoder_decoder_pretrained",
+        staticmethod(lambda *a, **k: Model()),
+    )
+    monkeypatch.setattr("src.direct_model.copy_mbart_seq2seq_embeddings", lambda *a, **k: None)
+    model = load_direct_model(
+        encoder_id=LOCKED_ENCODER_ID, encoder_revision=LOCKED_ENCODER_REVISION,
+        decoder_id=LOCKED_DECODER_ID, decoder_revision=LOCKED_DECODER_REVISION,
+        tokenizer=Tok(), target_lang=LOCKED_TARGET_LANG, freeze_feature_encoder=True,
+    )
+    assert model.accepts_loss_kwargs is False
+    assert getattr(model.encoder, "frozen", False) is True
+
+    class TinyDS(torch.utils.data.Dataset):
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, idx):
+            return {
+                "input_values": torch.zeros(8, dtype=torch.float32),
+                "labels": torch.tensor([1, 2], dtype=torch.long),
+            }
+
+    args = Seq2SeqTrainingArguments(
+        output_dir=str(tmp_path / "out"),
+        per_device_train_batch_size=1,
+        max_steps=1,
+        report_to=[],
+        save_strategy="no",
+        eval_strategy="no",
+        logging_strategy="no",
+        remove_unused_columns=False,
+    )
+    trainer = Seq2SeqTrainer(
+        model=model,
+        args=args,
+        train_dataset=TinyDS(),
+    )
+    assert trainer.model_accepts_loss_kwargs is False
 
 
 def test_implementation_report_fingerprint_matches_live():
