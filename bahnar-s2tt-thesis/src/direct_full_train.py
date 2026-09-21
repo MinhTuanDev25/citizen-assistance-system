@@ -402,6 +402,55 @@ def plan_direct_resume_position(
     return plan
 
 
+def skip_first_batches_preserving_epoch(skip_fn: Any, dataloader: Any, num_batches: int = 0) -> Any:
+    """
+    Compat for accelerate 1.10.1 ``skip_first_batches``.
+
+    Hugging Face Trainer calls ``set_epoch(epochs_trained)`` then
+    ``skip_first_batches(...)``. The pinned Accelerate rebuilds a
+    ``DataLoaderShard`` with ``iteration=0``, so ``__iter__`` replays
+    epoch-0 shuffle. Preserve the pre-skip iteration (upstream semantics:
+    ``epoch_dataloader.iteration = epochs_trained`` after skip).
+    """
+    resumed_epoch = int(getattr(dataloader, "iteration", 0) or 0)
+    skipped = skip_fn(dataloader, num_batches)
+    if hasattr(skipped, "iteration"):
+        skipped.iteration = resumed_epoch
+    return skipped
+
+
+def make_resume_safe_seq2seq_trainer_cls(base_cls: Any = None) -> Any:
+    """
+    Seq2SeqTrainer subclass for transformers==4.57.6 + accelerate==1.10.1.
+
+    Patches ``transformers.trainer.skip_first_batches`` only for the duration
+    of ``_inner_training_loop`` so resume keeps the SeedableRandomSampler
+    epoch after data skip. Fresh training (no resume skip) is unchanged.
+    """
+    from transformers import Seq2SeqTrainer
+
+    Base = Seq2SeqTrainer if base_cls is None else base_cls
+
+    class ResumeSafeSeq2SeqTrainer(Base):  # type: ignore[misc,valid-type]
+        def _inner_training_loop(self, *args, **kwargs):
+            import transformers.trainer as trainer_mod
+
+            original = trainer_mod.skip_first_batches
+
+            def _skip(dataloader, num_batches=0):
+                return skip_first_batches_preserving_epoch(original, dataloader, num_batches)
+
+            trainer_mod.skip_first_batches = _skip
+            try:
+                return super()._inner_training_loop(*args, **kwargs)
+            finally:
+                trainer_mod.skip_first_batches = original
+
+    ResumeSafeSeq2SeqTrainer.__name__ = "ResumeSafeSeq2SeqTrainer"
+    ResumeSafeSeq2SeqTrainer.__qualname__ = "ResumeSafeSeq2SeqTrainer"
+    return ResumeSafeSeq2SeqTrainer
+
+
 def _finite_metric_values(metrics: Mapping[str, Any]) -> list[bool]:
     flags = []
     for key in ("eval_sacrebleu", "eval_chrfpp", "sacrebleu", "chrfpp", "train_loss"):
