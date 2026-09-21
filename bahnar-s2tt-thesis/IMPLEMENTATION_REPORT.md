@@ -4,14 +4,14 @@ Date: 2026-09-21 (follow-up: split monitor semantic vs byte SHA; require 4/4 NB0
 
 This change closes the two remaining HIGH review items. **No prepare, pilot, resume-test, training, evaluate, or model download was executed.** Verification was limited to `pytest`, `compileall`, and AST compile of notebook code cells.
 
-**READY_FOR_RUNPOD_PREPARE = False.** `configs/direct.yaml` still has empty NB03 eligible pins. Production counts `102486` / `11112` fail closed until all four hashes are pasted from the real NB03 CSVs on RunPod. Do not invent hashes.
+**READY_FOR_RUNPOD_PREPARE = True** after the four NB03 eligible hashes were pasted into `configs/direct.yaml` from the real production CSVs. Changing YAML updates the source fingerprint; that is intended.
 
 ## Spec gates closed
 
 - Monitor semantic lock is `n` / `uid_set_hash` / `pair_hash` / `ordered_row_hash` vs `fixed_subset(validation)`. Pandas float/NaN/duration CSV round-trip no longer false-fails.
 - Monitor byte lock is `sha256_file(actual monitor path)` vs `training_contract["monitor_file_sha256"]`. Persist writes the monitor CSV first, hashes the staged file, rebuilds the training contract with that SHA, verifies after write, then commits.
 - Production NB03 counts require all four pins non-empty (`train`/`validation` UID set + file SHA-256), then verify those pins against the actual eligible CSVs before the row-count check. 0/4–3/4 fail; 4/4 matching hashes pass pin verification; one wrong hash fails on mismatch.
-- YAML pins stay empty in this overlay. Eligible CSVs are not in the repo; hashes are not invented.
+- YAML `nb03` now pins all four production eligible hashes (UID set + file SHA for train/val). Empty pins still fail closed if any are cleared.
 - `source_fingerprint_sha256` remains a training-contract field. `mt_contract.py` is not on the NB05 import path and is not added to the fingerprint.
 
 ## Unchanged scientific / runtime pins
@@ -31,7 +31,7 @@ This change closes the two remaining HIGH review items. **No prepare, pilot, res
 - `src/direct_data.py` — persist staged-monitor SHA lock; production 4/4 NB03 pins before count
 - `notebooks/05_train_direct_s2tt.ipynb` — reload semantic + file SHA; persist returns locked contract
 - `tests/test_direct_s2tt.py` — round-trip / target / order / byte-tamper; 0/4–4/4 pin tests
-- `configs/direct.yaml` — pins remain `""` (fail closed)
+- `configs/direct.yaml` — four NB03 eligible hashes pinned from production CSVs
 
 ## New / updated tests
 
@@ -51,13 +51,11 @@ This change closes the two remaining HIGH review items. **No prepare, pilot, res
 
 ## Base-source fingerprint
 
-- Notebook 05 aggregate SHA-256: `72ccf303bad510867169186faf58c4db6da9c4f707bb14e33a6d9fa1ac28e8f5` (22 files)
+- Notebook 05 source fingerprint: `49c4a0877f36546b9b3cbfd54ee182a17220aea072ed1caf46f6b6efd702db5c` (22 files)
 
 ## RunPod note
 
-Before `FULL_STAGE="prepare"`, pin all four NB03 eligible hashes in `configs/direct.yaml`. Empty pins fail closed and print the computed hashes from the current NB03 CSVs — paste those four values, then prepare. Changing YAML after this zip updates the source fingerprint; that is intended. Recompute `SOURCE_FP` / re-prepare after the YAML pin.
-
-Set `BAHNAR_DURABLE_CHECKPOINT_BUDGET_BYTES` before `resume_test_*` / `train`.
+NB03 eligible hashes are pinned in `configs/direct.yaml`. Restart the kernel so `SOURCE_FP` matches this report, then `FULL_STAGE="prepare"`. Set `BAHNAR_DURABLE_CHECKPOINT_BUDGET_BYTES` before `resume_test_*` / `train`.
 
 ## Confirmation
 
