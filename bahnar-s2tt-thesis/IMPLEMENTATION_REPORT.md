@@ -1,18 +1,17 @@
 # Notebook 05 Direct S2TT — Implementation Report
 
-Date: 2026-09-21 (follow-up: split monitor semantic vs byte SHA; require 4/4 NB03 pins)
+Date: 2026-09-21 (follow-up: Trainer-only `num_items_in_batch` fix + mBART embedding warm-start)
 
-This change closes the two remaining HIGH review items. **No prepare, pilot, resume-test, training, evaluate, or model download was executed.** Verification was limited to `pytest`, `compileall`, and AST compile of notebook code cells.
+Pilot crashed because transformers 4.57 `Seq2SeqTrainer` injects `num_items_in_batch` into `SpeechEncoderDecoder`, which forwards it to `MBartForCausalLM.forward()`. The same RunPod log showed `lm_head.weight` and `model.decoder.embed_tokens.weight` were newly initialized when the mmt checkpoint was loaded as CausalLM. **No prepare/pilot/train was re-run in this edit.**
 
-**READY_FOR_RUNPOD_PREPARE = True** after the four NB03 eligible hashes were pasted into `configs/direct.yaml` from the real production CSVs. Changing YAML updates the source fingerprint; that is intended.
+**READY_FOR_RUNPOD_PREPARE = True** after NB03 eligible hashes are pinned. After this patch, restart the kernel and re-run `prepare` then `pilot` (source fingerprint changed).
 
 ## Spec gates closed
 
-- Monitor semantic lock is `n` / `uid_set_hash` / `pair_hash` / `ordered_row_hash` vs `fixed_subset(validation)`. Pandas float/NaN/duration CSV round-trip no longer false-fails.
-- Monitor byte lock is `sha256_file(actual monitor path)` vs `training_contract["monitor_file_sha256"]`. Persist writes the monitor CSV first, hashes the staged file, rebuilds the training contract with that SHA, verifies after write, then commits.
-- Production NB03 counts require all four pins non-empty (`train`/`validation` UID set + file SHA-256), then verify those pins against the actual eligible CSVs before the row-count check. 0/4–3/4 fail; 4/4 matching hashes pass pin verification; one wrong hash fails on mismatch.
-- YAML `nb03` now pins all four production eligible hashes (UID set + file SHA for train/val). Empty pins still fail closed if any are cleared.
-- `source_fingerprint_sha256` remains a training-contract field. `mt_contract.py` is not on the NB05 import path and is not added to the fingerprint.
+- Root fix for pilot: `model.accepts_loss_kwargs = False` only. No decoder.forward monkey-patch.
+- Keep `copy_mbart_seq2seq_embeddings()`: load `MBartForConditionalGeneration` at the locked decoder id/revision and copy `shared` + `lm_head` into the CausalLM decoder (shape mismatch fails closed).
+- Regression: construct a real `Seq2SeqTrainer` and assert `trainer.model_accepts_loss_kwargs is False` (no `train()`).
+- Monitor semantic/byte locks, 4/4 NB03 pins, peak copies, runtime pins, data/training contracts unchanged.
 
 ## Unchanged scientific / runtime pins
 
@@ -27,35 +26,32 @@ This change closes the two remaining HIGH review items. **No prepare, pilot, res
 
 ## Files changed
 
-- `src/direct_full_train.py` — semantic monitor assert; `assert_monitor_file_sha256`
-- `src/direct_data.py` — persist staged-monitor SHA lock; production 4/4 NB03 pins before count
-- `notebooks/05_train_direct_s2tt.ipynb` — reload semantic + file SHA; persist returns locked contract
-- `tests/test_direct_s2tt.py` — round-trip / target / order / byte-tamper; 0/4–4/4 pin tests
-- `configs/direct.yaml` — four NB03 eligible hashes pinned from production CSVs
+- `src/direct_model.py` — `accepts_loss_kwargs=False`; copy mBART shared/`lm_head`; removed `drop_unexpected_decoder_loss_kwargs`
+- `tests/test_direct_s2tt.py` — Trainer-level loss-kwargs regression; embedding copy + shape fail-closed
+- `IMPLEMENTATION_REPORT.md` — fingerprint regenerated
 
 ## New / updated tests
 
-- Float/NaN/duration CSV round-trip: semantic PASS + byte SHA matches staged file
-- Target change FAIL; order change FAIL; byte tamper FAIL
-- Persist overwrites placeholder monitor SHA with staged-file SHA
-- NB03 production 0/4 and 1–3/4 missing pins FAIL; 4/4 correct PASS; one wrong hash FAIL
+- `Seq2SeqTrainer(...).model_accepts_loss_kwargs is False` after `load_direct_model`
+- mBART shared + `lm_head` copy PASS; shape mismatch FAIL
+- No decoder.forward monkey-patch path remains
 
 ## Verify results
 
 - `python -m compileall -q src tests` — PASS
-- Notebook 05 code cells AST-compile — 12 cells PASS
-- `pytest -q` — **832 passed**
+- `pytest -q tests/test_direct_s2tt.py` — **77 passed**
+- `pytest -q` — **835 passed**
 - No Hugging Face model download
 - No notebook execute
 - No Direct/ASR/MT pipeline stage run
 
 ## Base-source fingerprint
 
-- Notebook 05 source fingerprint: `49c4a0877f36546b9b3cbfd54ee182a17220aea072ed1caf46f6b6efd702db5c` (22 files)
+- Notebook 05 source fingerprint: `05d5f9b9a893c46a1f9aac10e138d4112bfdedb65a397c91ee6b3c1473eae327` (22 files)
 
 ## RunPod note
 
-NB03 eligible hashes are pinned in `configs/direct.yaml`. Restart the kernel so `SOURCE_FP` matches this report, then `FULL_STAGE="prepare"`. Set `BAHNAR_DURABLE_CHECKPOINT_BUDGET_BYTES` before `resume_test_*` / `train`.
+Copy updated `src/direct_model.py` (+ tests/report if reviewing). Restart kernel, re-run `FULL_STAGE="prepare"` (fingerprint changed), then `pilot`. Set `BAHNAR_DURABLE_CHECKPOINT_BUDGET_BYTES` before `resume_test_*` / `train`.
 
 ## Confirmation
 

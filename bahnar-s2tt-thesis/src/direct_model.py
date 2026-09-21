@@ -29,6 +29,36 @@ def load_direct_processors(
     return feature_extractor, tokenizer
 
 
+def copy_mbart_seq2seq_embeddings(decoder: Any, *, decoder_id: str, decoder_revision: str) -> None:
+    """Load mBART as seq2seq and copy shared/lm_head into the CausalLM decoder.
+
+    ``from_encoder_decoder_pretrained`` loads ``MBartForCausalLM``, whose
+    ``embed_tokens`` / ``lm_head`` keys do not match the mmt checkpoint, so HF
+    leaves them randomly initialized. That would discard the Vietnamese decoder
+    vocabulary.
+    """
+    from transformers import MBartForConditionalGeneration
+
+    seq2seq = MBartForConditionalGeneration.from_pretrained(decoder_id, revision=decoder_revision)
+    try:
+        src_embed = seq2seq.model.shared.weight.data
+        src_lm = seq2seq.lm_head.weight.data
+        dst_embed = decoder.get_input_embeddings().weight
+        dst_lm = decoder.lm_head.weight
+        if tuple(dst_embed.shape) != tuple(src_embed.shape):
+            raise RuntimeError(
+                f"mBART embed_tokens shape {tuple(dst_embed.shape)} != shared {tuple(src_embed.shape)}"
+            )
+        if tuple(dst_lm.shape) != tuple(src_lm.shape):
+            raise RuntimeError(
+                f"mBART lm_head shape {tuple(dst_lm.shape)} != seq2seq {tuple(src_lm.shape)}"
+            )
+        dst_embed.data.copy_(src_embed)
+        dst_lm.data.copy_(src_lm)
+    finally:
+        del seq2seq
+
+
 def load_direct_model(
     *,
     encoder_id: str,
@@ -49,6 +79,14 @@ def load_direct_model(
         encoder_revision=encoder_revision,
         decoder_revision=decoder_revision,
     )
+    # Restore the two mBART weights that HF leaves newly initialized
+    # when loading the seq2seq checkpoint as MBartForCausalLM.
+    copy_mbart_seq2seq_embeddings(
+        model.decoder, decoder_id=decoder_id, decoder_revision=decoder_revision
+    )
+    # transformers Trainer must handle gradient-accumulation scaling itself.
+    # Do not forward num_items_in_batch through SpeechEncoderDecoder -> mBART.
+    model.accepts_loss_kwargs = False
     forced_bos = int(tokenizer.lang_code_to_id[target_lang])
     model.config.decoder_start_token_id = int(tokenizer.eos_token_id)
     model.config.pad_token_id = int(tokenizer.pad_token_id)
