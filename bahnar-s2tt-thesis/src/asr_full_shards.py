@@ -790,7 +790,7 @@ def hydrate_rows_audio(
         )
         reports.append(report)
         total += int(report["hydrated"])
-        if report["hydrated"] and cleanup_shard is not None:
+        if cleanup_shard is not None:
             cleanup_shard(plan.ref)
     return {"shards": len(plans), "hydrated": total, "reports": reports}
 
