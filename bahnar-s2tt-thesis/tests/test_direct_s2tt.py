@@ -58,9 +58,11 @@ from src.direct_full_train import (
     fixed_subset,
     frozen_flag_from_tracker,
     load_stage_success,
+    make_resume_safe_seq2seq_trainer_cls,
     plan_direct_resume_position,
     random_sampler_uid_order,
     restore_direct_best_checkpoint,
+    skip_first_batches_preserving_epoch,
     validate_direct_best_checkpoint,
     assert_monitor_file_sha256,
     assert_monitor_matches_validation,
@@ -648,6 +650,9 @@ def test_notebook_ast_calls_only_existing_src_apis():
     assert "42949672960" not in src
     assert "315_000_000" not in src
     assert "plan_direct_resume_position" in src
+    assert "make_resume_safe_seq2seq_trainer_cls" in src
+    assert "make_uid_tracking_trainer_cls(make_resume_safe_seq2seq_trainer_cls(), sink)" in src
+    assert "DirectTrainer = make_resume_safe_seq2seq_trainer_cls()" in src
     assert "derive_direct_training_status" in src
     assert "preflight_direct_local_disk" in src
     assert "validate_direct_best_checkpoint" in src
@@ -1543,6 +1548,210 @@ def test_load_direct_model_sets_trainer_accepts_loss_kwargs_false(monkeypatch, t
     )
     assert trainer.model_accepts_loss_kwargs is False
 
+
+def test_skip_first_batches_preserving_epoch_keeps_seedable_epoch():
+    """Pinned accelerate 1.10.1 rebuilds DataLoaderShard at iteration=0; workaround restores it."""
+    import torch
+    from accelerate.data_loader import DataLoaderShard, SeedableRandomSampler, skip_first_batches
+    from torch.utils.data import Dataset
+
+    class DS(Dataset):
+        def __len__(self):
+            return 128
+
+        def __getitem__(self, i):
+            return {"x": torch.tensor([i], dtype=torch.long)}
+
+    seed = 42
+    ds = DS()
+    s1 = SeedableRandomSampler(ds, replacement=False, data_seed=seed)
+    s1.set_epoch(1)
+    epoch1 = list(s1)
+    epoch0 = list(SeedableRandomSampler(ds, replacement=False, data_seed=seed))
+    assert epoch0[32] != epoch1[32]
+
+    sampler = SeedableRandomSampler(ds, replacement=False, data_seed=seed)
+    shard = DataLoaderShard(ds, device=None, batch_size=1, sampler=sampler, rng_types=None)
+    shard.set_epoch(1)
+    broken = skip_first_batches(shard, 32)
+    assert int(broken.iteration) == 0
+    broken_first = next(iter(broken))["x"].item()
+    assert broken_first == epoch0[32]
+
+    sampler2 = SeedableRandomSampler(ds, replacement=False, data_seed=seed)
+    shard2 = DataLoaderShard(ds, device=None, batch_size=1, sampler=sampler2, rng_types=None)
+    shard2.set_epoch(1)
+    fixed = skip_first_batches_preserving_epoch(skip_first_batches, shard2, 32)
+    assert int(fixed.iteration) == 1
+    fixed_first = next(iter(fixed))["x"].item()
+    assert fixed_first == epoch1[32]
+
+
+def test_resume_safe_trainer_matches_uninterrupted_uid_after_epoch_boundary(tmp_path):
+    """
+    Integration: continuous train past step 20 vs checkpoint-20 resume must consume
+    the same first UID (epoch-1 index 32) under pinned Seq2SeqTrainer/Accelerate.
+    """
+    import torch
+    import torch.nn as nn
+    from transformers import Seq2SeqTrainingArguments
+
+    from src.asr_full_train import (
+        evaluate_data_position,
+        make_resume_proof_callback,
+        make_uid_tracking_collator,
+        make_uid_tracking_trainer_cls,
+        summarize_resume_proof,
+    )
+
+    n = 128
+    seed = 42
+    phase_a = 20
+    accum = 8
+    uids = [f"u{i}" for i in range(n)]
+    plan = plan_direct_resume_position(
+        uids,
+        seed=seed,
+        resume_step=phase_a,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=accum,
+    )
+    assert plan["epoch"] == 1
+    assert plan["expected_sample_index"] == 32
+    expected_uid = plan["expected_first_uid"]
+    assert expected_uid != plan["epoch0_first_uid"]
+
+    class TinyDS(torch.utils.data.Dataset):
+        def __len__(self):
+            return n
+
+        def __getitem__(self, idx):
+            return {
+                "input_ids": torch.tensor([idx % 7 + 1], dtype=torch.long),
+                "labels": torch.tensor([idx % 5 + 1], dtype=torch.long),
+                "record_uid": uids[idx],
+            }
+
+    class TinyModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.emb = nn.Embedding(32, 8)
+            self.out = nn.Linear(8, 32)
+            self.config = type("C", (), {"is_encoder_decoder": False})()
+
+        def forward(self, input_ids=None, labels=None, **kwargs):
+            h = self.emb(input_ids).mean(dim=1)
+            logits = self.out(h)
+            loss = logits.float().pow(2).mean()
+            if labels is not None:
+                loss = loss + labels.float().mean() * 0.0
+            return {"loss": loss}
+
+    def collate(features):
+        return {
+            "input_ids": torch.stack([f["input_ids"] for f in features]),
+            "labels": torch.stack([f["labels"] for f in features]),
+        }
+
+    def make_args(out_dir, max_steps, save_steps=None):
+        kw = dict(
+            output_dir=str(out_dir),
+            per_device_train_batch_size=1,
+            gradient_accumulation_steps=accum,
+            max_steps=max_steps,
+            learning_rate=1e-3,
+            warmup_steps=0,
+            logging_strategy="no",
+            report_to=[],
+            seed=seed,
+            data_seed=seed,
+            remove_unused_columns=False,
+            dataloader_num_workers=0,
+            fp16=False,
+            use_cpu=True,
+        )
+        if save_steps is None:
+            kw["save_strategy"] = "no"
+        else:
+            kw["save_strategy"] = "steps"
+            kw["save_steps"] = save_steps
+            kw["save_total_limit"] = 2
+        return Seq2SeqTrainingArguments(**kw)
+
+    ResumeSafe = make_resume_safe_seq2seq_trainer_cls()
+
+    # Continuous: train past step 20; UID consumed while global_step==20 is the next microbatch.
+    step_sink: dict = {"uids_by_step": {}}
+
+    class StepUidTrainer(ResumeSafe):
+        def training_step(self, model, inputs, *args, **kwargs):
+            from src.asr_full_train import PRIVATE_BATCH_UID_KEY
+
+            uids_batch = []
+            if isinstance(inputs, dict) and PRIVATE_BATCH_UID_KEY in inputs:
+                raw = inputs.pop(PRIVATE_BATCH_UID_KEY)
+                uids_batch = [str(u) for u in (raw or [])]
+            gs = int(getattr(self.state, "global_step", 0) or 0)
+            step_sink.setdefault("uids_by_step", {}).setdefault(gs, []).extend(uids_batch)
+            return super().training_step(model, inputs, *args, **kwargs)
+
+    cont_trainer = StepUidTrainer(
+        model=TinyModel(),
+        args=make_args(tmp_path / "continuous", max_steps=phase_a + 1, save_steps=None),
+        train_dataset=TinyDS(),
+        data_collator=make_uid_tracking_collator(collate, {}),
+    )
+    cont_trainer.train()
+    continuous_uid = step_sink["uids_by_step"].get(phase_a, [None])[0]
+    assert continuous_uid == expected_uid, (
+        continuous_uid,
+        expected_uid,
+        step_sink["uids_by_step"].get(phase_a),
+    )
+
+    # Phase A: checkpoint at step 20
+    phase_dir = tmp_path / "phase_a"
+    phase_trainer = ResumeSafe(
+        model=TinyModel(),
+        args=make_args(phase_dir, max_steps=phase_a, save_steps=phase_a),
+        train_dataset=TinyDS(),
+        data_collator=collate,
+    )
+    phase_trainer.train()
+    ckpt = phase_dir / f"checkpoint-{phase_a}"
+    assert ckpt.is_dir()
+
+    # Phase B: new Trainer state, resume from checkpoint-20
+    sink: dict = {}
+    Track = make_uid_tracking_trainer_cls(ResumeSafe, sink)
+    proof_cb = make_resume_proof_callback(
+        checkpoint_dir=ckpt,
+        expected_resume_step=phase_a,
+        sink=sink,
+        gradient_accumulation_steps=accum,
+    )
+    resume_trainer = Track(
+        model=TinyModel(),
+        args=make_args(tmp_path / "phase_b", max_steps=phase_a + 2, save_steps=None),
+        train_dataset=TinyDS(),
+        data_collator=make_uid_tracking_collator(collate, sink),
+        callbacks=[proof_cb],
+    )
+    resume_trainer.train(resume_from_checkpoint=str(ckpt))
+    assert int(resume_trainer.state.global_step) > phase_a
+    proof = summarize_resume_proof(sink, expected_first_uid=expected_uid)
+    pos = evaluate_data_position(sink, expected_uid=expected_uid)
+    assert pos["data_position_ok"] is True
+    assert proof["data_position_ok"] is True
+    assert proof["step_matches_checkpoint"] is True
+    assert sink["first_consumed_uids"][0] == expected_uid
+    assert sink["first_consumed_uids"][0] == continuous_uid
+    assert sink["first_consumed_uids"][0] != plan["epoch0_first_uid"]
+    assert int(sink.get("first_step_global_step", -1)) == phase_a
+    assert proof["rng_restored"] is True
+    assert proof["optimizer_restored"] is True
+    assert proof["scheduler_restored"] is True
+    assert proof["model_restored"] is True
 
 def test_implementation_report_fingerprint_matches_live():
     root = Path(__file__).resolve().parents[1]
