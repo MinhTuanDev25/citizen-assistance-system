@@ -1,0 +1,17 @@
+# Notebook 06 — final frozen RQ1 comparison (C0 cascaded vs D0 direct)
+# Operator fills ASR_STATE_DIR / MT_STATE_DIR / DIRECT_STATE_DIR in the notebook
+# control cell only (never here). Generation policy comes from upstream contracts.
+seed: 42
+bootstrap_samples: 1000
+confidence: 0.95
+expected_test_count: 215
+
+dataset:
+  id: cuong06/Bahnar_Vietnamese
+  revision: 3d88d3951b1a6e3388559b341cd7bd274879d696
+  parquet_revision: ad0a84362053dad098b86d0df215eb081f891dd8
+
+runtime:
+  torch: "2.8.0"
+  transformers: "4.57.6"
+  accelerate: "1.10.1"

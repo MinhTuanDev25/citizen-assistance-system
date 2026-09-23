@@ -27,7 +27,7 @@ bahnar-s2tt-thesis/
 | 03 | `notebooks/03_asr_baseline_training.ipynb` | Cascaded ASR: XLS-R-300m CTC, Bahnar speech → Bahnar text |
 | 04 | `notebooks/04_mt_baseline_training.ipynb` | Cascaded MT: BARTpho-syllable, Bahnar text → Vietnamese |
 | 05 | `notebooks/05_train_direct_s2tt.ipynb` | Direct D0: XLS-R-300m encoder + mBART-50-mmt `vi_VN` decoder |
-| 06 | `notebooks/06_rq1_evaluation.ipynb` | Final C0 vs D0 on frozen test — **not implemented yet** |
+| 06 | `notebooks/06_rq1_evaluation.ipynb` | Final C0 vs D0 on frozen test (`verify → unlock_test → run_cascaded → run_direct → finalize`) |
 
 Matched D0 speech UIDs follow the NB03 eligible set (currently **102,486** train / **11,112** validation). D0 joins only locked Vietnamese targets from RQ1 manifests; Bahnar text is not a Direct model input.
 
@@ -43,7 +43,7 @@ pip install -r requirements.txt
 python -m ipykernel install --user --name=bahnar-s2tt --display-name="Python (bahnar-s2tt)"
 ```
 
-Pinned training runtime (Notebook 03/04/05):
+Pinned training runtime (Notebook 03/04/05/06):
 
 - `torch==2.8.0`
 - `transformers==4.57.6`
@@ -93,4 +93,4 @@ Local checkpoint peak is `save_total_limit + 1` (default 3). Durable peak is 4.
 2. Keep `GROUP_REVIEW_APPROVED=False` on the first audit pass.
 3. Review `data/audit/`, then approve the split.
 4. Continue 02 → 03 → 04, then 05 on RunPod after NB03 eligible CSVs exist.
-5. Notebook 06 stays closed until C0 and D0 both have a durable best checkpoint.
+5. Notebook 06 opens only after NB03/NB04/NB05 all have durable best + evaluate success (`SUCCESS_*_EVALUATE`) and frozen-test clean. Stages: `verify → unlock_test → run_cascaded → run_direct → finalize`. Fill exact `ASR_STATE_DIR` / `MT_STATE_DIR` / `DIRECT_STATE_DIR` in the operator-control cell (no auto-latest).
