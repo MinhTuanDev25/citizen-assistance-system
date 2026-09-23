@@ -54,7 +54,7 @@ def _require_same(label: str, **fields: Any) -> None:
 
 
 def _assert_asr_identity(train: Mapping[str, Any], evaluate: Mapping[str, Any]) -> Dict[str, Any]:
-    from src.asr_full_train import extract_training_contract
+    from src.asr_full_train import extract_training_contract, training_contract_matches
 
     if evaluate.get("status") != "SUCCESS_FULL_EVALUATE":
         raise RuntimeError("NB03 is not SUCCESS_FULL_EVALUATE")
@@ -82,14 +82,26 @@ def _assert_asr_identity(train: Mapping[str, Any], evaluate: Mapping[str, Any]) 
     if not train_hash:
         raise RuntimeError("NB03 training/data contract hash missing")
     if eval_contract:
-        eval_hash = str(
-            eval_contract.get("contract_hash")
-            or eval_contract.get("train_contract_hash")
-            or eval_contract.get("data_contract_hash")
-            or train_hash
-        )
-        if eval_hash != train_hash:
-            raise RuntimeError("NB03 train/evaluate contract hash mismatch")
+        # Modern NB03 evaluate contract: its own contract_hash is an evaluate-stage
+        # hash; train_contract_hash binds it to the exact training contract.
+        bound = str(eval_contract.get("train_contract_hash") or "").strip()
+        if bound:
+            if bound != train_hash:
+                raise RuntimeError(
+                    "NB03 evaluate train_contract_hash does not match train contract_hash"
+                )
+        else:
+            legacy_hash = str(
+                eval_contract.get("contract_hash")
+                or eval_contract.get("data_contract_hash")
+                or ""
+            ).strip()
+            if not legacy_hash:
+                raise RuntimeError("NB03 evaluate contract missing training-contract hash bind")
+            if legacy_hash != train_hash:
+                raise RuntimeError("NB03 train/evaluate contract hash mismatch")
+        if not training_contract_matches(eval_contract, contract, require_hparams=True):
+            raise RuntimeError("NB03 train/evaluate training contract fields mismatch")
     best = _best_name(train, evaluate)
     eval_best = evaluate.get("best_checkpoint") or evaluate.get("best_checkpoint_name")
     if eval_best is not None and Path(str(eval_best)).name != best:

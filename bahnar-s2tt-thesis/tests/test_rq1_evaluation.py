@@ -930,6 +930,97 @@ def test_test_contract_detects_content_and_order(tmp_path):
         assert_rq1_test_contract(changed, c, manifest_path=p)
 
 
+def test_asr_evaluate_wrapper_hash_binds_via_train_contract_hash(tmp_path):
+    """NB03 evaluate contract_hash is a wrapper; identity is train_contract_hash."""
+    from src.asr_full_train import build_data_contract, build_evaluate_contract, build_train_contract
+
+    a, m, d = _write_upstream(tmp_path)
+    data = build_data_contract(
+        dataset_id="ds",
+        dataset_revision="rev",
+        parquet_revision="pq",
+        train_manifest_content_hash="t" * 64,
+        validation_manifest_content_hash="v" * 64,
+        vocab_fp="vocab",
+        processing_version="pcm-v1",
+        min_duration=0.1,
+        max_duration=30.0,
+        target_sr=16000,
+        pretrained_model_id="facebook/wav2vec2-xls-r-300m",
+        pretrained_model_revision="rev-a",
+    )
+    train_contract = build_train_contract(
+        experiment_id="a",
+        data_contract=data,
+        hparams={"learning_rate": 1e-4, "num_train_epochs": 1},
+    )
+    evaluate_contract = build_evaluate_contract(train_contract=train_contract)
+    assert evaluate_contract["contract_hash"] != train_contract["contract_hash"]
+    assert evaluate_contract["train_contract_hash"] == train_contract["contract_hash"]
+    (a / "full_train_summary.json").write_text(json.dumps({
+        "status": "SUCCESS_FULL_TRAINING",
+        "experiment_id": "a",
+        "best_checkpoint": "checkpoint-1",
+        "training_contract": train_contract,
+    }))
+    (a / "full_evaluate_summary.json").write_text(json.dumps({
+        "status": "SUCCESS_FULL_EVALUATE",
+        "frozen_test_accessed": False,
+        "experiment_id": "a",
+        "checkpoint": "/tmp/full_train/a/checkpoint-1",
+        "training_contract": evaluate_contract,
+    }))
+    handoff = verify_upstream_handoffs(asr_state_dir=a, mt_state_dir=m, direct_state_dir=d)
+    assert handoff["asr"]["identity"]["contract_hash"] == train_contract["contract_hash"]
+
+    tampered = dict(evaluate_contract)
+    tampered["train_contract_hash"] = "0" * 64
+    (a / "full_evaluate_summary.json").write_text(json.dumps({
+        "status": "SUCCESS_FULL_EVALUATE",
+        "frozen_test_accessed": False,
+        "experiment_id": "a",
+        "training_contract": tampered,
+    }))
+    with pytest.raises(RuntimeError, match="train_contract_hash does not match"):
+        verify_upstream_handoffs(asr_state_dir=a, mt_state_dir=m, direct_state_dir=d)
+
+
+def _write_asr_pair(asr: Path, train_contract: dict, eval_contract: dict) -> None:
+    (asr / "full_train_summary.json").write_text(json.dumps({
+        "status": "SUCCESS_FULL_TRAINING",
+        "experiment_id": "a",
+        "best_checkpoint": "checkpoint-1",
+        "training_contract": train_contract,
+    }))
+    (asr / "full_evaluate_summary.json").write_text(json.dumps({
+        "status": "SUCCESS_FULL_EVALUATE",
+        "frozen_test_accessed": False,
+        "experiment_id": "a",
+        "training_contract": eval_contract,
+    }))
+
+
+def test_asr_legacy_hash_bind_fail_closed(tmp_path):
+    """Evaluate fields without any hash bind fail; matching data-only hashes pass."""
+    a, m, d = _write_upstream(tmp_path)
+    fields = {
+        "experiment_id": "a",
+        "dataset_id": "ds",
+        "dataset_revision": "rev",
+        "hparams": {"learning_rate": 1e-4},
+    }
+    train_contract = {**fields, "contract_hash": "abc"}
+    eval_fields = dict(fields)
+    _write_asr_pair(a, train_contract, eval_fields)
+    with pytest.raises(RuntimeError, match="missing training-contract hash bind"):
+        verify_upstream_handoffs(asr_state_dir=a, mt_state_dir=m, direct_state_dir=d)
+
+    data_only = {"experiment_id": "a", "dataset_id": "ds", "data_contract_hash": "D"}
+    _write_asr_pair(a, dict(data_only), dict(data_only))
+    handoff = verify_upstream_handoffs(asr_state_dir=a, mt_state_dir=m, direct_state_dir=d)
+    assert handoff["asr"]["identity"]["contract_hash"] == "D"
+
+
 def test_verify_upstream_never_needs_test_manifest(tmp_path):
     a, m, d = _write_upstream(tmp_path)
     h = verify_upstream_handoffs(asr_state_dir=a, mt_state_dir=m, direct_state_dir=d)
