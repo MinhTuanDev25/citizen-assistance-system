@@ -1,0 +1,14 @@
+{
+  "source_id": "VOV4_28B834BA5981BB6F72C58E206B92BF20C0EBB238",
+  "media_url": "https://vov4.vov.vn/sites/default/files/2026-09/P%C6%A1lung%20d%C4%83m%20Teng-DC%20Bahnar-DX%20%C4%90inh%20Tinh.mp3",
+  "final_media_url": "https://vov4.vov.vn/sites/default/files/2026-09/P%C6%A1lung%20d%C4%83m%20Teng-DC%20Bahnar-DX%20%C4%90inh%20Tinh.mp3",
+  "raw_sha256": "cc263c10a24aeedb216ba49081da41e6ef2152bfc419138d1bf37f325f483a52",
+  "actual_file_bytes": 6527934,
+  "http_status": "200",
+  "content_type": "audio/mpeg",
+  "content_length_header": "6527934",
+  "etag": "\"6ab080eb-639bbe\"",
+  "last_modified": "Mon, 21 Sep 2026 00:57:15 GMT",
+  "downloaded_at_utc": "2026-09-25T02:16:01Z",
+  "usage_context": "non-commercial academic thesis research"
+}
