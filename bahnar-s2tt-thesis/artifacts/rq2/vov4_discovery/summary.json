@@ -1,0 +1,12 @@
+{
+  "status": "SUCCESS_VOV4_DISCOVERY",
+  "n_candidates": 30,
+  "n_discovered_urls": 86,
+  "n_fetched_ok": 86,
+  "n_fetch_failed": 0,
+  "n_candidates_final": 30,
+  "n_with_date": 30,
+  "n_low_priority": 3,
+  "retry_count_total": 0,
+  "generated_at_utc": "2026-09-24T16:08:15Z"
+}

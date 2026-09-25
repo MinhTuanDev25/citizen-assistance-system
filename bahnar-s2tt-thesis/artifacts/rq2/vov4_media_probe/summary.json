@@ -1,0 +1,24 @@
+{
+  "status": "SUCCESS_VOV4_MEDIA_PROBE",
+  "n_articles_total": 30,
+  "n_articles_with_public_media": 15,
+  "n_articles_no_public_media": 15,
+  "n_candidate_media": 15,
+  "n_candidate_audio": 12,
+  "n_candidate_video": 3,
+  "n_public_direct_media": 15,
+  "n_public_audio": 12,
+  "n_public_video": 3,
+  "n_protected_or_unsupported": 0,
+  "n_non_media": 0,
+  "n_low_priority_with_public_media": 3,
+  "n_failures": 0,
+  "unique_public_media_hosts": [
+    "vov4.vov.vn"
+  ],
+  "media_extension_counts": {
+    "mp3": 12,
+    "mp4": 3
+  },
+  "generated_at_utc": "2026-09-24T17:29:04Z"
+}

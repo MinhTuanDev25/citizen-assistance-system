@@ -1,0 +1,14 @@
+{
+  "source_id": "VOV4_5C1E81BC44FEF0E9F3BB2E9E0012A7E55CE70E27",
+  "media_url": "https://vov4.vov.vn/sites/default/files/2026-09/Bana%20Truyen%20co%20%20ngay%2020%20-%209%20-%202026.mp3",
+  "final_media_url": "https://vov4.vov.vn/sites/default/files/2026-09/Bana%20Truyen%20co%20%20ngay%2020%20-%209%20-%202026.mp3",
+  "raw_sha256": "dc0cd41fdb3f512697983ae4a5f7020e75d4148d30a73eff0905413c8b6900f2",
+  "actual_file_bytes": 19889689,
+  "http_status": "200",
+  "content_type": "audio/mpeg",
+  "content_length_header": "19889689",
+  "etag": "\"6aacaf35-12f7e19\"",
+  "last_modified": "Fri, 18 Sep 2026 03:25:41 GMT",
+  "downloaded_at_utc": "2026-09-25T02:16:15Z",
+  "usage_context": "non-commercial academic thesis research"
+}

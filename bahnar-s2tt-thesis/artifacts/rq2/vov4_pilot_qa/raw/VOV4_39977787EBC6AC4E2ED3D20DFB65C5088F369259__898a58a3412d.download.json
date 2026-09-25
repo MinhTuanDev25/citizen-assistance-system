@@ -1,0 +1,14 @@
+{
+  "source_id": "VOV4_39977787EBC6AC4E2ED3D20DFB65C5088F369259",
+  "media_url": "https://vov4.vov.vn/sites/default/files/2026-09/BANA%20-%20Tin%20ngay%2021%20-%209%20-%20%202026%20%20%28phat%2016h30%29%20%20%2815%20phut%29%20-%20CHIEU.mp3",
+  "final_media_url": "https://vov4.vov.vn/sites/default/files/2026-09/BANA%20-%20Tin%20ngay%2021%20-%209%20-%20%202026%20%20%28phat%2016h30%29%20%20%2815%20phut%29%20-%20CHIEU.mp3",
+  "raw_sha256": "d7d0a4df74d37f0c5d716ee18ca5d56cd297fb3eac1e7f5a81b04c8f43dfc647",
+  "actual_file_bytes": 14390041,
+  "http_status": "200",
+  "content_type": "audio/mpeg",
+  "content_length_header": "14390041",
+  "etag": "\"6ab0b0d7-db9319\"",
+  "last_modified": "Mon, 21 Sep 2026 04:21:43 GMT",
+  "downloaded_at_utc": "2026-09-25T02:16:09Z",
+  "usage_context": "non-commercial academic thesis research"
+}
