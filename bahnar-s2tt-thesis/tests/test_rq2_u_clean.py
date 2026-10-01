@@ -1136,6 +1136,8 @@ def test_mismatched_segment_audio_hash_drops_only_that_fingerprint(tmp_path):
 
 def test_real_rq1_manifest_probe_is_identity_only():
     root = Path(__file__).resolve().parents[1]
+    if not (root / "data" / "manifests" / "rq1_train.csv").is_file():
+        pytest.skip("canonical RQ1 manifests are not in this checkout")
     paths = {
         "g_train": root / "data" / "manifests" / "rq1_train.csv",
         "g_validation": root / "data" / "manifests" / "rq1_validation.csv",
@@ -1188,3 +1190,527 @@ def test_generation_publish_points_at_complete_snapshot(tmp_path):
     complete = json.loads((tmp_path / "u_clean" / "generations" / current / "COMPLETE.json").read_text(encoding="utf-8"))
     assert complete["files"][-1] == "summary.json"
     assert (tmp_path / "u_clean" / "summary.json").is_file()
+
+
+# --------------------------------------------------------------------------- #
+# Derived protected identity + on-demand Parquet materialization              #
+# --------------------------------------------------------------------------- #
+_REV = "3d88d3951b1a6e3388559b341cd7bd274879d696"
+_OTHER_REV = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+_DATASET_REV = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+_PCM = "ab" * 32
+_PIPELINE = "full_pcm16_le_v1"
+_GOLDEN_UID = "0c29a2618a487f074ff215521cb95aaaff71435e"
+_GOLDEN_PCM = "d73e4bf03f1b6603fee759ce2e0c699b1a5503ac7fcc6bee37bb5aa40e4ec9ba"
+
+
+def _identity_manifest(path, rows):
+    lines = ["record_uid,record_id,audio_path,parquet_file,shard_row_index,duration_seconds,group_id,text_vi"]
+    for uid, record_id, audio, parquet_file, index in rows:
+        lines.append(
+            "%s,%s,%s,%s,%s,1.0,g,SECRET_TRANSCRIPT" % (uid, record_id, audio, parquet_file, index)
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_audio_index(directory, records):
+    directory.mkdir(parents=True, exist_ok=True)
+    payload = "\n".join(json.dumps(record) for record in records)
+    (directory / "default_train_0000.jsonl").write_text(payload + "\n", encoding="utf-8")
+
+
+def _sidecar(uid, **overrides):
+    row = {
+        "record_uid": uid,
+        "sha256_pcm": _PCM,
+        "sha256_source": "cd" * 32,
+        "n_samples": 1600,
+        "sample_rate": 16000,
+        "audio_pcm_pipeline_version": _PIPELINE,
+        "parquet_revision": _REV,
+        "dataset_revision": _DATASET_REV,
+        "split": "train",
+        "shard_key": "default/train/0000.parquet",
+        "shard_row_index": 1,
+    }
+    row.update(overrides)
+    return row
+
+
+def _build_identity(tmp_path, *, train_rows, index_records, frozen_rows, integrity_rows, counts):
+    from src.rq2_u_clean import build_derived_protected_identity_rows
+
+    root = tmp_path / "proj"
+    manifests = root / "manifests"
+    manifests.mkdir(parents=True)
+    _identity_manifest(manifests / "train.csv", train_rows)
+    _identity_manifest(
+        manifests / "validation.csv",
+        [("VAL1", "val-1", "val.flac", "default/train/0000.parquet", 2)],
+    )
+    _identity_manifest(manifests / "test.csv", frozen_rows)
+    index_dir = tmp_path / "audio_index"
+    _write_audio_index(index_dir, index_records)
+    integrity = tmp_path / "rq1_audio_integrity.csv"
+    header = "record_uid,audio_path,sha256_pcm,sha256_source,n_samples,sample_rate,shard_key,shard_row_index"
+    body = [
+        "%s,audio/%s.wav,%s,%s,%s,%s,%s,%s" % (
+            item["record_uid"], item["record_uid"], item["sha256_pcm"], item.get("sha256_source", ""),
+            item["n_samples"], item["sample_rate"], item["shard_key"], item["shard_row_index"],
+        )
+        for item in integrity_rows
+    ]
+    before = {
+        "index": (index_dir / "default_train_0000.jsonl").read_bytes(),
+        "integrity": None,
+    }
+    integrity.write_text(header + "\n" + "\n".join(body) + "\n", encoding="utf-8")
+    before["integrity"] = integrity.read_bytes()
+    sentinel = tmp_path / "rq1_final_contract.json"
+    sentinel.write_text('{"do_not_touch": true}\n', encoding="utf-8")
+    sentinel_bytes = sentinel.read_bytes()
+    rows = build_derived_protected_identity_rows(
+        reference_index={
+            "g_train": manifests / "train.csv",
+            "g_validation": manifests / "validation.csv",
+            "frozen_test": manifests / "test.csv",
+        },
+        project_root=root,
+        dataset_id="org/bahnar",
+        dataset_revision=_DATASET_REV,
+        parquet_revision=_REV,
+        audio_index_dir=index_dir,
+        frozen_integrity_csv=integrity,
+        expected_counts=counts,
+    )
+    assert sentinel.read_bytes() == sentinel_bytes
+    assert (index_dir / "default_train_0000.jsonl").read_bytes() == before["index"]
+    assert integrity.read_bytes() == before["integrity"]
+    return rows
+
+
+def test_derived_index_covers_manifest_universe_without_transcripts(tmp_path):
+    from src.rq2_u_clean import write_derived_protected_identity_index, load_derived_protected_identity_index
+
+    rows = _build_identity(
+        tmp_path,
+        train_rows=[
+            ("TR1", "tr-1", "tr.flac", "default/train/0000.parquet", 1),
+            ("EXCLUDED1", "ex-1", "ex.flac", "default/train/0000.parquet", 9),
+        ],
+        index_records=[
+            _sidecar("TR1", shard_row_index=1),
+            _sidecar("VAL1", split="validation", shard_row_index=2),
+        ],
+        frozen_rows=[("TE1", "te-1", "te.flac", "default/test/0000.parquet", 8)],
+        integrity_rows=[{
+            "record_uid": "TE1",
+            "sha256_pcm": _PCM,
+            "sha256_source": "ef" * 32,
+            "n_samples": 134232,
+            "sample_rate": 16000,
+            "shard_key": "default/test/0000.parquet",
+            "shard_row_index": 8,
+        }],
+        counts={"g_train": 2, "g_validation": 1, "frozen_test": 1},
+    )
+    assert [row["reference_uid"] for row in rows] == ["TE1", "EXCLUDED1", "TR1", "VAL1"]
+    excluded = next(row for row in rows if row["reference_uid"] == "EXCLUDED1")
+    assert excluded["sha256_pcm"] == ""
+    assert excluded["parquet_file"] == "default/train/0000.parquet"
+    assert excluded["shard_row_index"] == 9
+    assert all("text_vi" not in row for row in rows)
+    dest = tmp_path / "protected_audio_identity.csv"
+    digest = write_derived_protected_identity_index(rows, dest)
+    text = dest.read_text(encoding="utf-8")
+    assert "SECRET_TRANSCRIPT" not in text
+    assert "text_vi" not in text.splitlines()[0]
+    loaded = load_derived_protected_identity_index(dest, digest)
+    assert set(loaded) == {("frozen_test", "TE1"), ("g_train", "EXCLUDED1"), ("g_train", "TR1"), ("g_validation", "VAL1")}
+
+
+def test_derived_index_rejects_duplicate_uid(tmp_path):
+    with pytest.raises(RuntimeError, match="duplicate"):
+        _build_identity(
+            tmp_path,
+            train_rows=[
+                ("TR1", "tr-1", "tr.flac", "default/train/0000.parquet", 1),
+                ("TR1", "tr-1b", "tr2.flac", "default/train/0000.parquet", 2),
+            ],
+            index_records=[_sidecar("TR1")],
+            frozen_rows=[("TE1", "te-1", "te.flac", "default/test/0000.parquet", 8)],
+            integrity_rows=[{
+                "record_uid": "TE1", "sha256_pcm": _PCM, "n_samples": 1, "sample_rate": 16000,
+                "shard_key": "default/test/0000.parquet", "shard_row_index": 8,
+            }],
+            counts={"g_train": 2, "g_validation": 1, "frozen_test": 1},
+        )
+
+
+def test_derived_index_rejects_missing_shard_row(tmp_path):
+    with pytest.raises(RuntimeError, match="missing shard row"):
+        _build_identity(
+            tmp_path,
+            train_rows=[("TR1", "tr-1", "tr.flac", "", -1)],
+            index_records=[],
+            frozen_rows=[("TE1", "te-1", "te.flac", "default/test/0000.parquet", 8)],
+            integrity_rows=[{
+                "record_uid": "TE1", "sha256_pcm": _PCM, "n_samples": 1, "sample_rate": 16000,
+                "shard_key": "default/test/0000.parquet", "shard_row_index": 8,
+            }],
+            counts={"g_train": 1, "g_validation": 1, "frozen_test": 1},
+        )
+
+
+def test_derived_index_rejects_wrong_parquet_revision(tmp_path):
+    with pytest.raises(RuntimeError, match="wrong parquet revision"):
+        _build_identity(
+            tmp_path,
+            train_rows=[("TR1", "tr-1", "tr.flac", "default/train/0000.parquet", 1)],
+            index_records=[_sidecar("TR1", parquet_revision=_OTHER_REV)],
+            frozen_rows=[("TE1", "te-1", "te.flac", "default/test/0000.parquet", 8)],
+            integrity_rows=[{
+                "record_uid": "TE1", "sha256_pcm": _PCM, "n_samples": 1, "sample_rate": 16000,
+                "shard_key": "default/test/0000.parquet", "shard_row_index": 8,
+            }],
+            counts={"g_train": 1, "g_validation": 1, "frozen_test": 1},
+        )
+
+
+def test_derived_index_rejects_forbidden_transcript_column(tmp_path):
+    from src.rq2_u_clean import load_derived_protected_identity_index
+
+    path = tmp_path / "bad.csv"
+    path.write_text(
+        "reference_uid,split,manifest_audio_locator,parquet_file,shard_key,shard_row_index,"
+        "dataset_revision,parquet_revision,pcm_pipeline_version,sha256_pcm,sha256_source,"
+        "n_samples,sample_rate,record_id,text_vi\n"
+        "TR1,g_train,tr.flac,default/train/0000.parquet,default/train/0000.parquet,1,"
+        + _DATASET_REV + "," + _REV + "," + _PIPELINE + "," + _PCM + "," + ("cd" * 32) + ",1600,16000,tr-1,SECRET\n",
+        encoding="utf-8",
+    )
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(RuntimeError, match="forbidden"):
+        load_derived_protected_identity_index(path, digest)
+
+
+def test_derived_index_rejects_unknown_column(tmp_path):
+    from src.rq2_u_clean import DERIVED_PROTECTED_IDENTITY_COLUMNS, load_derived_protected_identity_index
+
+    header = ",".join(DERIVED_PROTECTED_IDENTITY_COLUMNS) + ",extra_note"
+    row = ",".join([
+        "TR1", "g_train", "tr.flac", "default/train/0000.parquet", "default/train/0000.parquet", "0",
+        _DATASET_REV, _REV, _PIPELINE, _PCM, "cd" * 32, "1600", "16000", "tr-1", "note",
+    ])
+    path = tmp_path / "extra.csv"
+    path.write_text(header + "\n" + row + "\n", encoding="utf-8")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(RuntimeError, match="schema mismatch"):
+        load_derived_protected_identity_index(path, digest)
+
+
+def test_audio_index_row_zero_matches_manifest(tmp_path):
+    rows = _build_identity(
+        tmp_path,
+        train_rows=[("TR0", "tr-0", "tr.flac", "default/train/0000.parquet", 0)],
+        index_records=[_sidecar("TR0", shard_row_index=0)],
+        frozen_rows=[("TE1", "te-1", "te.flac", "default/test/0000.parquet", 8)],
+        integrity_rows=[{
+            "record_uid": "TE1", "sha256_pcm": _PCM, "n_samples": 1, "sample_rate": 16000,
+            "shard_key": "default/test/0000.parquet", "shard_row_index": 8,
+        }],
+        counts={"g_train": 1, "g_validation": 1, "frozen_test": 1},
+    )
+    train = next(row for row in rows if row["reference_uid"] == "TR0")
+    assert train["shard_row_index"] == 0
+    assert train["sha256_pcm"] == _PCM
+
+
+def test_audio_index_row_zero_rejects_manifest_one(tmp_path):
+    with pytest.raises(RuntimeError, match="shard_row_index mismatch"):
+        _build_identity(
+            tmp_path,
+            train_rows=[("TR0", "tr-0", "tr.flac", "default/train/0000.parquet", 1)],
+            index_records=[_sidecar("TR0", shard_row_index=0)],
+            frozen_rows=[("TE1", "te-1", "te.flac", "default/test/0000.parquet", 8)],
+            integrity_rows=[{
+                "record_uid": "TE1", "sha256_pcm": _PCM, "n_samples": 1, "sample_rate": 16000,
+                "shard_key": "default/test/0000.parquet", "shard_row_index": 8,
+            }],
+            counts={"g_train": 1, "g_validation": 1, "frozen_test": 1},
+        )
+
+
+def test_audio_index_rejects_off_by_one_row(tmp_path):
+    with pytest.raises(RuntimeError, match="shard_row_index mismatch"):
+        _build_identity(
+            tmp_path,
+            train_rows=[("TR1", "tr-1", "tr.flac", "default/train/0000.parquet", 11)],
+            index_records=[_sidecar("TR1", shard_row_index=10)],
+            frozen_rows=[("TE1", "te-1", "te.flac", "default/test/0000.parquet", 8)],
+            integrity_rows=[{
+                "record_uid": "TE1", "sha256_pcm": _PCM, "n_samples": 1, "sample_rate": 16000,
+                "shard_key": "default/test/0000.parquet", "shard_row_index": 8,
+            }],
+            counts={"g_train": 1, "g_validation": 1, "frozen_test": 1},
+        )
+
+
+def test_audio_index_missing_shard_row_index_fails_closed(tmp_path):
+    sidecar = _sidecar("TR1", shard_row_index=1)
+    sidecar.pop("shard_row_index")
+    with pytest.raises(RuntimeError, match="shard_row_index missing"):
+        _build_identity(
+            tmp_path,
+            train_rows=[("TR1", "tr-1", "tr.flac", "default/train/0000.parquet", 1)],
+            index_records=[sidecar],
+            frozen_rows=[("TE1", "te-1", "te.flac", "default/test/0000.parquet", 8)],
+            integrity_rows=[{
+                "record_uid": "TE1", "sha256_pcm": _PCM, "n_samples": 1, "sample_rate": 16000,
+                "shard_key": "default/test/0000.parquet", "shard_row_index": 8,
+            }],
+            counts={"g_train": 1, "g_validation": 1, "frozen_test": 1},
+        )
+
+
+def test_bind_fails_when_identity_is_missing():
+    entries = [ProtectedReferenceEntry("TR1", "g_train", "tr.flac")]
+    with pytest.raises(RuntimeError, match="missing"):
+        bind_protected_audio_identity(entries, {})
+
+
+def _wav_payload(n_samples=1600):
+    import io
+
+    pcm = np.zeros(n_samples, dtype="<i2")
+    pcm[::2] = 1000
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(pcm.tobytes())
+    return buffer.getvalue()
+
+
+def _decoded_wav():
+    pytest.importorskip("soundfile")
+    from src.asr_full_pcm import canonical_pcm16_from_bytes
+
+    raw = _wav_payload()
+    return raw, canonical_pcm16_from_bytes(raw, target_sr=16000)
+
+
+def _reconstruct_entry(uid, index, decoded, **overrides):
+    values = dict(
+        reference_uid=uid,
+        split="g_train",
+        audio_locator=uid + ".flac",
+        manifest_audio_locator=uid + ".flac",
+        parquet_file="default/train/0000.parquet",
+        shard_key="default/train/0000.parquet",
+        shard_row_index=index,
+        dataset_revision=_DATASET_REV,
+        parquet_revision=_REV,
+        pcm_pipeline_version=_PIPELINE,
+        sha256_pcm=decoded["sha256_pcm"],
+        sha256_source=decoded["sha256_source"],
+        n_samples=int(decoded["n_samples"]),
+        sample_rate=int(decoded["sample_rate"]),
+        record_id="id-%s" % index,
+    )
+    values.update(overrides)
+    return ProtectedReferenceEntry(**values)
+
+
+def _materializer(tmp_path, payloads, calls):
+    from src.rq2_u_clean import ProtectedParquetMaterializer
+
+    shard = tmp_path / "downloaded.parquet"
+    shard.write_bytes(b"shard-bytes")
+
+    def factory(downloaded):
+        downloaded["default/train/0000.parquet"] = str(shard)
+
+        def reader(ref, indices):
+            calls["n"] += 1
+            calls["indices"].append(list(indices))
+            for index in indices:
+                yield index, payloads[index]
+        return reader
+
+    return ProtectedParquetMaterializer(
+        dataset_id="org/bahnar",
+        cache_dir=tmp_path / "cache",
+        reader_factory=factory,
+    ), shard
+
+
+def test_materialize_verifies_pcm_and_deletes_temp_wav(tmp_path):
+    raw, decoded = _decoded_wav()
+    calls = {"n": 0, "indices": []}
+    materializer, shard = _materializer(tmp_path, {
+        1: {"id": "id-1", "audio": raw},
+        8: {"id": "id-8", "audio": raw},
+    }, calls)
+    first = _reconstruct_entry("A", 1, decoded)
+    second = _reconstruct_entry("B", 8, decoded)
+    paths = []
+    for item in materializer.iter_materialized_audio([second, first]):
+        paths.append(item.path)
+        assert item.path.is_file()
+        assert item.sha256_pcm == decoded["sha256_pcm"]
+        assert item.n_samples == decoded["n_samples"]
+        assert item.sample_rate == 16000
+    assert calls["n"] == 1
+    assert calls["indices"] == [[1, 8]]
+    assert all(not path.exists() for path in paths)
+    assert not shard.exists()
+
+
+def test_materialize_rejects_wrong_pcm_and_source_hash(tmp_path):
+    raw, decoded = _decoded_wav()
+    calls = {"n": 0, "indices": []}
+    materializer, _shard = _materializer(tmp_path, {1: {"id": "id-1", "audio": raw}}, calls)
+    wrong_pcm = _reconstruct_entry("A", 1, decoded, sha256_pcm="ff" * 32)
+    with pytest.raises(RuntimeError, match="sha256_pcm mismatch"):
+        list(materializer.iter_materialized_audio([wrong_pcm]))
+    calls = {"n": 0, "indices": []}
+    materializer, _shard = _materializer(tmp_path, {1: {"id": "id-1", "audio": raw}}, calls)
+    wrong_source = _reconstruct_entry("A", 1, decoded, sha256_source="11" * 32)
+    with pytest.raises(RuntimeError, match="sha256_source mismatch"):
+        list(materializer.iter_materialized_audio([wrong_source]))
+
+
+def test_materialize_rejects_missing_shard_row(tmp_path):
+    raw, decoded = _decoded_wav()
+    calls = {"n": 0, "indices": []}
+    materializer, _shard = _materializer(tmp_path, {}, calls)
+
+    def factory(downloaded):
+        def reader(ref, indices):
+            return iter(())
+        return reader
+
+    materializer._reader_factory = factory
+    entry = _reconstruct_entry("A", 1, decoded)
+    with pytest.raises(RuntimeError, match="missing shard row"):
+        list(materializer.iter_materialized_audio([entry]))
+
+
+def test_durable_resolver_refuses_permanent_audio_path():
+    resolver = DurableCanonicalReferenceResolver(
+        durable_root=None, contract_hash=None, reference_index=None, mapping=None,
+    )
+    entry = ProtectedReferenceEntry("TR1", "g_train", "KT-XH02_029.flac")
+    with pytest.raises(RuntimeError, match="materialize_audio"):
+        resolver.resolve_audio_path(entry)
+
+
+def _fingerprint_context(tmp_path, entries):
+    cfg = _config()
+    cfg.out_dir = tmp_path / "out"
+    cfg.out_dir.mkdir()
+    ctx = UCleanContext(config=cfg, protected_entries=list(entries))
+    ctx.reference_provenance = {
+        "rq1_final_contract_hash": "a" * 64,
+        "rq1_test_contract_hash": "b" * 64,
+        "protected_audio_identity_sha256": "c" * 64,
+        "parquet_revision": _REV,
+        "pcm_pipeline_version": _PIPELINE,
+    }
+    ctx.reference_summary = {"reference_set_sha256": "d" * 64}
+    return ctx
+
+
+def test_protected_fingerprint_resume_reuses_valid_shards(tmp_path):
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("soundfile")
+    from src.rq2_u_clean import generate_protected_fingerprints
+
+    raw, decoded = _decoded_wav()
+    calls = {"n": 0, "indices": []}
+    materializer, _shard = _materializer(tmp_path, {1: {"id": "id-1", "audio": raw}}, calls)
+    entry = _reconstruct_entry("A", 1, decoded)
+    ctx = _fingerprint_context(tmp_path, [entry])
+    fingerprints = {"n": 0}
+
+    def fingerprint_fn(path):
+        fingerprints["n"] += 1
+        assert Path(path).is_file()
+        return _rand_fp(3)
+
+    assert generate_protected_fingerprints(ctx, materializer, fingerprint_fn=fingerprint_fn) == 1
+    assert fingerprints["n"] == 1
+    assert calls["n"] == 1
+    assert generate_protected_fingerprints(ctx, materializer, fingerprint_fn=fingerprint_fn) == 0
+    assert fingerprints["n"] == 1
+    assert calls["n"] == 1
+
+
+def test_changed_identity_index_sha_invalidates_resume(tmp_path):
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("soundfile")
+    from src.rq2_u_clean import generate_protected_fingerprints
+
+    raw, decoded = _decoded_wav()
+    materializer, _shard = _materializer(tmp_path, {1: {"id": "id-1", "audio": raw}}, {"n": 0, "indices": []})
+    ctx = _fingerprint_context(tmp_path, [_reconstruct_entry("A", 1, decoded)])
+    generate_protected_fingerprints(ctx, materializer, fingerprint_fn=lambda path: _rand_fp(4))
+    ctx.reference_provenance["protected_audio_identity_sha256"] = "e" * 64
+    with pytest.raises(RuntimeError, match="stale"):
+        generate_protected_fingerprints(ctx, materializer, fingerprint_fn=lambda path: _rand_fp(4))
+
+
+def test_changed_overlap_contract_invalidates_resume(tmp_path):
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("soundfile")
+    from src.rq2_u_clean import generate_protected_fingerprints
+
+    raw, decoded = _decoded_wav()
+    materializer, _shard = _materializer(tmp_path, {1: {"id": "id-1", "audio": raw}}, {"n": 0, "indices": []})
+    ctx = _fingerprint_context(tmp_path, [_reconstruct_entry("A", 1, decoded)])
+    generate_protected_fingerprints(ctx, materializer, fingerprint_fn=lambda path: _rand_fp(5))
+    ctx.config.overlap = OverlapConfig(similarity_threshold=0.50)
+    with pytest.raises(RuntimeError, match="stale"):
+        generate_protected_fingerprints(ctx, materializer, fingerprint_fn=lambda path: _rand_fp(5))
+
+
+def test_golden_rq1_frozen_test_reconstruction():
+    import os
+
+    if os.environ.get("BAHNAR_NB11_INTEGRATION") != "1":
+        pytest.skip("set BAHNAR_NB11_INTEGRATION=1 to reconstruct the golden frozen-test row")
+    pytest.importorskip("soundfile")
+    from src.rq1_runtime_paths import resolve_rq1_runtime_paths
+    from src.rq2_u_clean import ProtectedParquetMaterializer
+
+    project = Path(os.environ.get("BAHNAR_PROJECT_ROOT", "/workspace/citizen-assistance-system/bahnar-s2tt-thesis"))
+    runtime = resolve_rq1_runtime_paths(project_root=project)
+    entry = ProtectedReferenceEntry(
+        reference_uid=_GOLDEN_UID,
+        split="frozen_test",
+        audio_locator="golden.flac",
+        manifest_audio_locator="golden.flac",
+        parquet_file="default/test/0000.parquet",
+        shard_key="default/test/0000.parquet",
+        shard_row_index=8,
+        dataset_revision=os.environ["BAHNAR_DATASET_REVISION"],
+        parquet_revision=os.environ["BAHNAR_PARQUET_REVISION"],
+        pcm_pipeline_version=_PIPELINE,
+        sha256_pcm=_GOLDEN_PCM,
+        n_samples=134232,
+        sample_rate=16000,
+        record_id=os.environ.get("BAHNAR_GOLDEN_RECORD_ID", ""),
+    )
+    materializer = ProtectedParquetMaterializer(
+        dataset_id=os.environ["BAHNAR_DATASET_ID"],
+        cache_dir=runtime.hf_parquet_cache_dir,
+    )
+    with materializer.materialize_audio(entry) as item:
+        assert item.sha256_pcm == _GOLDEN_PCM
+        assert item.n_samples == 134232
+        assert item.sample_rate == 16000
+        assert item.path.is_file()
+        wav_path = item.path
+    assert not wav_path.exists()

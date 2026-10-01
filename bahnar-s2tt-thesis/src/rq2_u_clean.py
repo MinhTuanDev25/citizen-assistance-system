@@ -22,9 +22,11 @@ import math
 import os
 import re
 import shutil
+import tempfile
 import time
 import uuid
 import wave
+from contextlib import contextmanager
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -231,6 +233,49 @@ def _is_valid_sha256(value: str) -> bool:
     return bool(_HEX64.match(str(value or "").strip().lower()))
 
 
+def _is_pinned_revision(value: str) -> bool:
+    """Hugging Face snapshot SHAs are 40 hex characters, not file hashes."""
+    text = str(value or "").strip().lower()
+    return len(text) == 40 and all(char in "0123456789abcdef" for char in text) and not text.startswith("refs/")
+
+
+# RQ1 prepare writes sidecar ``split`` as train/validation. NB11 manifests use
+# the protected names. This is a fixed alias, not a directory heuristic.
+_AUDIO_INDEX_SPLIT_ALIASES = {
+    "g_train": "g_train",
+    "train": "g_train",
+    "g_validation": "g_validation",
+    "validation": "g_validation",
+    "frozen_test": "frozen_test",
+}
+
+
+def _parse_required_row_index(value, label: str) -> int:
+    """Parse a shard row index. Zero is valid; only a real absence fails."""
+    if isinstance(value, bool) or value is None:
+        raise RuntimeError(f"{label} is missing shard_row_index")
+    if isinstance(value, float):
+        if math.isnan(value) or not value.is_integer():
+            raise RuntimeError(f"{label} has invalid shard_row_index {value!r}")
+        index = int(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text or text.lower() == "nan":
+            raise RuntimeError(f"{label} is missing shard_row_index")
+        try:
+            index = int(text)
+        except ValueError:
+            raise RuntimeError(f"{label} has invalid shard_row_index {value!r}")
+    else:
+        try:
+            index = int(value)
+        except (TypeError, ValueError):
+            raise RuntimeError(f"{label} has invalid shard_row_index {value!r}")
+    if index < 0:
+        raise RuntimeError(f"{label} has invalid shard_row_index {value!r}")
+    return index
+
+
 def _dbfs(value: float) -> float:
     v = max(float(value), 1e-10)
     return round(20.0 * math.log10(v), 4)
@@ -329,6 +374,18 @@ class ProtectedReferenceEntry:
     group_id: str = ""
     duration_seconds: float = 0.0
     source_sha256: str = ""
+    manifest_audio_locator: str = ""
+    parquet_file: str = ""
+    shard_key: str = ""
+    shard_row_index: int = -1
+    dataset_revision: str = ""
+    parquet_revision: str = ""
+    pcm_pipeline_version: str = ""
+    sha256_pcm: str = ""
+    sha256_source: str = ""
+    n_samples: int = 0
+    sample_rate: int = 0
+    record_id: str = ""
 
     def __post_init__(self) -> None:
         if self.split not in PROTECTED_SPLITS:
@@ -356,6 +413,46 @@ class ReferenceColumnMapping:
 
 PROTECTED_AUDIO_IDENTITY_COLUMNS = ("reference_uid", "split", "audio_locator", "source_sha256")
 
+# Derived NB11 index. It is not an RQ1 artifact. sha256_pcm is the canonical
+# PCM identity; sha256_source/n_samples/sample_rate may be blank until a
+# manifest-only row is reconstructed from pinned Parquet.
+DERIVED_PROTECTED_IDENTITY_COLUMNS = (
+    "reference_uid",
+    "split",
+    "manifest_audio_locator",
+    "parquet_file",
+    "shard_key",
+    "shard_row_index",
+    "dataset_revision",
+    "parquet_revision",
+    "pcm_pipeline_version",
+    "sha256_pcm",
+    "sha256_source",
+    "n_samples",
+    "sample_rate",
+    "record_id",
+)
+
+EXPECTED_PROTECTED_MANIFEST_COUNTS = {
+    "g_train": 102698,
+    "g_validation": 11132,
+    "frozen_test": 215,
+}
+
+CANONICAL_PROTECTED_MANIFESTS = {
+    "g_train": "data/manifests/rq1_train.csv",
+    "g_validation": "data/manifests/rq1_validation.csv",
+    "frozen_test": "data/manifests/rq1_test.csv",
+}
+
+_MANIFEST_IDENTITY_COLUMNS = (
+    "record_uid",
+    "record_id",
+    "audio_path",
+    "parquet_file",
+    "shard_row_index",
+)
+
 
 def default_protected_manifest_mapping() -> ReferenceColumnMapping:
     """Map the canonical RQ1 manifests. Those files have no per-audio SHA256 column."""
@@ -367,13 +464,18 @@ def default_protected_manifest_mapping() -> ReferenceColumnMapping:
     )
 
 
+def _entry_can_reconstruct(entry: ProtectedReferenceEntry) -> bool:
+    return bool(str(entry.parquet_file or "").strip()) and int(entry.shard_row_index) >= 0
+
+
 def require_protected_source_sha256(entries: Sequence[ProtectedReferenceEntry]) -> None:
-    """Full-run gate: every protected entry must carry a real audio SHA256."""
+    """Every protected entry needs a PCM SHA or pinned Parquet coordinates."""
     for entry in entries:
-        if not _is_valid_sha256(str(entry.source_sha256 or "")):
-            raise RuntimeError(
-                f"protected reference {entry.split}:{entry.reference_uid} has no source_sha256"
-            )
+        if _is_valid_sha256(str(entry.source_sha256 or "")) or _entry_can_reconstruct(entry):
+            continue
+        raise RuntimeError(
+            f"protected reference {entry.split}:{entry.reference_uid} has no source_sha256"
+        )
 
 
 def load_protected_audio_identity_index(path, expected_sha256: str) -> Dict[Tuple[str, str], dict]:
@@ -423,13 +525,447 @@ def bind_protected_audio_identity(
             raise RuntimeError(
                 f"protected audio identity missing for {entry.split}:{entry.reference_uid}"
             )
-        if item["audio_locator"] != entry.audio_locator:
+        locator = str(item.get("manifest_audio_locator") or item["audio_locator"])
+        if locator != entry.audio_locator:
             raise RuntimeError(
                 f"protected audio locator mismatch for {entry.split}:{entry.reference_uid}"
             )
-        bound.append(replace(entry, source_sha256=item["source_sha256"]))
+        pcm = str(item.get("sha256_pcm") or item["source_sha256"] or "").strip().lower()
+        bound.append(replace(
+            entry,
+            source_sha256=pcm,
+            manifest_audio_locator=locator,
+            parquet_file=str(item.get("parquet_file") or ""),
+            shard_key=str(item.get("shard_key") or ""),
+            shard_row_index=int(item.get("shard_row_index") if item.get("shard_row_index") not in (None, "") else -1),
+            dataset_revision=str(item.get("dataset_revision") or ""),
+            parquet_revision=str(item.get("parquet_revision") or ""),
+            pcm_pipeline_version=str(item.get("pcm_pipeline_version") or ""),
+            sha256_pcm=pcm if _is_valid_sha256(pcm) else "",
+            sha256_source=str(item.get("sha256_source") or "").strip().lower(),
+            n_samples=int(item.get("n_samples") or 0),
+            sample_rate=int(item.get("sample_rate") or 0),
+            record_id=str(item.get("record_id") or ""),
+        ))
     require_protected_source_sha256(bound)
     return bound
+
+
+def canonical_reference_index(project_root) -> Dict[str, str]:
+    """Project-relative locators for the three canonical RQ1 manifests."""
+    root = Path(project_root)
+    index = {}
+    for split, relative in CANONICAL_PROTECTED_MANIFESTS.items():
+        path = root / relative
+        if not path.is_file():
+            raise RuntimeError(f"canonical RQ1 manifest missing for {split}: {relative}")
+        index[split] = relative
+    return index
+
+
+def _shard_key_from_parquet_file(parquet_file: str) -> str:
+    text = str(parquet_file or "").strip()
+    if text.lower().startswith("http://") or text.lower().startswith("https://"):
+        from src.asr_full_pcm import parse_hf_parquet_url
+        return parse_hf_parquet_url(text).filename
+    return text.lstrip("/")
+
+
+def _load_manifest_identity_rows(path, split: str) -> List[dict]:
+    import pandas as pd
+
+    frame = pd.read_csv(path, usecols=list(_MANIFEST_IDENTITY_COLUMNS))
+    assert_no_forbidden_reference_columns(list(frame.columns))
+    rows = []
+    seen = set()
+    for _, row in frame.iterrows():
+        uid = str(row["record_uid"] or "").strip()
+        if not uid:
+            raise RuntimeError(f"{split} manifest row has an empty record_uid")
+        if uid in seen:
+            raise RuntimeError(f"duplicate protected uid in {split} manifest: {uid}")
+        seen.add(uid)
+        parquet_file = str(row["parquet_file"] or "").strip()
+        try:
+            shard_row_index = int(row["shard_row_index"])
+        except (TypeError, ValueError):
+            shard_row_index = -1
+        if not parquet_file or shard_row_index < 0:
+            raise RuntimeError(f"missing shard row for {split}:{uid}")
+        rows.append({
+            "reference_uid": uid,
+            "split": split,
+            "manifest_audio_locator": str(row["audio_path"] or "").strip(),
+            "parquet_file": parquet_file,
+            "shard_key": _shard_key_from_parquet_file(parquet_file),
+            "shard_row_index": shard_row_index,
+            "record_id": str(row["record_id"] or "").strip(),
+        })
+    return rows
+
+
+def _load_audio_index_jsonl(directory) -> Dict[str, dict]:
+    from src.asr_full_pcm import AUDIO_PCM_PIPELINE_VERSION
+
+    root = Path(directory)
+    if not root.is_dir():
+        raise RuntimeError(f"RQ1 audio index directory is missing: {root}")
+    found: Dict[str, dict] = {}
+    for path in sorted(root.glob("*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            payload = json.loads(line)
+            uid = str(payload.get("record_uid") or "").strip()
+            if not uid:
+                raise RuntimeError(f"audio index row missing record_uid in {path.name}")
+            if uid in found:
+                raise RuntimeError(f"duplicate audio index uid: {uid}")
+            pipeline = str(payload.get("audio_pcm_pipeline_version") or "")
+            if pipeline != AUDIO_PCM_PIPELINE_VERSION:
+                raise RuntimeError(
+                    f"audio index pipeline for {uid} is {pipeline!r}, expected {AUDIO_PCM_PIPELINE_VERSION}"
+                )
+            digest = str(payload.get("sha256_pcm") or "").strip().lower()
+            if not _is_valid_sha256(digest):
+                raise RuntimeError(f"audio index sha256_pcm invalid for {uid}")
+            source = str(payload.get("sha256_source") or "").strip().lower()
+            if not _is_valid_sha256(source):
+                raise RuntimeError(f"audio index sha256_source invalid for {uid}")
+            shard_key = str(payload.get("shard_key") or "").strip()
+            if not shard_key:
+                raise RuntimeError(f"audio index shard_key missing for {uid}")
+            raw_split = str(payload.get("split") or "").strip()
+            protected_split = _AUDIO_INDEX_SPLIT_ALIASES.get(raw_split)
+            if protected_split is None:
+                raise RuntimeError(f"audio index split invalid for {uid}: {raw_split!r}")
+            parquet_revision = str(payload.get("parquet_revision") or "").strip().lower()
+            dataset_revision = str(payload.get("dataset_revision") or "").strip().lower()
+            if not parquet_revision or not dataset_revision:
+                raise RuntimeError(f"audio index revision missing for {uid}")
+            if "shard_row_index" not in payload:
+                raise RuntimeError(f"audio index shard_row_index missing for {uid}")
+            found[uid] = {
+                "identity_source": "audio_index",
+                "split": protected_split,
+                "sha256_pcm": digest,
+                "sha256_source": source,
+                "n_samples": int(payload.get("n_samples") or 0),
+                "sample_rate": int(payload.get("sample_rate") or 0),
+                "shard_key": shard_key,
+                "shard_row_index": _parse_required_row_index(payload.get("shard_row_index"), f"audio index {uid}"),
+                "parquet_revision": parquet_revision,
+                "dataset_revision": dataset_revision,
+                "pcm_pipeline_version": pipeline,
+            }
+    return found
+
+
+def _load_frozen_integrity(path) -> Dict[str, dict]:
+    import pandas as pd
+
+    frame = pd.read_csv(path)
+    assert_no_forbidden_reference_columns(list(frame.columns))
+    if "shard_row_index" not in frame.columns:
+        raise RuntimeError("frozen audio integrity is missing shard_row_index")
+    found = {}
+    for _, row in frame.iterrows():
+        uid = str(row.get("record_uid") or "").strip()
+        if not uid:
+            raise RuntimeError("frozen audio integrity row missing record_uid")
+        if uid in found:
+            raise RuntimeError(f"duplicate frozen audio integrity uid: {uid}")
+        digest = str(row.get("sha256_pcm") or "").strip().lower()
+        if not _is_valid_sha256(digest):
+            raise RuntimeError(f"frozen audio integrity sha256_pcm invalid for {uid}")
+        found[uid] = {
+            "identity_source": "frozen_integrity",
+            "sha256_pcm": digest,
+            "sha256_source": str(row["sha256_source"]).strip().lower() if "sha256_source" in frame.columns else "",
+            "n_samples": int(row.get("n_samples") or 0),
+            "sample_rate": int(row.get("sample_rate") or 0),
+            "shard_key": str(row.get("shard_key") or ""),
+            "shard_row_index": _parse_required_row_index(row.get("shard_row_index"), f"frozen audio integrity {uid}"),
+        }
+    return found
+
+
+def build_derived_protected_identity_rows(
+    *,
+    reference_index: Dict[str, object],
+    project_root,
+    dataset_id: str,
+    dataset_revision: str,
+    parquet_revision: str,
+    audio_index_dir,
+    frozen_integrity_csv,
+    expected_counts: Optional[Dict[str, int]] = None,
+) -> List[dict]:
+    """Join canonical manifests to read-only RQ1 identity metadata.
+
+    Rows that RQ1 excluded from its optimizer index stay in this universe.
+    Their PCM hash is filled later by on-demand reconstruction. This function
+    does not write or open any RQ1 artifact for update.
+    """
+    from src.asr_full_pcm import AUDIO_PCM_PIPELINE_VERSION
+
+    root = Path(project_root)
+    counts = dict(expected_counts or EXPECTED_PROTECTED_MANIFEST_COUNTS)
+    pinned_dataset = str(dataset_revision or "").strip().lower()
+    pinned_parquet = str(parquet_revision or "").strip().lower()
+    if not dataset_id or not _is_pinned_revision(pinned_dataset) or not _is_pinned_revision(pinned_parquet):
+        raise RuntimeError("derived identity index requires dataset id and pinned revisions")
+    indexed = _load_audio_index_jsonl(audio_index_dir)
+    frozen = _load_frozen_integrity(frozen_integrity_csv)
+    rows: List[dict] = []
+    seen = set()
+    for split in PROTECTED_SPLITS:
+        locator = reference_index.get(split)
+        if not locator:
+            raise RuntimeError(f"reference_index is missing a manifest locator for {split}")
+        path = Path(locator)
+        if not path.is_absolute():
+            path = root / path
+        manifest_rows = _load_manifest_identity_rows(path, split)
+        if split in counts and len(manifest_rows) != int(counts[split]):
+            raise RuntimeError(
+                f"protected split {split} count {len(manifest_rows)} != expected {counts[split]}"
+            )
+        for item in manifest_rows:
+            uid = item["reference_uid"]
+            key = (split, uid)
+            if key in seen:
+                raise RuntimeError(f"duplicate protected audio identity for {split}:{uid}")
+            seen.add(key)
+            meta = frozen.get(uid) if split == "frozen_test" else indexed.get(uid)
+            if meta is None and split == "frozen_test":
+                meta = indexed.get(uid)
+            if meta is not None:
+                _verify_protected_identity_meta(
+                    meta, item, split, uid,
+                    pinned_dataset=pinned_dataset,
+                    pinned_parquet=pinned_parquet,
+                    pipeline=AUDIO_PCM_PIPELINE_VERSION,
+                )
+            rows.append({
+                "reference_uid": uid,
+                "split": split,
+                "manifest_audio_locator": item["manifest_audio_locator"],
+                "parquet_file": item["parquet_file"],
+                "shard_key": item["shard_key"],
+                "shard_row_index": int(item["shard_row_index"]),
+                "dataset_revision": pinned_dataset,
+                "parquet_revision": pinned_parquet,
+                "pcm_pipeline_version": AUDIO_PCM_PIPELINE_VERSION,
+                "sha256_pcm": "" if meta is None else meta["sha256_pcm"],
+                "sha256_source": "" if meta is None else meta.get("sha256_source") or "",
+                "n_samples": 0 if meta is None else int(meta.get("n_samples") or 0),
+                "sample_rate": 0 if meta is None else int(meta.get("sample_rate") or 0),
+                "record_id": item["record_id"],
+            })
+    rows.sort(key=lambda item: (item["split"], item["reference_uid"]))
+    assert_no_forbidden_reference_columns(DERIVED_PROTECTED_IDENTITY_COLUMNS)
+    return rows
+
+
+def write_derived_protected_identity_index(rows: Sequence[dict], dest) -> str:
+    """Atomically write the derived index and return its file SHA-256."""
+    import pandas as pd
+
+    assert_no_forbidden_reference_columns(DERIVED_PROTECTED_IDENTITY_COLUMNS)
+    frame = pd.DataFrame(list(rows), columns=list(DERIVED_PROTECTED_IDENTITY_COLUMNS))
+    if list(frame.columns) != list(DERIVED_PROTECTED_IDENTITY_COLUMNS):
+        raise RuntimeError("derived identity index columns drifted")
+    payload = frame.to_csv(index=False)
+    header = payload.splitlines()[0].lower() if payload else ""
+    for token in FORBIDDEN_REFERENCE_TOKENS:
+        if token in header:
+            raise RuntimeError(f"derived identity index contains forbidden token {token!r}")
+    dest_path = Path(dest)
+    atomic_write_text(dest_path, payload)
+    digest = _sha256_file(dest_path)
+    atomic_write_text(dest_path.with_suffix(dest_path.suffix + ".sha256"), digest + "\n")
+    return digest
+
+
+def load_derived_protected_identity_index(path, expected_sha256: str) -> Dict[Tuple[str, str], dict]:
+    """Load the derived index. Transcript columns are rejected."""
+    from src.rq1_contract import sha256_file
+    import pandas as pd
+
+    index_path = Path(path)
+    expected = str(expected_sha256 or "").strip().lower()
+    if not _is_valid_sha256(expected):
+        raise RuntimeError("protected audio identity index requires a SHA256 pin")
+    if not index_path.is_file():
+        raise RuntimeError(f"protected audio identity index is missing: {index_path}")
+    actual = sha256_file(index_path)
+    if actual != expected:
+        raise RuntimeError("protected audio identity index SHA256 mismatch")
+    frame = pd.read_csv(index_path, dtype=str, keep_default_na=False)
+    columns = list(frame.columns)
+    assert_no_forbidden_reference_columns(columns)
+    if columns != list(DERIVED_PROTECTED_IDENTITY_COLUMNS):
+        raise RuntimeError(f"derived identity index schema mismatch: {columns}")
+    index: Dict[Tuple[str, str], dict] = {}
+    for _, row in frame.iterrows():
+        split = str(row["split"] or "")
+        uid = str(row["reference_uid"] or "")
+        locator = str(row["manifest_audio_locator"] or "")
+        digest = str(row["sha256_pcm"] or "").strip().lower()
+        if split not in PROTECTED_SPLITS or not uid or not locator:
+            raise RuntimeError("protected audio identity row is incomplete")
+        if digest and not _is_valid_sha256(digest):
+            raise RuntimeError(f"protected audio identity {split}:{uid} has no source_sha256")
+        shard_row_index = _parse_required_row_index(row["shard_row_index"], f"{split}:{uid}")
+        if not str(row["parquet_file"] or "").strip():
+            raise RuntimeError(f"missing shard row for {split}:{uid}")
+        key = (split, uid)
+        if key in index:
+            raise RuntimeError(f"duplicate protected audio identity for {split}:{uid}")
+        index[key] = {
+            "audio_locator": locator,
+            "manifest_audio_locator": locator,
+            "source_sha256": digest,
+            "parquet_file": str(row["parquet_file"] or ""),
+            "shard_key": str(row["shard_key"] or ""),
+            "shard_row_index": shard_row_index,
+            "dataset_revision": str(row["dataset_revision"] or ""),
+            "parquet_revision": str(row["parquet_revision"] or ""),
+            "pcm_pipeline_version": str(row["pcm_pipeline_version"] or ""),
+            "sha256_pcm": digest,
+            "sha256_source": str(row["sha256_source"] or "").strip().lower(),
+            "n_samples": int(row["n_samples"] or 0),
+            "sample_rate": int(row["sample_rate"] or 0),
+            "record_id": str(row["record_id"] or ""),
+        }
+    if not index:
+        raise RuntimeError("protected audio identity index is empty")
+    return index
+
+
+def discover_full_audio_index_dir(durable_root) -> Path:
+    """Locate the RQ1 full-state audio index without choosing among contracts.
+
+    The RQ1 final contract does not store the ``full_state/contract_*`` directory
+    that owns ``audio_index``. There is no pinned path to bind, so this accepts
+    the directory only when exactly one exists. It does not rank by mtime, name,
+    or lexical order.
+    """
+    root = Path(durable_root) / "bahnar_s2tt" / "full_state"
+    matches = [path for path in root.glob("contract_*/audio_index") if path.is_dir()]
+    if len(matches) != 1:
+        found = ", ".join(str(path) for path in matches[:5])
+        raise RuntimeError(
+            "RQ1 final contract does not pin the full_state audio_index directory; "
+            f"refusing to choose among {len(matches)} matches under {root}"
+            + (f" ({found})" if found else "")
+        )
+    return matches[0]
+
+
+def _verify_protected_identity_meta(
+    meta: dict,
+    item: dict,
+    split: str,
+    uid: str,
+    *,
+    pinned_dataset: str,
+    pinned_parquet: str,
+    pipeline: str,
+) -> None:
+    """Bind a sidecar or frozen-integrity row to one manifest identity."""
+    label = f"{split}:{uid}"
+    row_index = meta.get("shard_row_index")
+    if row_index is None:
+        raise RuntimeError(f"{label} is missing shard_row_index")
+    if int(row_index) != int(item["shard_row_index"]):
+        raise RuntimeError(
+            f"shard_row_index mismatch for {label}: sidecar {int(row_index)} != manifest {int(item['shard_row_index'])}"
+        )
+    if meta.get("identity_source") == "audio_index":
+        if meta.get("split") != split:
+            raise RuntimeError(f"split mismatch for {label}")
+        if meta.get("shard_key") != item["shard_key"]:
+            raise RuntimeError(f"shard key mismatch for {label}")
+        if not _is_valid_sha256(str(meta.get("sha256_source") or "")):
+            raise RuntimeError(f"audio index sha256_source invalid for {label}")
+        if not _is_valid_sha256(str(meta.get("sha256_pcm") or "")):
+            raise RuntimeError(f"audio index sha256_pcm invalid for {label}")
+        if meta.get("dataset_revision") != pinned_dataset:
+            raise RuntimeError(f"wrong dataset revision for {label}")
+        if meta.get("parquet_revision") != pinned_parquet:
+            raise RuntimeError(f"wrong parquet revision for {label}")
+        if meta.get("pcm_pipeline_version") != pipeline:
+            raise RuntimeError(f"wrong pcm pipeline for {label}")
+        return
+    if meta.get("shard_key") and meta["shard_key"] != item["shard_key"]:
+        raise RuntimeError(f"shard key mismatch for {label}")
+    if meta.get("parquet_revision") and meta["parquet_revision"] != pinned_parquet:
+        raise RuntimeError(f"wrong parquet revision for {label}")
+    if meta.get("dataset_revision") and meta["dataset_revision"] != pinned_dataset:
+        raise RuntimeError(f"wrong dataset revision for {label}")
+    if meta.get("pcm_pipeline_version") and meta["pcm_pipeline_version"] != pipeline:
+        raise RuntimeError(f"wrong pcm pipeline for {label}")
+
+
+def ensure_derived_protected_identity_index(
+    *,
+    project_root,
+    reference_index: Dict[str, object],
+    durable_root=None,
+    dest=None,
+    audio_index_dir=None,
+    frozen_integrity_csv=None,
+    expected_counts: Optional[Dict[str, int]] = None,
+) -> dict:
+    """Build the NB11 identity index from read-only RQ1 manifests and sidecars.
+
+    The CSV is an NB11 artifact. RQ1 contracts, manifests, and the audio index
+    are opened for reading only. The returned path is project-relative.
+    """
+    from src.rq1_runtime_paths import resolve_rq1_runtime_paths
+
+    runtime = resolve_rq1_runtime_paths(project_root=project_root, durable_root=durable_root)
+    latest_path = runtime.durable_state_root / "LATEST_UNLOCKED.json"
+    if not latest_path.is_file():
+        raise RuntimeError("RQ1 LATEST_UNLOCKED.json is missing; cannot build the protected identity index")
+    latest = json.loads(latest_path.read_text(encoding="utf-8"))
+    contract_hash = str(latest.get("final_contract_hash") or "").strip().lower()
+    state_dir = runtime.state_dir(contract_hash)
+    final_payload = json.loads((state_dir / RQ1_FINAL_CONTRACT_FILENAME).read_text(encoding="utf-8"))
+    verify_rq1_contract_hash(final_payload, "rq1_final_contract_hash", contract_hash)
+    test_path = state_dir / RQ1_TEST_CONTRACT_FILENAME
+    test_payload = json.loads(test_path.read_text(encoding="utf-8"))
+    verify_rq1_contract_hash(
+        test_payload, "rq1_test_contract_hash", str(final_payload.get("rq1_test_contract_hash") or ""),
+    )
+    dataset_id = str(test_payload.get("dataset_id") or final_payload.get("dataset_id") or "")
+    dataset_revision = str(test_payload.get("dataset_revision") or final_payload.get("dataset_revision") or "")
+    parquet_revision = str(
+        test_payload.get("parquet_revision")
+        or test_payload.get("parquet_commit_sha")
+        or final_payload.get("parquet_revision")
+        or ""
+    )
+    index_dir = Path(audio_index_dir) if audio_index_dir else discover_full_audio_index_dir(runtime.durable_root)
+    integrity = Path(frozen_integrity_csv) if frozen_integrity_csv else state_dir / "rq1_audio_integrity.csv"
+    dest_path = Path(dest) if dest else Path(project_root) / "artifacts" / "rq2" / "u_clean" / "protected_audio_identity.csv"
+    relative = Path(os.path.relpath(dest_path, Path(project_root)))
+    if relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeError("derived identity index must be stored at a project-relative path")
+    rows = build_derived_protected_identity_rows(
+        reference_index=reference_index,
+        project_root=project_root,
+        dataset_id=dataset_id,
+        dataset_revision=dataset_revision,
+        parquet_revision=parquet_revision,
+        audio_index_dir=index_dir,
+        frozen_integrity_csv=integrity,
+        expected_counts=expected_counts,
+    )
+    digest = write_derived_protected_identity_index(rows, dest_path)
+    return {"relative_path": relative.as_posix(), "sha256": digest, "n_rows": len(rows)}
 
 
 def assert_no_forbidden_reference_columns(columns: Sequence[str]) -> None:
@@ -569,6 +1105,169 @@ def verify_rq1_contract_hash(payload: dict, hash_field: str, expected_hash: str)
     return recomputed
 
 
+def _load_bound_identity_index(path, expected_sha256: str) -> Dict[Tuple[str, str], dict]:
+    header = Path(path).read_text(encoding="utf-8").splitlines()[:1]
+    if header and "manifest_audio_locator" in header[0]:
+        return load_derived_protected_identity_index(path, expected_sha256)
+    return load_protected_audio_identity_index(path, expected_sha256)
+
+
+@dataclass(frozen=True)
+class MaterializedProtectedAudio:
+    entry: ProtectedReferenceEntry
+    path: Path
+    sha256_pcm: str
+    sha256_source: str
+    n_samples: int
+    sample_rate: int
+
+
+class ProtectedParquetMaterializer:
+    """Reconstruct protected audio from a pinned Parquet shard into a temp WAV.
+
+    One shard download serves every requested row in that shard. Temp WAVs and
+    the shard download are removed when iteration finishes. Nothing is written
+    under the RQ1 durable state.
+    """
+
+    def __init__(self, *, dataset_id: str, cache_dir, download_fn=None, reader_factory=None):
+        self._dataset_id = str(dataset_id or "")
+        self._cache_dir = Path(cache_dir)
+        self._download_fn = download_fn
+        self._reader_factory = reader_factory
+
+    def materialize_audio(self, entry: ProtectedReferenceEntry):
+        @contextmanager
+        def _one():
+            generator = self.iter_materialized_audio([entry])
+            try:
+                item = next(generator)
+            except StopIteration:
+                raise RuntimeError(f"protected audio was not materialized for {entry.reference_uid}")
+            try:
+                yield item
+            finally:
+                generator.close()
+        return _one()
+
+    def iter_materialized_audio(self, entries: Sequence[ProtectedReferenceEntry]):
+        from src.asr_full_pcm import (
+            AUDIO_PCM_PIPELINE_VERSION,
+            canonical_pcm16_from_bytes,
+            cleanup_shard_download,
+            normalize_parquet_ref,
+            write_wav_from_pcm16,
+        )
+        from src.asr_full_shards import make_hf_parquet_stream_reader
+
+        groups: Dict[str, List[ProtectedReferenceEntry]] = {}
+        for entry in entries:
+            if not _entry_can_reconstruct(entry):
+                raise RuntimeError(f"missing shard row for {entry.split}:{entry.reference_uid}")
+            if entry.pcm_pipeline_version and entry.pcm_pipeline_version != AUDIO_PCM_PIPELINE_VERSION:
+                raise RuntimeError(
+                    f"wrong pcm pipeline for {entry.reference_uid}: {entry.pcm_pipeline_version}"
+                )
+            groups.setdefault(entry.shard_key or _shard_key_from_parquet_file(entry.parquet_file), []).append(entry)
+        for shard_key in sorted(groups):
+            group = groups[shard_key]
+            revisions = {entry.parquet_revision for entry in group if entry.parquet_revision}
+            if len(revisions) != 1:
+                raise RuntimeError(f"wrong parquet revision for shard {shard_key}")
+            pinned = next(iter(revisions))
+            by_index: Dict[int, ProtectedReferenceEntry] = {}
+            for entry in group:
+                index = int(entry.shard_row_index)
+                if index in by_index:
+                    raise RuntimeError(f"duplicate shard row {index} in {shard_key}")
+                by_index[index] = entry
+            ref = normalize_parquet_ref(
+                group[0].parquet_file,
+                expected_repo_id=self._dataset_id,
+                parquet_revision=pinned,
+            )
+            downloaded: Dict[str, str] = {}
+            if self._reader_factory is not None:
+                reader = self._reader_factory(downloaded)
+            else:
+                reader = make_hf_parquet_stream_reader(
+                    cache_dir=self._cache_dir,
+                    downloaded=downloaded,
+                    download_fn=self._download_fn,
+                )
+            produced = set()
+            try:
+                for idx, payload in reader(ref, sorted(by_index)):
+                    entry = by_index.get(int(idx))
+                    if entry is None:
+                        continue
+                    if int(idx) in produced:
+                        raise RuntimeError(f"duplicate shard row {idx} in {shard_key}")
+                    produced.add(int(idx))
+                    item = _materialize_one_payload(entry, payload, canonical_pcm16_from_bytes, write_wav_from_pcm16)
+                    try:
+                        yield item
+                    finally:
+                        if item.path.exists():
+                            item.path.unlink()
+                missing = sorted(set(by_index) - produced)
+                if missing:
+                    raise RuntimeError(f"missing shard row {missing[:5]} in {shard_key}")
+            finally:
+                for local in list(downloaded.values()):
+                    cleanup_shard_download(local)
+                downloaded.clear()
+
+
+def _materialize_one_payload(entry, payload, decode, write_wav) -> MaterializedProtectedAudio:
+    payload_id = payload.get("id") if isinstance(payload, dict) else None
+    if entry.record_id and payload_id is not None and str(payload_id) != entry.record_id:
+        raise RuntimeError(
+            f"protected record_id mismatch uid={entry.reference_uid}: {payload_id!r} != {entry.record_id!r}"
+        )
+    raw = payload.get("audio") if isinstance(payload, dict) else None
+    if isinstance(raw, dict):
+        raw = raw.get("bytes")
+    if not raw:
+        raise RuntimeError(f"protected audio payload empty for {entry.reference_uid}")
+    decoded = decode(bytes(raw), target_sr=16000)
+    source_hash = str(decoded.get("sha256_source") or "").strip().lower()
+    pcm_hash = str(decoded.get("sha256_pcm") or "").strip().lower()
+    if entry.sha256_source and source_hash != entry.sha256_source:
+        raise RuntimeError(f"sha256_source mismatch for {entry.reference_uid}")
+    if entry.sha256_pcm and pcm_hash != entry.sha256_pcm:
+        raise RuntimeError(f"sha256_pcm mismatch for {entry.reference_uid}")
+    if not _is_valid_sha256(pcm_hash):
+        raise RuntimeError(f"decoded protected audio has no sha256_pcm for {entry.reference_uid}")
+    n_samples = int(decoded.get("n_samples") or 0)
+    sample_rate = int(decoded.get("sample_rate") or 0)
+    if entry.n_samples and n_samples != int(entry.n_samples):
+        raise RuntimeError(f"n_samples mismatch for {entry.reference_uid}")
+    if entry.sample_rate and sample_rate != int(entry.sample_rate):
+        raise RuntimeError(f"sample_rate mismatch for {entry.reference_uid}")
+    handle = tempfile.NamedTemporaryFile(prefix="nb11-protected-", suffix=".wav", delete=False)
+    handle.close()
+    path = Path(handle.name)
+    try:
+        write_wav(path, decoded["pcm"], sample_rate or 16000)
+    except Exception:
+        if path.exists():
+            path.unlink()
+        raise
+    return MaterializedProtectedAudio(
+        entry=entry,
+        path=path,
+        sha256_pcm=pcm_hash,
+        sha256_source=source_hash,
+        n_samples=n_samples,
+        sample_rate=sample_rate,
+    )
+
+
+def _parquet_materializer_from_entries(entries, *, dataset_id: str, cache_dir) -> ProtectedParquetMaterializer:
+    return ProtectedParquetMaterializer(dataset_id=dataset_id, cache_dir=cache_dir)
+
+
 class DurableCanonicalReferenceResolver(ProtectedReferenceResolver):
     """Resolve FINAL RQ1 audio identity through the existing durable runtime.
 
@@ -628,6 +1327,8 @@ class DurableCanonicalReferenceResolver(ProtectedReferenceResolver):
         test_payload = json.loads(test_path.read_text(encoding="utf-8"))
         verify_rq1_contract_hash(test_payload, "rq1_test_contract_hash", test_hash)
         self._test_contract_hash = test_hash
+        self._pinned_parquet_revision = str(test_payload.get("parquet_revision") or "").strip().lower()
+        self._pinned_dataset_revision = str(test_payload.get("dataset_revision") or "").strip().lower()
         if not self._reference_index:
             raise RuntimeError(
                 "RQ1 final contract does not store manifest paths; an explicit "
@@ -643,6 +1344,8 @@ class DurableCanonicalReferenceResolver(ProtectedReferenceResolver):
             if split not in self._reference_index or not str(self._reference_index.get(split) or "").strip():
                 raise RuntimeError(f"reference_index is missing a manifest locator for {split}")
             manifest_path = Path(self._reference_index[split])
+            if not manifest_path.is_absolute():
+                manifest_path = Path(self._project_root) / manifest_path
             if not manifest_path.is_file():
                 raise RuntimeError(f"RQ1 manifest missing for {split}: {manifest_path}")
             actual_sha = sha256_file(manifest_path)
@@ -673,11 +1376,20 @@ class DurableCanonicalReferenceResolver(ProtectedReferenceResolver):
                 "canonical RQ1 manifests have no per-audio SHA256; a hash-locked "
                 "protected audio identity index is required"
             )
-        identity = load_protected_audio_identity_index(
+        identity = _load_bound_identity_index(
             self._audio_identity_index, self._audio_identity_sha256,
         )
         delegate = ManifestProtectedReferenceResolver(self._manifest_paths, self._mapping)
         entries = bind_protected_audio_identity(delegate.resolve(), identity)
+        pinned_parquet = str(self._pinned_parquet_revision or "")
+        pinned_dataset = str(self._pinned_dataset_revision or "")
+        for entry in entries:
+            if pinned_parquet and entry.parquet_revision and entry.parquet_revision != pinned_parquet:
+                raise RuntimeError(f"wrong parquet revision for {entry.split}:{entry.reference_uid}")
+            if pinned_dataset and entry.dataset_revision and entry.dataset_revision != pinned_dataset:
+                raise RuntimeError(f"wrong dataset revision for {entry.split}:{entry.reference_uid}")
+            if entry.pcm_pipeline_version and entry.pcm_pipeline_version != "full_pcm16_le_v1":
+                raise RuntimeError(f"wrong pcm pipeline for {entry.split}:{entry.reference_uid}")
         actual = Counter(entry.split for entry in entries)
         for split, expected in self.expected_counts.items():
             if actual.get(split, 0) != expected:
@@ -689,9 +1401,53 @@ class DurableCanonicalReferenceResolver(ProtectedReferenceResolver):
         return entries
 
     def resolve_audio_path(self, entry: ProtectedReferenceEntry) -> Path:
-        if not self._durable_root:
-            raise RuntimeError("durable_root is not set")
-        return _durable_audio_path(self._durable_root, entry.audio_locator)
+        raise RuntimeError(
+            "protected audio is reconstructed from pinned Parquet; "
+            "use materialize_audio instead of a durable_root file path"
+        )
+
+    def materialize_audio(self, entry: ProtectedReferenceEntry):
+        return _parquet_materializer_from_entries(
+            [entry],
+            dataset_id=self._dataset_id(),
+            cache_dir=self._parquet_cache_dir(),
+        ).materialize_audio(entry)
+
+    def iter_materialized_audio(self, entries: Sequence[ProtectedReferenceEntry]):
+        return _parquet_materializer_from_entries(
+            entries,
+            dataset_id=self._dataset_id(),
+            cache_dir=self._parquet_cache_dir(),
+        ).iter_materialized_audio(entries)
+
+    def _dataset_id(self) -> str:
+        payload = self._load_contract()
+        dataset_id = str(payload.get("dataset_id") or "")
+        if not dataset_id:
+            test_path = self._state_dir() / RQ1_TEST_CONTRACT_FILENAME
+            test_payload = json.loads(test_path.read_text(encoding="utf-8"))
+            dataset_id = str(test_payload.get("dataset_id") or "")
+        if not dataset_id:
+            raise RuntimeError("RQ1 contract is missing dataset_id")
+        return dataset_id
+
+    def _state_dir(self) -> Path:
+        from src.rq1_runtime_paths import resolve_rq1_runtime_paths
+
+        runtime = resolve_rq1_runtime_paths(
+            project_root=self._project_root,
+            durable_root=self._durable_root,
+        )
+        return runtime.state_dir(self._contract_hash)
+
+    def _parquet_cache_dir(self) -> Path:
+        from src.rq1_runtime_paths import resolve_rq1_runtime_paths
+
+        runtime = resolve_rq1_runtime_paths(
+            project_root=self._project_root,
+            durable_root=self._durable_root,
+        )
+        return runtime.hf_parquet_cache_dir
 
     def provenance(self) -> dict:
         return {
@@ -699,6 +1455,9 @@ class DurableCanonicalReferenceResolver(ProtectedReferenceResolver):
             "rq1_final_contract_hash": str(self._contract_hash or ""),
             "rq1_test_contract_hash": str(self._test_contract_hash or ""),
             "protected_audio_identity_sha256": str(self._audio_identity_sha256 or ""),
+            "parquet_revision": str(getattr(self, "_pinned_parquet_revision", "") or ""),
+            "dataset_revision": str(getattr(self, "_pinned_dataset_revision", "") or ""),
+            "pcm_pipeline_version": "full_pcm16_le_v1",
             "splits": {split: dict(info) for split, info in self._split_provenance.items()},
         }
 
@@ -1366,14 +2125,21 @@ def probe_protected_audio_identity(entries: Sequence[ProtectedReferenceEntry], r
         seen[entry.split] = seen.get(entry.split, 0) + 1
         if seen[entry.split] > per_split:
             continue
-        sha_available = _is_valid_sha256(str(entry.source_sha256 or ""))
+        sha_available = _is_valid_sha256(str(entry.sha256_pcm or entry.source_sha256 or ""))
         resolvable = False
         matches = False
         try:
-            path = Path(resolver.resolve_audio_path(entry))
-            resolvable = path.is_file()
-            if resolvable and sha_available:
-                matches = hashlib.sha256(path.read_bytes()).hexdigest() == str(entry.source_sha256).strip().lower()
+            if _entry_can_reconstruct(entry) and hasattr(resolver, "materialize_audio"):
+                with resolver.materialize_audio(entry) as item:
+                    resolvable = Path(item.path).is_file()
+                    matches = sha_available and item.sha256_pcm == str(entry.sha256_pcm or entry.source_sha256).strip().lower()
+                    if not sha_available:
+                        matches = _is_valid_sha256(item.sha256_pcm)
+            else:
+                path = Path(resolver.resolve_audio_path(entry))
+                resolvable = path.is_file()
+                if resolvable and sha_available:
+                    matches = hashlib.sha256(path.read_bytes()).hexdigest() == str(entry.source_sha256).strip().lower()
         except Exception:
             resolvable = False
             matches = False
@@ -1721,6 +2487,11 @@ def compatibility_key(context: UCleanContext) -> dict:
         "overlap_contract_sha256": cfg.overlap_contract_sha(),
         "nb10_locks": dict(context.nb10_locks),
         "reference_set_sha256": context.reference_summary.get("reference_set_sha256", ""),
+        "rq1_final_contract_hash": str(context.reference_provenance.get("rq1_final_contract_hash") or ""),
+        "rq1_test_contract_hash": str(context.reference_provenance.get("rq1_test_contract_hash") or ""),
+        "protected_audio_identity_sha256": str(context.reference_provenance.get("protected_audio_identity_sha256") or ""),
+        "parquet_revision": str(context.reference_provenance.get("parquet_revision") or ""),
+        "pcm_pipeline_version": str(context.reference_provenance.get("pcm_pipeline_version") or ""),
     }
 
 
@@ -2395,13 +3166,14 @@ def load_resumable_checkpoint(context: UCleanContext, path=None, load_protected_
                     kept_fp.append(shard)
                 else:
                     expected = {
-                        entry.reference_uid: str(entry.source_sha256 or "").strip().lower()
+                        entry.reference_uid: str(entry.sha256_pcm or entry.source_sha256 or "").strip().lower()
                         for entry in context.protected_entries
                     }
                     matched = []
                     for row in rows:
                         stored = str(row.get("source_sha256") or "").strip().lower()
-                        if expected and (expected.get(row["uid"]) != stored or not _is_valid_sha256(stored)):
+                        wanted = expected.get(row["uid"]) if expected else None
+                        if not _is_valid_sha256(stored) or (wanted and wanted != stored):
                             loaded["discarded_reference_fingerprints"] += 1
                             continue
                         matched.append(row)
@@ -2494,11 +3266,50 @@ def protected_reference_uids(context: UCleanContext) -> set:
     return _shard_uids(state["protected_fingerprint_shards"])
 
 
+def generate_protected_fingerprints(context: UCleanContext, resolver, *, fingerprint_fn=None) -> int:
+    """Fingerprint protected refs that are not already in a valid shard.
+
+    Completed shard files are not rewritten. Fingerprint arrays are appended in
+    batches and are not retained after the shard write.
+    """
+    pending = [
+        entry for entry in context.protected_entries
+        if entry.reference_uid not in protected_reference_uids(context)
+    ]
+    if not pending:
+        return 0
+    if fingerprint_fn is None:
+        from src.rq2_audio_fingerprint import compute_fingerprint
+
+        def fingerprint_fn(path):  # type: ignore
+            return compute_fingerprint(path, context.config.overlap)
+
+    written = 0
+    batch: List[dict] = []
+    for item in resolver.iter_materialized_audio(pending):
+        fingerprint = fingerprint_fn(item.path)
+        batch.append({
+            "uid": item.entry.reference_uid,
+            "reference_uid": item.entry.reference_uid,
+            "split": item.entry.split,
+            "source_sha256": item.sha256_pcm,
+            "fingerprint": fingerprint,
+        })
+        if len(batch) >= 32:
+            append_fingerprint_shard(context, "protected_fingerprints", batch)
+            written += len(batch)
+            batch = []
+    if batch:
+        append_fingerprint_shard(context, "protected_fingerprints", batch)
+        written += len(batch)
+    return written
+
+
 def iter_protected_fingerprint_shards(context: UCleanContext):
     """Yield one verified protected shard at a time."""
     state = _read_checkpoint_state(context)
     expected = {
-        entry.reference_uid: str(entry.source_sha256 or "").strip().lower()
+        entry.reference_uid: str(entry.sha256_pcm or entry.source_sha256 or "").strip().lower()
         for entry in context.protected_entries
     }
     root = checkpoint_root(context) / "protected_fingerprints"
@@ -2514,7 +3325,8 @@ def iter_protected_fingerprint_shards(context: UCleanContext):
             if allowed and row["uid"] not in allowed:
                 continue
             stored = str(row.get("source_sha256") or "").strip().lower()
-            if expected and (expected.get(row["uid"]) != stored or not _is_valid_sha256(stored)):
+            wanted = expected.get(row["uid"]) if expected else None
+            if not _is_valid_sha256(stored) or (wanted and wanted != stored):
                 continue
             batch.append({
                 "uid": row["uid"],
