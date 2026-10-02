@@ -2,15 +2,14 @@
 
 ## Status
 
-**Accepted (partial)** — đã chốt theo Owner feedback; còn vài lựa chọn LLM vendor cụ thể / object storage provider.
+**Accepted (aligned to proposal §1.6, §4.3)** — stack artifact: React · Go Gin · Python FastAPI · PostgreSQL+pgvector · MinIO · Docker · CI/CD tối thiểu.
 
 ## Context
 
-- PostgreSQL đã có; vector dùng **pgvector**.
+- PostgreSQL đã có; vector dùng **pgvector** cho `knowledge_chunks` (proposal: embeddings; không dùng vector để chọn thủ tục).
 - Não nghiệp vụ = JSON definition; Decision Engine deterministic (Go).
-- Owner FE chỉ dùng **React + JavaScript**.
-- BE chốt **Go (Gin)**; AI module = **Python**.
-- Cần làm rõ LLM abstraction, Voice, Deploy (CI/CD + containers), và các hạng mục còn thiếu (auth, file storage, OCR, embedding VN, cache, logging…).
+- FE: **React + JavaScript**. BE: **Go (Gin)**. AI: **Python** (speech + embed/retrieve).
+- Proposal loại OCR bắt buộc, AI draft workspace, TTS Bahnar, HA enterprise.
 
 ---
 
@@ -20,12 +19,12 @@
 |-----|------------|---------|
 | Frontend | **React.js + JavaScript** | Vite hoặc CRA; Citizen chat + Admin review |
 | Backend API | **Go + Gin** | Auth, session, Decision Engine, CRUD admin, gọi AI service |
-| AI module | **Python + FastAPI** | Slot extract, PDF→draft, RAG generate, embedding job |
-| Database | **PostgreSQL** | Structured data (đã có) |
-| Vector | **pgvector** (cùng Postgres) | Knowledge chunks |
-| LLM access | **Provider abstraction** (OpenAI **và/hoặc** Gemini…) | Xem mục 2 |
-| Voice | **V1.1: Voice → STT → text reply** | Xem mục 3; V1 text-only |
-| Deploy | **Containers tách service + Reverse proxy + CI/CD** | Xem mục 4–5 |
+| AI module | **Python + FastAPI** | ASR, MT, Direct S2TT (checkpoint đã chọn), embedding, retrieval |
+| Database | **PostgreSQL** | Session, procedure version, documents, audit |
+| Vector | **pgvector** (cùng Postgres) | `knowledge_chunks.embedding` — RAG sau khi đủ slot |
+| LLM access | **Provider abstraction** (OpenAI **và/hoặc** Gemini) | Extract slot (structured); không quyết định action |
+| Voice | **V1 artifact: Bahnar speech → Vietnamese text** | Không TTS / không Việt→Bahnar |
+| Deploy | **Docker Compose + reverse proxy + CI/CD tối thiểu** | Build, test, image, deploy, health, HTTPS |
 
 ### AI Python — lựa chọn chi tiết
 
@@ -33,9 +32,10 @@
 |------|------|
 | Framework | FastAPI |
 | HTTP client LLM | abstraction `LLMProvider` interface |
-| PDF parse | `pymupdf` / `pdfplumber` (+ OCR optional) |
+| PDF parse | `pymupdf` / `pdfplumber` — **chỉ PDF chữ**; OCR scan **ngoài V1** |
 | Embedding write | SQLAlchemy/psycopg + pgvector |
-| Task nặng (embed/OCR) | FastAPI background task V1; Redis queue V1.1 nếu cần |
+| Speech | Checkpoint Cascaded hoặc Direct đã chọn sau RQ1 (không init từ public Seamless fine-tune cho RQ2) |
+| Task nặng (embed) | FastAPI background task V1 |
 
 ---
 
@@ -82,21 +82,17 @@ Bạn chưa từng làm voice — hiểu như sau:
 
 ### 2 kiểu
 
-1. **Voice → Text reply** (đề xuất)  
-   Dân nói → STT → cùng API chat → hiện chữ trên UI.  
-   Giống người gõ, chỉ khác cách nhập.
+1. **Bahnar speech → Vietnamese text** (proposal V1)  
+   Công dân nói Bahnar → Python (Cascaded ASR+MT hoặc Direct S2TT đã chọn) → cùng API chat → hiện chữ Việt.
 
 2. **Voice → Voice**  
-   Thêm TTS đọc câu trả lời. Phức tạp hơn (nghe checklist dài, latency).
+   TTS Bahnar / dịch Việt→Bahnar — **ngoài V1**.
 
 ```text
-[Mic] → STT service → message text → Go API → reply_text → [màn hình chữ]
-                                              └─(sau)→ TTS → [loa]
+[Mic Bahnar] → Python speech → message text (VI) → Go API → reply_text → [màn hình chữ]
 ```
 
-**V1:** chỉ Text.  
-**V1.1:** thêm nút micro + STT (Whisper / Google / Azure — chốt khi làm voice).  
-Không đổi kiến trúc lõi.
+**Thứ tự code:** pipeline text chạy trước; gắn checkpoint speech khi RQ1 chọn xong (proposal tuần 11). Không đổi Decision Engine.
 
 ---
 
@@ -175,11 +171,12 @@ Upload PDF **không** chỉ lưu Postgres (bytea không scale).
 | File PDF binary | **Object storage**: MinIO (self-host) hoặc S3/GCS |
 | Metadata | Bảng `documents` (filename, storage_uri, checksum, effective_date, expire_date…) |
 
-Flow:
+Flow (proposal §4.2 — **không** extract draft JSON):
 
 ```text
-Admin upload → API nhận file → ghi Object Storage → INSERT documents.storage_uri
-            → AI extract → procedure_drafts
+Admin upload → API ghi MinIO → INSERT documents + procedure_version_documents
+            → job extract text → chunk → embed → knowledge_chunks
+            → processing_status ready | failed → admin activate version
 ```
 
 **Đề xuất V1:** MinIO nếu self-host cùng VPS; S3 nếu dùng cloud.
@@ -197,18 +194,11 @@ Chat LLM vẫn abstraction OpenAI/Gemini; **embedding cố định** để schem
 
 V1 chat với seed JSON chưa cần embedding runtime; Phase publish knowledge mới cần.
 
-### 5.4 OCR — **Có điều kiện**
+### 5.4 OCR — **ngoài V1 bắt buộc**
 
-| PDF loại | Cần OCR? |
-|----------|----------|
-| PDF text (selectable) | Không — parse text thường đủ |
-| PDF scan / ảnh | **Có OCR** |
+Proposal: V1 chỉ PDF **trích được chữ**. File scan / OCR không thuộc minimum artifact.
 
-**Đề xuất:**  
-- V1: hỗ trợ PDF text-first; nếu extract text rỗng → báo admin “cần OCR / file scan”.  
-- V1.1: gắn OCR (VD Tesseract `vie+eng` hoặc cloud Vision) trong `ai-service`.
-
-Không bắt buộc OCR ngày 1 nếu xã cung cấp PDF chữ.
+Nếu extract text rỗng → `processing_status=failed`, báo cán bộ tải PDF chữ.
 
 ### 5.5 Cache — **Nên có mức tối thiểu**
 
@@ -270,14 +260,14 @@ Như mục 4. Pipeline tối thiểu trước prod.
 | 3 | DB | PostgreSQL | **Chốt** |
 | 4 | Vector | pgvector | **Chốt** |
 | 5 | LLM | Abstraction; vendor = OpenAI và/hoặc Gemini | **Chốt hướng**; chọn primary còn mở |
-| 6 | Voice | V1 text; V1.1 voice→STT→text | **Chốt hướng** |
-| 7 | Object storage | MinIO hoặc S3 | **Cần chọn 1** |
-| 8 | OCR | Text PDF first; OCR khi scan | **Chốt hướng** |
+| 6 | Voice | V1: Bahnar → chữ Việt; không TTS | **Chốt (proposal)** |
+| 7 | Object storage | MinIO (local/VPS) hoặc S3 | **Cần chọn 1** |
+| 8 | OCR | Ngoài V1 | **Chốt (proposal)** |
 | 9 | Auth | JWT; admin bắt buộc | **Chốt hướng**; citizen login? mở |
-| 10 | Cache | Optional Redis V1.1 | **Chốt hướng** |
+| 10 | Cache | Optional Redis | **Chốt hướng** |
 | 11 | Logging/Audit | audit_logs + structured logs | **Chốt** |
-| 12 | Deploy | Containers + Nginx + CI/CD | **Chốt** |
-| 13 | Embedding VN | Có ở Phase 3; model multilingual | **Chốt hướng** |
+| 12 | Deploy | Containers + Nginx + CI/CD tối thiểu | **Chốt** |
+| 13 | Embedding | pgvector dim 1536 (`text-embedding-3-small`) | **Chốt schema**; vendor embed có thể revisits khi re-embed |
 
 ---
 

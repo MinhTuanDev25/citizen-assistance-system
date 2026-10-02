@@ -1,28 +1,39 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { listProcedures } from '../../api/catalog.js'
+import { listDocuments } from '../../api/documents.js'
 import { useCommune } from '../../commune/CommuneContext.jsx'
-import { mockStore } from '../../data/mockStore.js'
 
 export default function AdminDashboardPage() {
   const { xaId } = useCommune()
-  const docs = mockStore.documents.length
-  const drafts = mockStore.drafts.length
+  const [docs, setDocs] = useState(null)
   const [active, setActive] = useState(null)
   const [apiError, setApiError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const data = await listDocuments({})
+        if (!cancelled) setDocs(data?.count ?? 0)
+      } catch (err) {
+        if (!cancelled) setApiError(err.message || 'API tài liệu lỗi')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!xaId) return
     let cancelled = false
     ;(async () => {
       try {
-        const data = await listProcedures({ xaId })
+        const data = await listProcedures({ xaId, citizen: false })
         if (!cancelled) setActive(data?.count ?? 0)
       } catch (err) {
-        if (!cancelled) {
-          setApiError(err.message || 'API procedures lỗi')
-          setActive(mockStore.procedures.filter((p) => p.status === 'ACTIVE').length)
-        }
+        if (!cancelled) setApiError(err.message || 'API procedures lỗi')
       }
     })()
     return () => {
@@ -34,23 +45,19 @@ export default function AdminDashboardPage() {
     <div className="admin-page">
       <header className="admin-page-head">
         <h1>Tổng quan</h1>
-        <p>Pipeline tri thức: upload → extract → review → publish → citizen dùng.</p>
+        <p>Upload PDF đã có. OCR, bản nháp và RAG chưa triển khai.</p>
       </header>
 
-      {apiError ? (
-        <p className="form-error">
-          Procedures API: {apiError} (đang hiện số mock tạm)
-        </p>
-      ) : null}
+      {apiError ? <p className="form-error">{apiError}</p> : null}
 
       <div className="stat-grid">
         <div className="stat-card">
-          <span>Tài liệu (mock)</span>
-          <strong>{docs}</strong>
+          <span>Tài liệu</span>
+          <strong>{docs == null ? '…' : docs}</strong>
         </div>
         <div className="stat-card">
-          <span>Bản nháp (mock)</span>
-          <strong>{drafts}</strong>
+          <span>Bản nháp</span>
+          <strong>chưa triển khai</strong>
         </div>
         <div className="stat-card">
           <span>Thủ tục ACTIVE</span>
@@ -62,16 +69,12 @@ export default function AdminDashboardPage() {
         <h2>Luồng làm việc</h2>
         <ol className="flow-list">
           <li>
-            <Link to="/admin/documents">Upload PDF/text</Link> → lưu documents
+            <Link to="/admin/documents">Upload PDF</Link> → lưu documents
           </li>
-          <li>Extract → sinh procedure draft (AI)</li>
+          <li>OCR và extract draft chưa triển khai</li>
           <li>
-            <Link to="/admin/drafts">Review form</Link> + validate schema
+            <Link to="/admin/procedures">Thủ tục ACTIVE</Link>
           </li>
-          <li>
-            Publish version → <Link to="/admin/procedures">thủ tục ACTIVE</Link>
-          </li>
-          <li>Rollback khi cần (kèm lý do audit)</li>
         </ol>
       </section>
     </div>

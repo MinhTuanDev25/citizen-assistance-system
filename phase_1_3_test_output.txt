@@ -1,0 +1,158 @@
+=== CLEAN VERIFY START 2026-09-29T16:41:19Z ===
+
+=== GO_UNIT ===
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/cmd/api	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/cmd/bootstrap-admin	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/cmd/seed-demo	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/docs	1.565s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/auth	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/commune	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/domain	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/procedure	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/session	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/auth	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/chat	0.609s
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/config	2.008s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/db	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/decision	1.079s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/handler	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/httpserver	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/logx	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/middleware	2.957s
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/migratecred	2.415s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/repository	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/response	[no test files]
+GO_UNIT_EXIT:0
+
+=== GO_VET ===
+GO_VET_EXIT:0
+
+=== GO_BUILD ===
+GO_BUILD_EXIT:0
+
+=== MIGRATE_UP ===
+1/u init_schema (37.16975ms)
+2/u seed_master (42.387167ms)
+3/u seed_procedures (64.7065ms)
+4/u seed_auth_users (79.084542ms)
+5/u phase13_chat (107.490792ms)
+6/u idempotency_envelope (119.057791ms)
+7/u clear_demo_passwords (124.380167ms)
+MIGRATE_UP_EXIT:0
+
+=== MIGRATE_DOWN2 ===
+7/d clear_demo_passwords (5.851833ms)
+6/d idempotency_envelope (10.882042ms)
+MIGRATE_DOWN2_EXIT:0
+
+=== MIGRATE_UP_AFTER_DOWN2 ===
+6/u idempotency_envelope (7.065ms)
+7/u clear_demo_passwords (11.500458ms)
+MIGRATE_UP_AFTER_DOWN2_EXIT:0
+
+=== MIGRATE_DOWN_ALL ===
+7/d clear_demo_passwords (4.389166ms)
+6/d idempotency_envelope (9.457625ms)
+5/d phase13_chat (15.431083ms)
+4/d seed_auth_users (20.268959ms)
+3/d seed_procedures (26.779459ms)
+2/d seed_master (32.202125ms)
+1/d init_schema (45.833084ms)
+MIGRATE_DOWN_ALL_EXIT:0
+
+=== MIGRATE_FULL_UP ===
+1/u init_schema (43.840292ms)
+2/u seed_master (48.128459ms)
+3/u seed_procedures (54.933292ms)
+4/u seed_auth_users (60.499833ms)
+5/u phase13_chat (70.981ms)
+6/u idempotency_envelope (78.807167ms)
+7/u clear_demo_passwords (82.741042ms)
+MIGRATE_FULL_UP_EXIT:0
+
+=== INTEG ===
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/chat	1.132s
+INTEG_EXIT:0
+
+=== MIDDLEWARE ===
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/middleware	0.318s
+MIDDLEWARE_EXIT:0
+
+=== OPENAPI ===
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/docs	0.256s
+OPENAPI_EXIT:0
+
+=== NPM_CI ===
+npm warn Unknown env config "devdir". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+
+added 94 packages, and audited 95 packages in 1s
+
+15 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+npm warn install-scripts 2 packages have install scripts not yet covered by allowScripts:
+npm warn install-scripts   esbuild@0.25.12 (postinstall: node install.js)
+npm warn install-scripts   fsevents@2.3.3 (install: (install scripts present))
+npm warn install-scripts
+npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+NPM_CI_EXIT:0
+
+=== WEB_TESTCI ===
+npm warn Unknown env config "devdir". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+
+> citizen-assistance-web@0.1.0 test:ci
+> npx vitest run && VITE_ADMIN_INGESTION=false vite build && node scripts/check-bundle.mjs
+
+npm warn Unknown env config "devdir". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+
+ RUN  v5.0.2 /Users/minhtuan25/Desktop/MinhTuanCode/MasterAI/citizen-assistance-system/apps/web
+
+
+ Test Files  2 passed (2)
+      Tests  8 passed (8)
+   Start at  23:41:30
+   Duration  216ms (environment 80%, transform 13%, import 4%, tests 2%, worker 1%)
+
+vite v6.4.3 building for production...
+transforming...
+✓ 67 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.82 kB │ gzip:  0.47 kB
+dist/assets/index-BxTy94YL.css   17.41 kB │ gzip:  4.50 kB
+dist/assets/index-B09i3_fH.js   261.04 kB │ gzip: 82.98 kB
+✓ built in 424ms
+production bundle hygiene: PASS (3 assets)
+WEB_TESTCI_EXIT:0
+
+=== NPM_AUDIT_PROD ===
+npm warn Unknown env config "devdir". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+found 0 vulnerabilities
+NPM_AUDIT_PROD_EXIT:0
+
+=== NPM_AUDIT_ALL ===
+npm warn Unknown env config "devdir". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+found 0 vulnerabilities
+NPM_AUDIT_ALL_EXIT:0
+
+=== PYTEST ===
+...                                                                      [100%]
+3 passed in 0.22s
+PYTEST_EXIT:0
+
+=== COMPILEALL ===
+COMPILEALL_EXIT:0
+
+=== COMPOSE ===
+COMPOSE_EXIT:0
+ENV_CREATED:0
+
+=== EXIT SUMMARY ===
+CLEAN_RUN_ALL_PASS:yes
+
+=== PACK 2026-09-29T16:41:57Z ===
+ZIP=phase_1_3_final_bundle.zip
+AUDIT_INCLUDED:no
+SKIPPED:none

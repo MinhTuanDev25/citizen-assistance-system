@@ -1,0 +1,11 @@
+{
+  "version": "paddleocr-2.9.1-dbnet-crnn-cpu",
+  "files": {
+    "det/inference.pdmodel": "<sha256>",
+    "det/inference.pdiparams": "<sha256>",
+    "rec/inference.pdmodel": "<sha256>",
+    "rec/inference.pdiparams": "<sha256>",
+    "cls/inference.pdmodel": "<sha256>",
+    "cls/inference.pdiparams": "<sha256>"
+  }
+}

@@ -1,10 +1,23 @@
 import { Link, NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext.jsx'
+import { adminIngestionEnabled } from '../config/features.js'
+
+const ingestionOn = adminIngestionEnabled()
 
 const LINKS = [
-  { to: '/admin', end: true, label: 'Tổng quan' },
-  { to: '/admin/documents', label: 'Tài liệu' },
-  { to: '/admin/drafts', label: 'Bản nháp' },
+  {
+    to: '/admin',
+    end: true,
+    label: ingestionOn ? 'Tổng quan' : 'Tổng quan (chưa triển khai)',
+  },
+  {
+    to: '/admin/documents',
+    label: ingestionOn ? 'Tài liệu' : 'Tài liệu (chưa triển khai)',
+  },
+  {
+    to: '/admin/drafts',
+    label: 'Bản nháp (chưa triển khai)',
+  },
   { to: '/admin/procedures', label: 'Thủ tục' },
 ]
 

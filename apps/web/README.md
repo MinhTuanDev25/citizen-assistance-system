@@ -26,8 +26,7 @@ make web-run
 
 - Auth: `POST /auth/login`, `POST /auth/logout`, (token trong `localStorage` `cas_auth`)
 - Catalog: communes / domains / procedures
-- Chat: `POST /sessions`, `GET|POST /sessions/:id/messages` (+ `X-Guest-Token` hoặc Bearer)
-- Trả lời bot vẫn **mock local** cho đến Decision Engine
+- Chat: `POST /sessions`, `GET /sessions/:id/messages`, `POST /sessions/:id/turns` (+ `X-Guest-Token` hoặc Bearer)
 
 ## Demo accounts (API)
 

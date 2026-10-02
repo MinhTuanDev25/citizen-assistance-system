@@ -1,7 +1,25 @@
 name: citizen-assistance
 
-# Local infra. Defaults work without .env; copy .env.example → .env to override.
-# Go API reads apps/api/configs/local/config.yaml (not this file).
+# Local / demo stack. Copy deploy/.env.example → .env to override.
+# Profiles:
+#   (default)  postgres
+#   tools      migrate one-shot only
+#   app        keyword-only: migrate → api + web. Does not start ai-service.
+#   ai         optional ai-service, no host port. Use with app:
+#              AI_EXTRACT_ENABLED=true docker compose --profile app --profile ai up
+#   storage    MinIO for admin PDF intake. Both flags must be true together:
+#              ADMIN_INGESTION_ENABLED=true VITE_ADMIN_INGESTION=true \
+#                docker compose --profile app --profile storage up --build
+#   P4A (one command, mock worker, no embed/activate):
+#     ADMIN_INGESTION_ENABLED=true VITE_ADMIN_INGESTION=true \
+#     ADMIN_INDEXING_ENABLED=true VITE_ADMIN_INDEXING=true \
+#       docker compose --profile app --profile storage --profile ai up --build
+#   P4B (content pipeline + Qdrant, no retrieval and no activate):
+#     ADMIN_INGESTION_ENABLED=true VITE_ADMIN_INGESTION=true \
+#     ADMIN_INDEXING_ENABLED=true VITE_ADMIN_INDEXING=true \
+#     INDEX_MODE=pipeline EMBEDDING_PROVIDER=fake OCR_PROVIDER=fake \
+#       docker compose --profile app --profile storage --profile ai --profile qdrant up --build
+#   full       app + minio. Still keyword-only unless profile ai is added.
 
 services:
   postgres:
@@ -31,12 +49,138 @@ services:
       - migrate
       - -path=/migrations
       - -database=postgres://${POSTGRES_USER:-cas}:${POSTGRES_PASSWORD:-cas}@postgres:5432/${POSTGRES_DB:-citizen_assistance}?sslmode=disable
+      - up
+    restart: "no"
     profiles:
       - tools
+      - app
+      - full
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    environment:
+      APP_ENV: local
+      DATABASE_URL: postgres://${POSTGRES_USER:-cas}:${POSTGRES_PASSWORD:-cas}@postgres:5432/${POSTGRES_DB:-citizen_assistance}?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-change-me}
+      XA_ID: ${XA_ID:-xa_chu_se}
+      CITIZEN_DOMAIN_IDS: ${CITIZEN_DOMAIN_IDS:-ho_tich_chung_thuc}
+      API_ADDR: ":8080"
+      # P2 LLM Extract — off by default; set AI_EXTRACT_ENABLED=true to route
+      # citizen turns through ai-service (below) instead of keyword-only.
+      AI_EXTRACT_ENABLED: ${AI_EXTRACT_ENABLED:-false}
+      AI_SERVICE_URL: ${AI_SERVICE_URL:-http://ai-service:8001}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-local-dev-ai-service-token}
+      AI_EXTRACT_TIMEOUT_MS: ${AI_EXTRACT_TIMEOUT_MS:-3000}
+      AI_INTENT_SELECT_MIN: ${AI_INTENT_SELECT_MIN:-0.82}
+      AI_INTENT_CONFIRM_MIN: ${AI_INTENT_CONFIRM_MIN:-0.55}
+      AI_SLOT_CONFIDENCE_MIN: ${AI_SLOT_CONFIDENCE_MIN:-0.6}
+      ADMIN_INGESTION_ENABLED: ${ADMIN_INGESTION_ENABLED:-false}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:-minio:9000}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:-minioadmin}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:-minioadmin}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-cas-documents}
+      OBJECT_STORAGE_USE_SSL: ${OBJECT_STORAGE_USE_SSL:-false}
+      DOCUMENT_MAX_BYTES: ${DOCUMENT_MAX_BYTES:-20971520}
+      ADMIN_INDEXING_ENABLED: ${ADMIN_INDEXING_ENABLED:-false}
+      INDEX_MODE: ${INDEX_MODE:-mock}
+      INDEX_CLAIM_TTL_SECONDS: ${INDEX_CLAIM_TTL_SECONDS:-30}
+      INDEX_TIMEOUT_MS: ${INDEX_TIMEOUT_MS:-3000}
+      INDEX_PIPELINE_TIMEOUT_SECONDS: ${INDEX_PIPELINE_TIMEOUT_SECONDS:-120}
+      INDEX_PUBLISH_TIMEOUT_MS: ${INDEX_PUBLISH_TIMEOUT_MS:-10000}
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      # Required only when the ai profile is selected. Keyword-only (--profile app)
+      # does not start ai-service and does not wait for it.
+      ai-service:
+        condition: service_healthy
+        required: false
+      minio:
+        condition: service_healthy
+        required: false
+      qdrant:
+        condition: service_started
+        required: false
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    profiles:
+      - app
+      - full
+
+  ai-service:
+    build:
+      context: ..
+      dockerfile: apps/ai-service/Dockerfile
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      LLM_MODEL: ${LLM_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-local-dev-ai-service-token}
+      INDEX_MODE: ${INDEX_MODE:-mock}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-}
+      OCR_PROVIDER: ${OCR_PROVIDER:-}
+      EMBEDDING_MODEL_DIR: ${EMBEDDING_MODEL_DIR:-/models/embedding}
+      OCR_MODEL_DIR: ${OCR_MODEL_DIR:-/models/ocr}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-knowledge_chunks}
+      DATABASE_URL: postgres://${POSTGRES_USER:-cas}:${POSTGRES_PASSWORD:-cas}@postgres:5432/${POSTGRES_DB:-citizen_assistance}?sslmode=disable
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:-minio:9000}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:-minioadmin}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:-minioadmin}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-cas-documents}
+      OBJECT_STORAGE_USE_SSL: ${OBJECT_STORAGE_USE_SSL:-false}
+      EXTRACT_RATE_PER_MINUTE: ${EXTRACT_RATE_PER_MINUTE:-60}
+      EXTRACT_MAX_INFLIGHT: ${EXTRACT_MAX_INFLIGHT:-4}
+      EXTRACT_RETRY_AFTER_SECONDS: ${EXTRACT_RETRY_AFTER_SECONDS:-1}
+      INDEX_MAX_INFLIGHT: ${INDEX_MAX_INFLIGHT:-1}
+      INDEX_PIPELINE_TIMEOUT_SECONDS: ${INDEX_PIPELINE_TIMEOUT_SECONDS:-120}
+      INDEX_MAX_PDF_PAGES: ${INDEX_MAX_PDF_PAGES:-50}
+      INDEX_MAX_OCR_PAGES: ${INDEX_MAX_OCR_PAGES:-20}
+    volumes:
+      - ${EMBEDDING_MODEL_DIR_HOST:-../models/embedding}:/models/embedding:ro
+      - ${OCR_MODEL_DIR_HOST:-../models/ocr}:/models/ocr:ro
+    # No host port. Only the api service on this Compose network can reach it.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os,urllib.request; path='/ready' if os.getenv('INDEX_MODE')=='pipeline' else '/health'; urllib.request.urlopen('http://127.0.0.1:8001'+path)\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    profiles:
+      - ai
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_ADMIN_INGESTION: ${VITE_ADMIN_INGESTION:-false}
+        VITE_ADMIN_INDEXING: ${VITE_ADMIN_INDEXING:-false}
+    ports:
+      - "${WEB_PORT:-5173}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    profiles:
+      - app
+      - full
 
   minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
+    # Official Docker Hub minio/minio is not anonymously pullable. This pin is.
+    # The API creates the private bucket on startup when ingestion is enabled.
+    # Explicit 0.0.0.0 so other Compose services can reach the API port.
+    image: bitnamilegacy/minio:2024.12.18
+    entrypoint: ["/opt/bitnami/minio/bin/minio"]
+    command: ["server", "--address", "0.0.0.0:9000", "--console-address", "0.0.0.0:9001", "/bitnami/minio/data"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -44,10 +188,26 @@ services:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
-      - miniodata:/data
+      - miniodata:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     profiles:
+      - storage
       - full
+
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrantdata:/qdrant/storage
+    profiles:
+      - qdrant
 
 volumes:
   pgdata:
   miniodata:
+  qdrantdata:

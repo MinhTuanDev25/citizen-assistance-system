@@ -12,15 +12,15 @@ import (
 )
 
 type Session struct {
-	ID                        uuid.UUID  `json:"id"`
-	UserID                    *uuid.UUID `json:"user_id,omitempty"`
-	GuestToken                *string    `json:"guest_token,omitempty"`
-	XaID                      string     `json:"xa_id"`
-	ActiveProcedureID         *uuid.UUID `json:"active_procedure_id,omitempty"`
-	ActiveProcedureVersionID  *uuid.UUID `json:"active_procedure_version_id,omitempty"`
-	Status                    string     `json:"status"`
-	CreatedAt                 time.Time  `json:"created_at"`
-	UpdatedAt                 time.Time  `json:"updated_at"`
+	ID                       uuid.UUID  `json:"id"`
+	UserID                   *uuid.UUID `json:"user_id,omitempty"`
+	GuestToken               *string    `json:"guest_token,omitempty"`
+	XaID                     string     `json:"xa_id"`
+	ActiveProcedureID        *uuid.UUID `json:"active_procedure_id,omitempty"`
+	ActiveProcedureVersionID *uuid.UUID `json:"active_procedure_version_id,omitempty"`
+	Status                   string     `json:"status"`
+	CreatedAt                time.Time  `json:"created_at"`
+	UpdatedAt                time.Time  `json:"updated_at"`
 }
 
 type Message struct {
@@ -230,7 +230,7 @@ func (r *SessionRepo) InsertUserMessage(ctx context.Context, sessionID, requestI
 	return &m, nil
 }
 
-// ListMessages returns messages oldest→newest for chat UI replay.
+// ListMessages returns the latest `limit` messages, ordered oldest→newest for UI replay.
 func (r *SessionRepo) ListMessages(ctx context.Context, sessionID uuid.UUID, limit int) ([]Message, error) {
 	if limit <= 0 {
 		limit = 100
@@ -240,10 +240,16 @@ func (r *SessionRepo) ListMessages(ctx context.Context, sessionID uuid.UUID, lim
 	}
 	rows, err := r.Pool.Query(ctx, `
 		SELECT id, session_id, request_id, role, content, action, message_metadata, created_at
-		FROM conversation_messages
-		WHERE session_id = $1
-		ORDER BY created_at ASC, id ASC
-		LIMIT $2`, sessionID, limit)
+		FROM (
+			SELECT id, session_id, request_id, role, content, action, message_metadata, created_at
+			FROM conversation_messages
+			WHERE session_id = $1
+			ORDER BY created_at DESC, id DESC
+			LIMIT $2
+		) recent
+		ORDER BY created_at ASC,
+		         CASE role WHEN 'USER' THEN 0 WHEN 'SYSTEM' THEN 1 ELSE 2 END,
+		         id ASC`, sessionID, limit)
 	if err != nil {
 		return nil, err
 	}

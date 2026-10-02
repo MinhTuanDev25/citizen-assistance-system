@@ -1,0 +1,58 @@
+# P4B bundle (5) test output
+# Recorded 2026-10-02. Commands below were executed in this session.
+
+cd apps/api
+gofmt -w internal/index/migration_repair_test.go internal/index/pipeline_integration_test.go
+gofmt -l .
+# exit 0, no files listed
+
+go test ./...
+# exit 0
+
+go vet ./...
+# exit 0
+
+go test -race ./...
+# exit 0
+
+CAS_INTEGRATION=1 DATABASE_URL=postgres://cas:cas@127.0.0.1:5432/citizen_assistance?sslmode=disable \
+  go test -tags integration -count=1 ./internal/index/
+# exit 0, 8.767s
+# includes TestMigration16RoundTripKeepsGenerationRows and TestTwoReapersClaimOneGeneration
+# database was not migrated down
+
+cd apps/ai-service
+.venv/bin/python -m pytest
+# exit 0
+# 121 passed, 2 skipped, 2 warnings
+# SKIPPED tests/test_p4b_services.py:21: set CAS_P4B_INTEGRATION=1
+# SKIPPED tests/test_p4b_services.py:157: set CAS_P4B_INTEGRATION=1
+
+PYTHONPYCACHEPREFIX=/tmp/cas-pyc .venv/bin/python -m compileall -q app tests
+# exit 0
+
+cd apps/web
+npm ci
+npm run test:ci
+# exit 0
+# Test Files 4 passed, Tests 18 passed
+# production bundle hygiene: PASS (3 assets, indexing off)
+# production bundle hygiene: PASS (6 assets, indexing on)
+
+cd <repo>
+docker compose -f deploy/docker-compose.yml config
+# exit 0
+
+docker build -t cas-ai:p4b-review5 -f apps/ai-service/Dockerfile .
+# exit 0
+
+python3 scripts/p4b-model-smoke.py
+# exit 2
+manifest_verification=pending
+runtime_compatibility=pending
+forward_pass=pending
+P4B_MODEL_SMOKE_PENDING
+
+GitHub Actions: WORKFLOW_NOT_RUN
+
+ZIP hygiene: PASS (phase_p4b_document_content_bundle(5).zip)

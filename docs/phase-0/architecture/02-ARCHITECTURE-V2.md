@@ -1,69 +1,82 @@
-# Architecture V2 — Summary
+# Architecture — Citizen assistance artifact
 
-## 1. Hai pipeline tách biệt
+Khớp proposal §4.3–4.5. Sơ đồ cũ “Review Workspace / PDF→draft / approve nhiều bước” **không** còn là V1.
+
+## 1. Hai pipeline
 
 ```text
-Admin Pipeline                          Citizen Runtime
--------------                           ---------------
-Upload PDF/text                         Chat message
-   ↓                                       ↓
-Extract draft JSON                      Auth + Conversation Manager
-   ↓                                       ↓
-Human Review Workspace                  Decision Policy Engine
-   ↓                                       ↓
-Publish + Version + Embeddings          Procedure Orchestrator
-   ↓                                    (load JSON, missing slots)
-PostgreSQL + Vector DB                     ↓
-                                        Knowledge Service + Citation
-                                           ↓
-                                        Response to citizen
+Admin (simplified)                         Citizen runtime
+------------------                         ---------------
+Mở procedure version                       Text hoặc giọng Bahnar
+   ↓                                          ↓
+Upload PDF + metadata                      (nếu giọng) Python S2TT / Cascaded
+   ↓                                          ↓
+MinIO + documents                          chữ Việt → Go
+   ↓                                          ↓
+Tự tạo procedure_version_documents         Auth + session + pin version
+   ↓                                          ↓
+Job: extract text → chunk → embed          Decision Engine (Go, JSON)
+   ↓                                          ↓
+processing_status: uploaded→processing     thiếu slot → hỏi full missing
+                 → ready | failed             ↓
+   ↓                                       đủ slot → RAG scoped + citation
+Admin xem index, kích hoạt version         conversation_messages + audit
 ```
 
-## 2. Core principle
+Không có màn “gắn nguồn thủ công”, không có workspace nháp LLM, không có chuỗi duyệt nhiều bước.
 
-Logic nghiệp vụ **không hardcode trong code**.  
-Mỗi thủ tục = 1 `procedure_definition` JSON (slots, questions, guidance, citations).  
-Runtime chỉ:
+## 2. Nguyên tắc
 
-1. Detect procedure
-2. So slot
-3. Quyết định action
-4. Hỏi thêm hoặc trả guidance + nguồn
+- Não nghiệp vụ = `procedure_versions.definition` (JSON). Go quyết định hỏi / trả, không hardcode từng thủ tục.
+- Python: dịch giọng (ASR, MT, Direct S2TT đã chọn), embedding, retrieval. Không quyết định action.
+- RAG chỉ lấy chunk gắn version **ACTIVE** (session pin version đó). Citation bắt buộc document + page range khi có.
+- pgvector lưu embedding; Postgres lưu metadata giao dịch / version.
 
 ## 3. Layers (Citizen)
 
 | Layer | Responsibility |
 |-------|----------------|
-| Citizen Portal | Chat UI, history |
-| Auth | JWT, user profile |
-| Conversation Manager | Intent/domain, extract slots, session context |
-| **Decision Policy Engine** | `ASK_MISSING_SLOTS` / `DIRECT_ANSWER` / `PROVIDE_FINAL_GUIDANCE` |
-| Procedure Orchestrator | Load active JSON, validate slots, update slot_state |
-| Knowledge Service | RAG + natural response + citation |
-| Stores | PostgreSQL (session, JSON, versions) + Vector DB |
+| Citizen Portal | Chat, lịch sử, mic Bahnar (sau khi có model) |
+| Auth | JWT admin bắt buộc; công dân guest hoặc login theo policy |
+| Conversation | Session, pin procedure/version, gọi extract |
+| **Decision Policy Engine** | `ASK_MISSING_SLOTS` / `DIRECT_ANSWER` / `PROVIDE_FINAL_GUIDANCE` / `OUT_OF_SCOPE` |
+| Procedure Orchestrator | Load definition đã pin, merge slot, persist |
+| Knowledge | Retrieve pgvector **theo version đã pin** + citation |
+| Speech (Python) | Bahnar audio → Vietnamese text |
 
 ## 4. Layers (Admin)
 
 | Layer | Responsibility |
 |-------|----------------|
-| Admin Portal | Upload, review, publish |
-| Auth | Admin role |
-| Knowledge Processing | PDF → draft JSON (LLM assist) |
-| Review Workspace | Validate schema, edit, approve |
-| Knowledge Publisher | Versioning, embeddings, activate, rollback |
+| Admin Portal | Tạo/mở version, upload PDF, metadata, xem index, activate |
+| Auth | Role `ADMIN` |
+| Knowledge Publisher | `procedure_version` ↔ `documents`, `knowledge_chunks`, `processing_status`, biên activate |
+| Object storage | PDF gốc (và audio nghiên cứu nếu được phép) trên S3/MinIO |
 
-## 5. Cross-cutting (bắt buộc V1 tối thiểu)
+## 5. Runtime topology (proposal §4.3)
 
-- `xa_id` filter (single xã)
-- Citation + audit (procedure_version used)
-- Schema validation trước publish
-- Timeout/retry LLM (basic)
-- Observability: route decision, slot completion
+```text
+Citizen / Admin (React)
+        │ HTTPS
+        ▼
+     Go backend     auth, session, workflow, procedure rules, audit
+        │
+        ├── PostgreSQL (metadata, sessions, definitions)
+        ├── pgvector (`knowledge_chunks.embedding`)
+        ├── S3/MinIO (PDF, audio)
+        └── Python AI service
+              ASR / MT / Direct S2TT (checkpoint đã chọn)
+              embed + retrieve
+```
 
-## 6. What is intentionally deferred
+CI/CD tối thiểu: build, test, image, deploy, health check, domain, HTTPS. Không HA enterprise.
 
-- Multi-xã / multi-tenant
-- Voice UI
-- Online submission / payment
-- Full eval harness tự động (Phase 5+)
-- 2-step approval phức tạp (V1: 1 admin approve đủ)
+## 6. Cố ý không làm V1
+
+- Multi-xã
+- TTS Bahnar / dịch Việt → Bahnar
+- Nộp hồ sơ / thanh toán / chữ ký số
+- AI draft workspace và approve nhiều bước
+- OCR PDF scan
+- Rollback version (optional nếu còn lịch)
+- Mở domain đất đai / bảo hiểm cho công dân

@@ -31,11 +31,15 @@ build/
 deploy/.env
 *.pem
 
-# Data / local runtime
-data/
+# Data / local runtime (repo-root only — do not ignore apps/web/src/data)
+/data/
 *.db
 coverage/
 .coverage
+.pytest_cache/
+apps/web/dist/
+apps/api/bin/
 
 # Docker volumes
 deploy/volumes/
+.tools/

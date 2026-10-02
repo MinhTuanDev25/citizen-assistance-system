@@ -1,22 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
-import { sendTurn, WELCOME } from '../api/chat.js'
+import { WELCOME } from '../api/chat.js'
 import { listProcedures } from '../api/catalog.js'
 import {
   ensureSession,
+  executeChatTurn,
   listSessionMessages,
-  mapApiMessage,
-  postUserMessage,
+  orderedMessages,
+  startFreshSession,
 } from '../api/session.js'
 import { CitizenShell } from '../components/CitizenShell.jsx'
 import { CommuneScene } from '../components/CommuneScene.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { useCommune } from '../commune/CommuneContext.jsx'
-
-const FALLBACK_SUGGESTIONS = [
-  'Đăng ký khai sinh cần gì?',
-  'Chứng thực giấy tờ như thế nào?',
-  'Giờ làm việc bộ phận một cửa?',
-]
 
 function Typing() {
   return (
@@ -25,6 +20,41 @@ function Typing() {
       <i />
       <i />
     </span>
+  )
+}
+
+function ConfirmActions({ candidates, onPick, disabled }) {
+  if (!candidates?.length) return null
+  return (
+    <div className="confirm-actions" role="group" aria-label="Xác nhận thủ tục">
+      <button
+        type="button"
+        className="hint"
+        disabled={disabled}
+        onClick={() => onPick('Có')}
+      >
+        Có · {candidates[0].name || candidates[0].procedure_code}
+      </button>
+      <button
+        type="button"
+        className="hint"
+        disabled={disabled}
+        onClick={() => onPick('Không')}
+      >
+        Không
+      </button>
+      {candidates.slice(1).map((c) => (
+        <button
+          key={c.procedure_code}
+          type="button"
+          className="hint"
+          disabled={disabled}
+          onClick={() => onPick(c.name)}
+        >
+          {c.name}
+        </button>
+      ))}
+    </div>
   )
 }
 
@@ -39,22 +69,30 @@ export default function CitizenChatPage() {
   const [chatSession, setChatSession] = useState(null)
   const [catalog, setCatalog] = useState([])
   const [catalogError, setCatalogError] = useState('')
+  const [pendingConfirm, setPendingConfirm] = useState(null)
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
   const messagesRef = useRef(null)
+  const composingRef = useRef(false)
+  const sentEchoRef = useRef({ text: '', at: 0 })
 
   useEffect(() => {
     const el = messagesRef.current
     if (!el) return
     el.scrollTop = el.scrollHeight
-  }, [messages, busy])
+  }, [messages, busy, pendingConfirm])
+
+  useEffect(() => {
+    if (!sessionReady || busy) return
+    inputRef.current?.focus()
+  }, [sessionReady, busy])
 
   useEffect(() => {
     if (!xaId) return
     let cancelled = false
     ;(async () => {
       try {
-        const data = await listProcedures({ xaId })
+        const data = await listProcedures({ xaId, citizen: true })
         if (cancelled) return
         setCatalog(data?.domains || [])
         setCatalogError('')
@@ -83,11 +121,15 @@ export default function CitizenChatPage() {
 
         const data = await listSessionMessages(sess.sessionId, sess.guestToken)
         if (cancelled) return
-        const items = (data?.items || []).map(mapApiMessage)
+        const items = orderedMessages(data?.items)
         setMessages(
           items.length
             ? items
             : [{ id: 'welcome', role: 'assistant', text: WELCOME }],
+        )
+        const last = [...items].reverse().find((m) => m.role === 'assistant')
+        setPendingConfirm(
+          last?.action === 'CONFIRM_INTENT' ? last.candidates : null,
         )
         setSessionReady(true)
       } catch (err) {
@@ -95,6 +137,7 @@ export default function CitizenChatPage() {
           setSessionError(err.message || 'Không tạo được phiên chat')
           setChatSession(null)
           setMessages([{ id: 'welcome', role: 'assistant', text: WELCOME }])
+          setPendingConfirm(null)
           setSessionReady(false)
         }
       }
@@ -104,6 +147,25 @@ export default function CitizenChatPage() {
     }
   }, [xaId, user?.id])
 
+  async function startNewChat() {
+    if (!xaId || busy) return
+    setBusy(true)
+    setSessionError('')
+    try {
+      const sess = await startFreshSession(xaId)
+      setChatSession(sess)
+      setDraft('')
+      setMessages([{ id: 'welcome', role: 'assistant', text: WELCOME }])
+      setPendingConfirm(null)
+      setSessionReady(true)
+      inputRef.current?.focus()
+    } catch (err) {
+      setSessionError(err.message || 'Không tạo được hội thoại mới')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function submit(text) {
     const content = text.trim()
     if (!content || busy) return
@@ -112,8 +174,10 @@ export default function CitizenChatPage() {
       ...prev,
       { id: `u-local-${Date.now()}`, role: 'user', text: content },
     ])
+    sentEchoRef.current = { text: content, at: Date.now() }
     setDraft('')
     setBusy(true)
+    setPendingConfirm(null)
 
     try {
       let sess = chatSession
@@ -124,25 +188,31 @@ export default function CitizenChatPage() {
         setSessionError('')
       }
 
-      await postUserMessage(sess.sessionId, content, sess.guestToken)
-
-      const history = await listSessionMessages(sess.sessionId, sess.guestToken)
-      const fromApi = (history?.items || []).map(mapApiMessage)
-
-      // Decision Engine chưa nối — trả lời tạm bằng mock sau khi đã persist USER
-      const reply = await sendTurn({
+      const result = await executeChatTurn({
+        sessionId: sess.sessionId,
         message: content,
-        historyLength: fromApi.length + 1,
+        guestToken: sess.guestToken,
       })
-
-      setMessages([
-        ...fromApi,
-        {
-          id: `a-local-${Date.now()}`,
-          role: 'assistant',
-          text: reply.text,
-        },
-      ])
+      if (!result.ok) {
+        throw result.error || new Error('Không gửi được tin nhắn')
+      }
+      if (result.historyFailed) {
+        setSessionError(
+          result.error?.message ||
+            'Đã gửi tin nhưng không tải lại lịch sử. Thử làm mới trang.',
+        )
+      } else {
+        const fromApi = orderedMessages(result.history?.items)
+        setMessages(
+          fromApi.length
+            ? fromApi
+            : [{ id: 'welcome', role: 'assistant', text: WELCOME }],
+        )
+        const last = [...fromApi].reverse().find((m) => m.role === 'assistant')
+        setPendingConfirm(
+          last?.action === 'CONFIRM_INTENT' ? last.candidates : null,
+        )
+      }
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -164,20 +234,36 @@ export default function CitizenChatPage() {
     submit(`Tôi muốn hỏi về thủ tục ${proc.name}`)
   }
 
+  function onDraftChange(e) {
+    const next = e.target.value
+    const sent = sentEchoRef.current
+    if (
+      sent.text &&
+      Date.now() - sent.at < 400 &&
+      next &&
+      (next === sent.text || sent.text.endsWith(next))
+    ) {
+      sentEchoRef.current = { text: '', at: 0 }
+      return
+    }
+    if (!next) sentEchoRef.current = { text: '', at: 0 }
+    setDraft(next)
+  }
+
   function onKeyDown(e) {
+    if (composingRef.current || e.nativeEvent.isComposing || e.keyCode === 229) {
+      return
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       submit(draft)
     }
   }
 
-  const suggestions =
-    catalog.length > 0
-      ? catalog
-          .flatMap((g) => g.procedures || [])
-          .slice(0, 4)
-          .map((p) => p.name)
-      : FALLBACK_SUGGESTIONS
+  const suggestions = catalog
+    .flatMap((g) => g.procedures || [])
+    .slice(0, 4)
+    .map((p) => p.name)
 
   return (
     <CitizenShell>
@@ -261,7 +347,17 @@ export default function CitizenChatPage() {
                 {sessionReady ? ' · đã nối API' : ''}
               </p>
             </div>
-            <div className="status-dot" title="Sẵn sàng" />
+            <div className="chat-header-actions">
+              <button
+                type="button"
+                className="new-chat"
+                onClick={startNewChat}
+                disabled={busy || !sessionReady}
+              >
+                Hội thoại mới
+              </button>
+              <div className="status-dot" title="Sẵn sàng" />
+            </div>
           </div>
 
           {sessionError ? (
@@ -284,6 +380,13 @@ export default function CitizenChatPage() {
                 {m.text}
               </div>
             ))}
+            {pendingConfirm ? (
+              <ConfirmActions
+                candidates={pendingConfirm}
+                disabled={busy || !sessionReady}
+                onPick={submit}
+              />
+            ) : null}
             {busy && (
               <div className="msg bot">
                 <Typing />
@@ -302,7 +405,13 @@ export default function CitizenChatPage() {
             <textarea
               ref={inputRef}
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={onDraftChange}
+              onCompositionStart={() => {
+                composingRef.current = true
+              }}
+              onCompositionEnd={() => {
+                composingRef.current = false
+              }}
               onKeyDown={onKeyDown}
               placeholder={
                 sessionReady
@@ -310,12 +419,13 @@ export default function CitizenChatPage() {
                   : 'Đang mở phiên chat…'
               }
               rows={2}
-              disabled={busy || !sessionReady}
+              disabled={!sessionReady}
               spellCheck={false}
               aria-label="Nội dung câu hỏi"
             />
             <button
               type="submit"
+              onMouseDown={(e) => e.preventDefault()}
               disabled={busy || !sessionReady || !draft.trim()}
             >
               Gửi

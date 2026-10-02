@@ -12,6 +12,8 @@ database:
 app:
   xa_id: xa_chu_se
   log_level: debug
+  citizen_domain_ids:
+    - ho_tich_chung_thuc
 
 auth:
   # Local only — override with JWT_SECRET in prod.

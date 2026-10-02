@@ -1,0 +1,207 @@
+P3.1 blocker-fix verification Wed Sep 30 12:06:49 +07 2026
+
+===== Go =====
+=== gofmt Wed Sep 30 12:02:04 +07 2026 ===
+gofmt clean
+=== go build Wed Sep 30 12:02:04 +07 2026 ===
+build_exit=0
+=== go vet Wed Sep 30 12:02:05 +07 2026 ===
+vet_exit=0
+=== go test unit Wed Sep 30 12:02:06 +07 2026 ===
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/cmd/api	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/cmd/bootstrap-admin	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/cmd/seed-demo	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/docs	0.597s
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/aiextract	1.119s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/auth	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/commune	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/document	1.991s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/domain	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/procedure	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/session	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/auth	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/chat	1.739s
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/config	1.922s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/db	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/decision	2.362s
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/document	2.586s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/handler	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/httpserver	3.533s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/logx	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/middleware	3.735s
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/migratecred	2.892s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/repository	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/response	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/storage	[no test files]
+unit_exit=0
+=== go test race Wed Sep 30 12:02:10 +07 2026 ===
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/cmd/api	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/cmd/bootstrap-admin	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/cmd/seed-demo	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/docs	1.508s
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/aiextract	2.536s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/auth	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/commune	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/document	5.880s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/domain	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/procedure	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/session	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/auth	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/chat	3.168s
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/config	3.605s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/db	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/decision	4.532s
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/document	4.093s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/handler	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/httpserver	5.362s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/logx	[no test files]
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/middleware	6.260s
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/migratecred	4.689s
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/repository	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/response	[no test files]
+?   	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/storage	[no test files]
+race_exit=0
+=== go test integration Wed Sep 30 12:02:18 +07 2026 ===
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/chat	2.375s
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/document	0.720s
+integration_exit=0
+=== go test integration race Wed Sep 30 12:02:22 +07 2026 ===
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/chat	5.879s
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/document	2.319s
+integration_race_exit=0
+GO_SUITE_OK
+EXIT:0
+
+===== Migration scratch cas_p31_fix (citizen_assistance not downed) =====
+=== scratch db Wed Sep 30 12:02:07 +07 2026 ===
+NOTICE:  database "cas_p31_fix" does not exist, skipping
+DROP DATABASE
+CREATE DATABASE
+=== up ===
+1/u init_schema (52.8925ms)
+2/u seed_master (58.778875ms)
+3/u seed_procedures (70.973667ms)
+4/u seed_auth_users (76.890709ms)
+5/u phase13_chat (90.225ms)
+6/u idempotency_envelope (99.123083ms)
+7/u clear_demo_passwords (106.75325ms)
+8/u extract_claim (114.240792ms)
+9/u document_intake (120.529459ms)
+up_exit=0
+=== down 9 ===
+9/d document_intake (10.392625ms)
+8/d extract_claim (21.47375ms)
+7/d clear_demo_passwords (29.468333ms)
+6/d idempotency_envelope (38.085083ms)
+5/d phase13_chat (47.666459ms)
+4/d seed_auth_users (56.677708ms)
+3/d seed_procedures (68.327167ms)
+2/d seed_master (78.389792ms)
+1/d init_schema (97.594125ms)
+down_exit=0
+=== up again ===
+1/u init_schema (81.187875ms)
+2/u seed_master (91.605708ms)
+3/u seed_procedures (106.493042ms)
+4/u seed_auth_users (113.998667ms)
+5/u phase13_chat (129.124666ms)
+6/u idempotency_envelope (145.140083ms)
+7/u clear_demo_passwords (152.0195ms)
+8/u extract_claim (157.734375ms)
+9/u document_intake (164.6285ms)
+up2_exit=0
+9
+DROP DATABASE
+MIGRATE_OK
+EXIT:0
+
+===== Python / compose =====
+=== pytest Wed Sep 30 12:01:11 +07 2026 ===
+.......................................................                  [100%]
+55 passed in 0.27s
+pytest_exit=0
+=== compileall Wed Sep 30 12:01:12 +07 2026 ===
+compileall_exit=0
+=== compose config Wed Sep 30 12:01:13 +07 2026 ===
+compose_app_exit=0
+compose_ai_exit=0
+compose_storage_exit=0
+92:      - /bitnami/minio/data
+122:        target: /bitnami/minio/data
+DONE
+
+===== Web =====
+=== vitest Wed Sep 30 12:01:09 +07 2026 ===
+npm warn Unknown env config "devdir". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+
+> citizen-assistance-web@0.1.0 test
+> npx vitest run
+
+npm warn Unknown env config "devdir". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+
+ RUN  v5.0.2 /Users/minhtuan25/Desktop/MinhTuanCode/MasterAI/citizen-assistance-system/apps/web
+
+
+ Test Files  3 passed (3)
+      Tests  13 passed (13)
+   Start at  12:01:10
+   Duration  358ms (environment 76%, transform 13%, import 5%, tests 4%, worker 1%)
+
+vitest_exit=0
+=== build ingestion false Wed Sep 30 12:01:10 +07 2026 ===
+npm warn Unknown env config "devdir". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+vite v6.4.3 building for production...
+transforming...
+✓ 65 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.82 kB │ gzip:  0.47 kB
+dist/assets/index-BxTy94YL.css   17.41 kB │ gzip:  4.50 kB
+dist/assets/index-_pSB-9Qv.js   260.97 kB │ gzip: 82.92 kB
+✓ built in 412ms
+build_false_exit=0
+production bundle hygiene: PASS (3 assets)
+bundle_false_exit=0
+=== build ingestion true Wed Sep 30 12:01:11 +07 2026 ===
+npm warn Unknown env config "devdir". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+vite v6.4.3 building for production...
+
+(!) outDir /tmp/cas-web-ingestion is not inside project root and will not be emptied.
+Use --emptyOutDir to override.
+
+transforming...
+✓ 65 modules transformed.
+rendering chunks...
+computing gzip size...
+../../../../../../../../tmp/cas-web-ingestion/index.html                               0.82 kB │ gzip:  0.47 kB
+../../../../../../../../tmp/cas-web-ingestion/assets/index-BxTy94YL.css               17.41 kB │ gzip:  4.50 kB
+../../../../../../../../tmp/cas-web-ingestion/assets/AdminDashboardPage-Xg47HjUP.js    1.74 kB │ gzip:  0.72 kB
+../../../../../../../../tmp/cas-web-ingestion/assets/documents-BrO888dj.js             2.06 kB │ gzip:  1.12 kB
+../../../../../../../../tmp/cas-web-ingestion/assets/DocumentsPage-BO-D_n1-.js         4.47 kB │ gzip:  1.67 kB
+../../../../../../../../tmp/cas-web-ingestion/assets/index-BqizSvpE.js               262.81 kB │ gzip: 83.64 kB
+✓ built in 446ms
+build_true_exit=0
+=== bundle strings ===
+upload_ui=present
+mockStore=absent
+extract_xong=absent
+=== npm audit Wed Sep 30 12:01:12 +07 2026 ===
+npm warn Unknown env config "devdir". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+found 0 vulnerabilities
+audit_exit=0
+DONE
+
+===== MinIO recreate persistence =====
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/storage	4.450s
+
+===== Bundle string check =====
+false File PDF count: 0 (counted in apps/web/dist before that directory was removed)
+true File PDF count: 1
+true saved-pdf count: 1
+Browser http://127.0.0.1:5174/admin/documents with VITE_ADMIN_INGESTION=true showed File PDF, title, domain, Upload. /admin/drafts showed chưa triển khai.
+No deploy. No live LLM. No OCR/RAG.
+
+===== ZIP =====
+ZIP hygiene: PASS (/Users/minhtuan25/Desktop/MinhTuanCode/MasterAI/citizen-assistance-system/phase_p3_1_document_intake_bundle.zip)

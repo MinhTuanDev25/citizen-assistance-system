@@ -3,38 +3,37 @@ import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { CitizenShell } from '../components/CitizenShell.jsx'
 
-const PRESETS = {
-  citizen: {
-    email: 'citizen@example.com',
-    password: 'citizen123',
-    title: 'Đăng nhập công dân',
-    blurb:
-      'Đăng nhập để lưu phiên hỏi thủ tục. Bạn vẫn có thể hỏi như khách nếu chưa có tài khoản.',
-  },
-  admin: {
-    email: 'admin@chuse.vn',
-    password: 'admin123',
-    title: 'Đăng nhập cán bộ',
-    blurb:
-      'Tài khoản Admin dùng để upload tài liệu, duyệt bản nháp và publish thủ tục.',
-  },
-}
+// Compile-time flag: production builds leave VITE_DEMO_LOGIN unset → dead branch tree-shaken.
+const DEMO_ON =
+  import.meta.env.VITE_DEMO_LOGIN === 'true' ||
+  import.meta.env.VITE_DEMO_LOGIN === '1'
+
+const DEMO_PRESETS = DEMO_ON
+  ? {
+      citizen: { email: 'citizen@example.com', password: 'citizen123' },
+      admin: { email: 'admin@chuse.vn', password: 'admin123' },
+    }
+  : null
 
 export default function LoginPage() {
   const { login, user } = useAuth()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const mode = searchParams.get('as') === 'admin' ? 'admin' : 'citizen'
-  const preset = PRESETS[mode]
 
-  const [email, setEmail] = useState(PRESETS.citizen.email)
-  const [password, setPassword] = useState(PRESETS.citizen.password)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    setEmail(PRESETS[mode].email)
-    setPassword(PRESETS[mode].password)
+    if (DEMO_PRESETS) {
+      setEmail(DEMO_PRESETS[mode].email)
+      setPassword(DEMO_PRESETS[mode].password)
+    } else {
+      setEmail('')
+      setPassword('')
+    }
     setError('')
   }, [mode])
 
@@ -63,6 +62,13 @@ export default function LoginPage() {
     }
   }
 
+  const title =
+    mode === 'admin' ? 'Đăng nhập cán bộ' : 'Đăng nhập công dân'
+  const blurb =
+    mode === 'admin'
+      ? 'Tài khoản Admin dùng để quản lý thủ tục. Không có mật khẩu mặc định trên production.'
+      : 'Đăng nhập để lưu phiên hỏi thủ tục. Bạn vẫn có thể hỏi như khách nếu chưa có tài khoản.'
+
   return (
     <CitizenShell>
       <main className="login-wrap">
@@ -88,8 +94,8 @@ export default function LoginPage() {
             </button>
           </div>
 
-          <h1>{preset.title}</h1>
-          <p className="muted">{preset.blurb}</p>
+          <h1>{title}</h1>
+          <p className="muted">{blurb}</p>
 
           <label>
             Email
@@ -119,15 +125,12 @@ export default function LoginPage() {
           </button>
 
           <div className="login-hint">
-            {mode === 'citizen' ? (
-              <p>
-                <strong>Demo API:</strong> citizen@example.com / citizen123
+            {DEMO_ON ? (
+              <p className="cell-muted">
+                Dev demo login enabled (VITE_DEMO_LOGIN). Not present in
+                production builds.
               </p>
-            ) : (
-              <p>
-                <strong>Demo API:</strong> admin@chuse.vn / admin123
-              </p>
-            )}
+            ) : null}
             <Link to="/">Tiếp tục hỏi thủ tục (khách)</Link>
           </div>
         </form>

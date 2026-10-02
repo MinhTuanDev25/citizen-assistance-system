@@ -1,0 +1,11 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+httpx==0.28.1
+pydantic==2.10.3
+# Only needed on Python < 3.10 so PEP 604 `X | Y` annotations still work at
+# runtime with Pydantic v2's type-hint evaluation. Harmless no-op on 3.10+.
+eval_type_backport==0.4.0
+pytest==8.3.4
+pypdf==5.1.0
+psycopg[binary]==3.2.9
+minio==7.2.15

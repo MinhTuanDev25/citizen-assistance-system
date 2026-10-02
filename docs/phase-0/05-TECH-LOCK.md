@@ -1,31 +1,32 @@
-# Phase 0.5 — Tech Lock (trước khi code)
+# Tech lock (khớp proposal)
 
-## Đã chốt (Owner)
+Chi tiết: [`adr/ADR-005-technology-stack.md`](adr/ADR-005-technology-stack.md)  
+Data model: [`db/data-model.md`](db/data-model.md)  
+Scope: [`01-SCOPE-AND-CATALOG.md`](01-SCOPE-AND-CATALOG.md)
+
+## Đã chốt theo proposal
 
 | Hạng mục | Quyết định |
 |----------|------------|
 | FE | React.js + JavaScript |
-| BE | Go (Gin) |
-| AI | Python FastAPI |
+| BE | Go (Gin) — session, decision, audit |
+| AI | Python FastAPI — speech (ASR/MT/S2TT), embed, retrieve |
 | DB | PostgreSQL |
-| Vector | pgvector |
-| LLM | Abstraction → OpenAI GPT và/hoặc Gemini |
-| Voice | V1 text; V1.1 voice→STT→text |
-| Deploy | Containers tách service + Reverse proxy + CI/CD |
-| Embedding (pgvector) | **OpenAI `text-embedding-3-small` / dim 1536** (frozen với data-model) |
+| Vector | **pgvector** trên `knowledge_chunks` (RAG, không chọn thủ tục) |
+| LLM chat/extract | Abstraction OpenAI và/hoặc Gemini; structured extract |
+| Voice | Artifact: Bahnar speech → chữ Việt. Không TTS / Việt→Bahnar |
+| Storage | S3/MinIO (PDF; audio nghiên cứu nếu được phép) |
+| Deploy | Docker Compose + reverse proxy + CI/CD (build/test/image/deploy/health/HTTPS) |
+| Domain công dân | Một nhóm hộ tịch & chứng thực |
+| Admin | Upload + metadata + index + activate. Không draft workspace, không duyệt nhiều bước |
+| OCR | Ngoài V1 |
+| Rollback version | Optional |
 
-Chi tiết + phân tích auth/storage/OCR/cache/logging:  
-[`adr/ADR-005-technology-stack.md`](adr/ADR-005-technology-stack.md)
+Embedding schema V1: **`vector(1536)`** — hiện lock `text-embedding-3-small` để cột pgvector ổn định (chi tiết kỹ thuật, proposal chỉ yêu cầu embed vào pgvector).
 
-Data model: [`db/data-model.md`](db/data-model.md)
+## Còn mở (không chặn kiến trúc)
 
-## Còn mở (chặn nhẹ)
-
-- [ ] Primary LLM (chat): OpenAI hay Gemini? *(embedding đã chốt riêng)*
-- [ ] Object storage: MinIO hay S3/GCS?
-- [ ] Citizen bắt buộc login V1?
-- [ ] CI: GitHub Actions / GitLab?
-
-## Done tech lock khi
-
-4 ô trên được trả lời → ký ADR-005 → mới code Phase 1.
+- [ ] Primary LLM extract: OpenAI hay Gemini?
+- [ ] Object storage prod: MinIO hay S3?
+- [ ] Công dân V1 bắt buộc login?
+- [ ] CI host: GitHub Actions hay GitLab?

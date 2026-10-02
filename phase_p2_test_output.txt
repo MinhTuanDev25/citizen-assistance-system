@@ -1,0 +1,88 @@
+P2 LLM EXTRACT — remaining blocker fixes
+Generated: 2026-09-30
+
+No OpenAI or Gemini calls. Python provider tests use httpx.MockTransport.
+Go uses httptest. No deploy, commit, or push.
+
+### [1] gofmt -l (files changed in this fix) ###
+(empty)
+gofmt -w was applied to:
+  internal/aiextract/client.go
+  internal/aiextract/client_test.go
+  internal/chat/ai_plan.go
+  internal/chat/ai_http_integration_test.go
+  internal/config/config.go
+  internal/config/config_test.go
+
+### [2] go build ./... ###
+OK (exit 0)
+
+### [3] go vet ./... and go vet -tags=integration ./... ###
+OK (exit 0)
+OK (exit 0)
+
+### [4] go test ./... (unit, no integration tag) ###
+ok  docs, internal/aiextract, internal/chat, internal/config,
+    internal/decision, internal/middleware, internal/migratecred
+TEST_EXIT:0
+
+### [5] CAS_INTEGRATION=1 go test -tags=integration -count=1 ./... ###
+ok  docs                         0.607s
+ok  internal/aiextract           1.130s
+ok  internal/chat                3.041s
+ok  internal/config              1.325s
+ok  internal/decision            2.416s
+ok  internal/middleware          3.368s
+ok  internal/migratecred         2.840s
+TEST_TAG_EXIT:0
+
+### [6] CAS_INTEGRATION=1 go test -race -tags=integration -count=1 ./... ###
+ok  docs                         1.506s
+ok  internal/aiextract           2.045s
+ok  internal/chat                6.316s
+ok  internal/config              3.524s
+ok  internal/decision            3.089s
+ok  internal/middleware          4.422s
+ok  internal/migratecred         2.625s
+RACE_TAG_EXIT:0
+
+### [7] migrate scratch DB cas_p2_migrate: up → down 8 → up ###
+1/u … 8/u extract_claim
+8/d extract_claim … 1/d init_schema
+1/u … 8/u extract_claim
+version: 8
+database dropped after the cycle
+MIGRATE_DONE (exit 0)
+The running citizen_assistance database was not migrated down.
+
+### [8] pytest (apps/ai-service/.venv) ###
+55 passed in 0.31s
+PYTEST_EXIT:0
+
+### [9] python -m compileall -q app tests ###
+COMPILEALL_EXIT:0
+PYTHONPYCACHEPREFIX=/tmp/cas-pycache-p2
+
+### [10] frontend ###
+vitest: 2 files, 8 tests passed
+vite build: OK
+node scripts/check-bundle.mjs: production bundle hygiene PASS (3 assets)
+npm audit --audit-level=moderate: found 0 vulnerabilities
+
+### [11] Compose ###
+docker compose --profile app config --services:
+  postgres, migrate, api, web
+  ai-service is not in the service list
+  api.depends_on.ai-service.required: false
+  AI_EXTRACT_ENABLED: "false"
+
+docker compose --profile app --profile ai config --services:
+  ai-service, postgres, migrate, api, web
+  ai-service profiles: [ai]
+  ai-service has no ports key
+  AI_SERVICE_TOKEN: local-dev-ai-service-token
+  EXTRACT_RATE_PER_MINUTE: "60"
+  EXTRACT_MAX_INFLIGHT: "4"
+  EXTRACT_RETRY_AFTER_SECONDS: "1"
+  LLM_PROVIDER: mock
+COMPOSE_EXIT:0

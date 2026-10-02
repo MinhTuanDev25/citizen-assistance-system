@@ -3,6 +3,7 @@ package v1
 import (
 	authapi "github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/auth"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/commune"
+	documentapi "github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/document"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/domain"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/procedure"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/session"
@@ -17,6 +18,7 @@ func MapRoutes(
 	procedureHandler *procedure.Handler,
 	sessionHandler *session.Handler,
 	authHandler *authapi.Handler,
+	documentHandler *documentapi.Handler,
 	optionalJWT gin.HandlerFunc,
 	requireJWT gin.HandlerFunc,
 	requireAdmin gin.HandlerFunc,
@@ -49,6 +51,7 @@ func MapRoutes(
 		}
 
 		procedures := v1.Group("/procedures")
+		procedures.Use(optionalJWT)
 		{
 			procedures.GET("", procedureHandler.List)
 			procedures.GET("/by-code/:code", procedureHandler.GetByCode)
@@ -62,6 +65,28 @@ func MapRoutes(
 			sessions.POST("", sessionHandler.Create)
 			sessions.GET("/:sessionId/messages", sessionHandler.ListMessages)
 			sessions.POST("/:sessionId/messages", sessionHandler.CreateMessage)
+			sessions.POST("/:sessionId/turns", sessionHandler.Turn)
+		}
+
+		if documentHandler != nil {
+			docs := v1.Group("/admin/documents")
+			docs.Use(requireAdmin)
+			{
+				docs.POST("", documentHandler.Upload)
+				docs.GET("", documentHandler.List)
+				if documentHandler.Index != nil {
+					docs.GET("/link-targets", documentHandler.LinkTargets)
+					docs.GET("/index-metrics", documentHandler.IndexMetrics)
+					docs.GET("/:id/links", documentHandler.ListLinks)
+					docs.POST("/:id/links", documentHandler.Link)
+					docs.POST("/:id/links/:versionId/index/retry", documentHandler.RetryIndex)
+					docs.POST("/:id/links/:versionId/index/reindex", documentHandler.Reindex)
+					docs.POST("/:id/links/:versionId/index", documentHandler.RequestIndex)
+					docs.DELETE("/:id/links/:versionId", documentHandler.Unlink)
+				}
+				docs.GET("/:id/content", documentHandler.Content)
+				docs.GET("/:id", documentHandler.Get)
+			}
 		}
 	}
 }

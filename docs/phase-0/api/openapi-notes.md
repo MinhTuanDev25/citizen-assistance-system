@@ -1,177 +1,73 @@
-# API Contract (Phase 0)
+# API Contract (Phase 0 → Phase 1–3)
 
-Base path giả định: `/api/v1`  
-Auth: Bearer JWT (`CITIZEN` | `ADMIN`)
+Base path: `/api/v1`  
+Auth: Bearer JWT (`CITIZEN` | `ADMIN`) or guest via `X-Guest-Token` on session routes.
 
 ## 1. Citizen — Chat
 
-### `POST /chat/turns`
+### `POST /sessions/{sessionId}/turns`
 
-Bắt đầu/tiếp tục một lượt hội thoại.
+Canonical chat turn (Decision Engine). Replaces the obsolete `/chat/turns` sketch.
+
+**Headers**
+
+- `X-Guest-Token` — required for guest sessions
+- `Authorization: Bearer …` — required for user-owned sessions
+- `X-Request-ID` — UUID idempotency key; client generates once per send and reuses on retry
 
 **Request**
 
 ```json
 {
-  "session_id": "sess_001",
   "message": "Tôi muốn làm giấy khai sinh cho con tôi."
 }
 ```
 
-`session_id` optional ở turn đầu — server tạo mới nếu thiếu.
-
-**Response 200** (một trong các action)
+**Response 200** (one of: `ASK_MISSING_SLOTS`, `DIRECT_ANSWER`, `PROVIDE_FINAL_GUIDANCE`, `OUT_OF_SCOPE`, `CONFIRM_INTENT`)
 
 ```json
 {
-  "session_id": "sess_001",
+  "session_id": "…",
   "action": "ASK_MISSING_SLOTS",
   "procedure_code": "dk_khai_sinh",
   "procedure_version": "1.0.0",
-  "reply_text": "Bé sinh ở đâu (bệnh viện/cơ sở y tế hay tại nhà, thuộc xã/phường nào)?",
+  "reply_text": "…",
   "ask_now": ["noi_sinh", "da_ket_hon", "co_giay_chung_sinh"],
   "missing_slots": ["noi_sinh", "da_ket_hon", "co_giay_chung_sinh"],
   "questions": [
-    { "slot": "noi_sinh", "text": "Bé sinh ở đâu...?" },
-    { "slot": "da_ket_hon", "text": "Cha mẹ bé đã đăng ký kết hôn chưa?" },
-    { "slot": "co_giay_chung_sinh", "text": "Anh/chị có giấy chứng sinh không?" }
+    { "slot": "noi_sinh", "text": "…" }
   ],
+  "candidates": [],
   "citations": [],
-  "debug": {
-    "domain": "ho_tich_chung_thuc",
-    "intent_confidence": 0.91
-  }
+  "user_message": { "id": "…", "role": "USER", "content": "…" },
+  "assistant_message": { "id": "…", "role": "ASSISTANT", "action": "ASK_MISSING_SLOTS", "content": "…" }
 }
 ```
 
-> V1: `ask_now` = full `missing_slots` (không hỏi từng câu).
-Khi final/direct:
+Idempotent replay sets `idempotent_replay: true` and returns the prior turn for the same `(session_id, request_id)`.
 
-```json
-{
-  "session_id": "sess_001",
-  "action": "PROVIDE_FINAL_GUIDANCE",
-  "procedure_code": "dk_khai_sinh",
-  "procedure_version": "1.0.0",
-  "reply_text": "Anh/chị chuẩn bị các giấy tờ sau...",
-  "guidance": { "checklist": ["..."], "where_to_submit": "..." },
-  "citations": [{ "doc_id": "seed_dk_khai_sinh_v1", "title": "...", "source_type": "manual_seed" }]
-}
-```
+### `GET /sessions/{sessionId}/messages`
 
-### `GET /chat/sessions/{session_id}`
+Reload history. `limit=N` returns the **latest N** messages, ordered **oldest→newest**.
 
-Trả conversation history + slot_state hiện tại.
+### `POST /sessions/{sessionId}/messages` — **gone (410)**
 
-### Out-of-scope response
+Deprecated write path. Clients must use `/turns`.
 
-```json
-{
-  "session_id": "sess_001",
-  "action": "OUT_OF_SCOPE",
-  "reply_text": "Hiện trợ lý chỉ hỗ trợ thủ tục hành chính của xã trong 3 nhóm: Hộ tịch & Chứng thực; Đất đai, Nhà ở & Quy hoạch; Bảo hiểm & Chính sách xã hội."
-}
-```
+### `POST /sessions`
 
-## 2. Admin — Knowledge pipeline
+Create or resume session (`xa_id`, optional `guest_token`).
 
-### `POST /admin/documents`
+---
 
-Upload PDF/text nguồn.
+## 2. Deferred (admin ingestion)
 
-- multipart: `file` + `xa_id` + `domain` (optional)
+P3.1 stores a real admin PDF in MinIO and `documents` (`mime_type`, `file_size_bytes`, SHA-256 checksum). Routes, admin JWT only: `POST/GET /api/v1/admin/documents`, `GET /api/v1/admin/documents/{id}`, `GET /api/v1/admin/documents/{id}/content`. Generated OpenAPI is in `apps/api/docs`. OCR, procedure draft, embedding, and RAG are still not implemented. The citizen UI stays unchanged. Both ingestion flags default off. Turn the real screen on together with `ADMIN_INGESTION_ENABLED=true` and `VITE_ADMIN_INGESTION=true`.
 
-**Response**
+P4A adds admin JWT routes `GET /api/v1/admin/documents/link-targets`, `GET/POST /api/v1/admin/documents/{id}/links`, `DELETE /api/v1/admin/documents/{id}/links/{versionId}`, `POST /api/v1/admin/documents/{id}/links/{versionId}/index`, and `POST /api/v1/admin/documents/{id}/links/{versionId}/index/retry`. They mount only when `ADMIN_INDEXING_ENABLED=true` (which also requires ingestion and the AI service token). Indexing status is per link. The index call is a mock lifecycle. There is no activate route. Run it with `ADMIN_INGESTION_ENABLED=true VITE_ADMIN_INGESTION=true ADMIN_INDEXING_ENABLED=true VITE_ADMIN_INDEXING=true docker compose --profile app --profile storage --profile ai up --build` from `deploy`.
 
-```json
-{ "document_id": "doc_001", "status": "UPLOADED" }
-```
+---
 
-### `POST /admin/documents/{document_id}/extract`
+## Legacy note
 
-Sinh draft procedure JSON (LLM assist).
-
-**Response**
-
-```json
-{
-  "draft_id": "draft_001",
-  "status": "DRAFT",
-  "procedure_draft": { "...procedure_definition..." }
-}
-```
-
-### `GET /admin/drafts/{draft_id}`
-
-Lấy draft để review.
-
-### `PUT /admin/drafts/{draft_id}`
-
-Admin sửa draft JSON.
-
-### `POST /admin/drafts/{draft_id}/validate`
-
-Chạy schema + rule checks.
-
-**Response**
-
-```json
-{
-  "valid": false,
-  "errors": [
-    { "path": "$.required_slots[0]", "message": "slot not defined in slots" }
-  ]
-}
-```
-
-### `POST /admin/drafts/{draft_id}/publish`
-
-Approve + publish version.
-
-**Request**
-
-```json
-{ "activate": true, "changelog": "Seed khai sinh v1" }
-```
-
-**Response**
-
-```json
-{
-  "procedure_code": "dk_khai_sinh",
-  "version": "1.0.0",
-  "status": "ACTIVE"
-}
-```
-
-### `POST /admin/procedures/{procedure_id}/rollback`
-
-```json
-{ "to_version": "1.0.0" }
-```
-
-### `GET /admin/procedures`
-
-List procedures + active version.
-
-### `GET /admin/procedures/{procedure_id}/versions`
-
-## 3. Error model
-
-```json
-{
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Invalid procedure draft",
-    "details": []
-  }
-}
-```
-
-Codes chính: `UNAUTHORIZED`, `FORBIDDEN`, `VALIDATION_ERROR`, `NOT_FOUND`, `CONFLICT_VERSION`, `LLM_UNAVAILABLE`.
-
-## 4. Non-goals API V1
-
-- Streaming token-by-token (có thể thêm sau)
-- Webhook nộp hồ sơ
-- Multi-tenant path prefix theo xã
+Do **not** call `POST /api/v1/chat/turns` — that path does not exist. Use `POST /api/v1/sessions/{sessionId}/turns`.

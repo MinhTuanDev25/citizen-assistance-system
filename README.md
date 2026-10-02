@@ -5,7 +5,7 @@ Monorepo for two tracks that share this repository:
 1. **Bahnar → Vietnamese speech-to-text translation (thesis)** — RQ1 cascaded vs direct S2TT, under [`bahnar-s2tt-thesis/`](bahnar-s2tt-thesis/).
 2. **Citizen assistance chatbot (application)** — commune-level administrative procedures, under `apps/`.
 
-The thesis is the research contribution. The chatbot is a separate demo/application layer and is not part of RQ1.
+The thesis is the research contribution (RQ1/RQ2). The chatbot is the **application artifact** in proposal §4: hộ tịch, slot workflow, RAG citations, Bahnar speech → Vietnamese text. It does not replace the speech-translation experiments.
 
 ## Layout
 
@@ -14,7 +14,7 @@ citizen-assistance-system/
 ├── bahnar-s2tt-thesis/   # RQ1 notebooks, src, configs, tests
 ├── apps/
 │   ├── api/              # Go + Gin — auth, sessions, Decision Engine, admin
-│   ├── ai-service/       # Python FastAPI — extract, RAG, embeddings, LLM
+│   ├── ai-service/       # Python — extract, mock index (P4A). Embed and speech later
 │   └── web/              # React + JS — Citizen Portal + Admin Portal
 ├── packages/contracts/   # OpenAPI / shared schemas
 ├── deploy/               # Docker Compose, nginx, env examples
@@ -62,9 +62,13 @@ Start in [`bahnar-s2tt-thesis/README.md`](bahnar-s2tt-thesis/README.md). Do not 
 
 **Chatbot**
 
-- [x] Monorepo scaffold
-- [x] Local Postgres migrations (schema + master seed)
-- [x] Go API skeleton
-- [x] Citizen Web UI (Vite React — chat demo)
-- [ ] Phase 1: seed procedures + Decision Engine + chat turns
-- [ ] … → Production (see A→Z plan)
+- [x] Monorepo + Postgres/pgvector + MinIO compose
+- [x] Go chat turns + Decision Engine (seed hộ tịch; keyword extract = fallback)
+- [x] Citizen web (text)
+- [x] P2 `POST /v1/extract` LLM (optional; keyword fallback when `AI_EXTRACT_ENABLED` is off)
+- [x] P3.1 admin PDF upload, list, detail, and download (`ADMIN_INGESTION_ENABLED` + `VITE_ADMIN_INGESTION`, both default off)
+- [x] P4A indexing foundation: per-link status, mock index, retry. No embed, RAG, or activate. Run: `cd deploy && ADMIN_INGESTION_ENABLED=true VITE_ADMIN_INGESTION=true ADMIN_INDEXING_ENABLED=true VITE_ADMIN_INDEXING=true docker compose --profile app --profile storage --profile ai up --build`
+- [x] P4B content pipeline: native text, OCR adapter, chunks, Qdrant. No retrieval or activate. Run: `cd deploy && ADMIN_INGESTION_ENABLED=true VITE_ADMIN_INGESTION=true ADMIN_INDEXING_ENABLED=true VITE_ADMIN_INDEXING=true INDEX_MODE=pipeline EMBEDDING_PROVIDER=fake OCR_PROVIDER=fake INDEX_PIPELINE_TIMEOUT_SECONDS=120 INDEX_CLAIM_TTL_SECONDS=180 docker compose --profile app --profile storage --profile ai --profile qdrant up --build`
+- [ ] Admin embed → activate
+- [ ] RAG citations + Bahnar speech in Python
+- [ ] Docs Phase 0 aligned to proposal (2026-09-28)

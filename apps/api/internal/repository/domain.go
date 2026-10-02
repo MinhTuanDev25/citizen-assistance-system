@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	ErrNotFound      = errors.New("not_found")
-	ErrConflict      = errors.New("conflict")
-	ErrFKRestricted  = errors.New("fk_restricted")
+	ErrNotFound     = errors.New("not_found")
+	ErrConflict     = errors.New("conflict")
+	ErrFKRestricted = errors.New("fk_restricted")
 )
 
 type Domain struct {

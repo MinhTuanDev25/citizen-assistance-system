@@ -18,7 +18,7 @@ export default function ProceduresPage() {
       setLoading(true)
       setError('')
       try {
-        const data = await listProcedures({ xaId })
+        const data = await listProcedures({ xaId, citizen: false })
         if (cancelled) return
         setDomains(data?.domains || [])
         setCount(data?.count || 0)
