@@ -8,8 +8,9 @@ Thin, composable helpers that NB11 orchestrates. Hard rules enforced here:
 * Protected references (RQ1 G_train / G_validation / frozen G_test) are matched
   on **audio identity only** — the loader projects a small allow-list of columns
   and refuses transcript / reference / prediction / metric columns.
-* The similarity threshold is never tuned on the frozen test; ``OverlapConfig``
-  must be frozen (on synthetic pairs) before any real matching decision.
+* The similarity threshold is never tuned on the frozen test. The production
+  notebook's frozen ``OverlapConfig`` is authoritative. That threshold was
+  calibrated on controlled real VOV4 transformations and negative pairs.
 * Success requires explicit pipeline-completion evidence (references resolved,
   NB10 locked, fingerprint coverage complete, protection complete). Missing
   evidence -> FAIL, never a silent SUCCESS.
@@ -78,6 +79,7 @@ EXCLUDED_LOW_SPEECH_FRACTION = "EXCLUDED_LOW_SPEECH_FRACTION"
 EXCLUDED_SILENT = "EXCLUDED_SILENT"
 EXCLUDED_INVALID_PCM = "EXCLUDED_INVALID_PCM"
 EXCLUDED_SEGMENT_WRITE_FAILED = "EXCLUDED_SEGMENT_WRITE_FAILED"
+EXCLUDED_PERCEPTUAL_INELIGIBLE = "EXCLUDED_PERCEPTUAL_INELIGIBLE"
 
 # QA-level exclusions never enter dedup/protection (they are dropped upstream).
 QA_EXCLUSIONS = (
@@ -1935,6 +1937,127 @@ def exact_deduplicate(segments: List[dict]) -> List[dict]:
     return segments
 
 
+def apply_u_perceptual_eligibility(segments: List[dict], config: UCleanConfig) -> int:
+    """Exclude retained segments that cannot emit min_overlap_items fingerprints.
+
+    This runs after exact PCM dedup and before WAV writing. It does not change
+    the segmentation contract: segments between 3.0s and 5.1s remain planned,
+    then leave U_clean here.
+    """
+    sample_rate = int(config.segmentation.sample_rate)
+    min_items = int(config.overlap.min_overlap_items)
+    excluded = 0
+    for row in segments:
+        if row.get("u_clean_status") != RETAINED_STATUS:
+            continue
+        n_samples = int(row["end_sample"]) - int(row["start_sample"])
+        if _duration_reaches_perceptual_minimum(n_samples, sample_rate):
+            continue
+        row["u_perceptual_min_duration_seconds"] = U_PERCEPTUAL_MIN_DURATION_SECONDS
+        row["perceptual_eligibility_min_overlap_items"] = min_items
+        row["u_perceptual_policy"] = U_PERCEPTUAL_POLICY
+        row["u_perceptual_fpcalc_version"] = PROTECTED_PERCEPTUAL_FPCALC_VERSION
+        _exclude(row, EXCLUDED_PERCEPTUAL_INELIGIBLE)
+        excluded += 1
+    return excluded
+
+
+def migrate_cached_u_fingerprints(
+    segments: List[dict],
+    context: UCleanContext,
+    cached_fps: Optional[Dict[str, Sequence[int]]] = None,
+) -> Dict[str, List[int]]:
+    """Drop cached U fingerprints that cannot be reused. Segmentation shards stay.
+
+    A segment shorter than 5.1s is excluded and its cached fingerprint is ignored.
+    A segment of at least 5.1s whose cached fingerprint has fewer than
+    min_overlap_items items loses only that UID, so the next fingerprint pass
+    recomputes it. Valid fingerprints and protected-reference state stay.
+    """
+    apply_u_perceptual_eligibility(segments, context.config)
+    sample_rate = int(context.config.segmentation.sample_rate)
+    min_items = int(context.config.overlap.min_overlap_items)
+    by_uid = {str(row.get("segment_uid") or ""): row for row in segments}
+    reusable: Dict[str, List[int]] = {}
+    drop = set()
+    for uid, fp in (cached_fps or {}).items():
+        key = str(uid)
+        row = by_uid.get(key)
+        n_items = len(fp) if is_valid_fingerprint(fp) else 0
+        if row is None:
+            if n_items >= min_items:
+                reusable[key] = [int(item) for item in fp]
+            continue
+        n_samples = int(row["end_sample"]) - int(row["start_sample"])
+        below_duration = not _duration_reaches_perceptual_minimum(n_samples, sample_rate)
+        if below_duration or n_items < min_items:
+            drop.add(key)
+            continue
+        reusable[key] = [int(item) for item in fp]
+    if drop:
+        state = _read_checkpoint_state(context)
+        state["segment_fingerprint_shards"] = _forget_shard_uids(
+            state["segment_fingerprint_shards"], drop,
+        )
+        _write_checkpoint_state(context, state)
+    return reusable
+
+
+def fingerprint_retained_u_segments(
+    segments: List[dict],
+    context: UCleanContext,
+    fingerprint_fn,
+    cached_fps: Optional[Dict[str, Sequence[int]]] = None,
+) -> Dict[str, List[int]]:
+    """Fingerprint retained U segments. Ineligible rows are already excluded.
+
+    A cached fingerprint is reused only when it already has min_overlap_items
+    items. fpcalc errors, empty fingerprints, and shorter results fail closed.
+    """
+    cached = cached_fps or {}
+    config = context.config
+    sample_rate = int(config.segmentation.sample_rate)
+    min_items = int(config.overlap.min_overlap_items)
+    out: Dict[str, List[int]] = {}
+    pending: List[dict] = []
+    for row in segments:
+        if row.get("u_clean_status") != RETAINED_STATUS:
+            continue
+        uid = str(row["segment_uid"])
+        n_samples = int(row["end_sample"]) - int(row["start_sample"])
+        if not _duration_reaches_perceptual_minimum(n_samples, sample_rate):
+            raise RuntimeError(
+                f"U segment {uid} is below perceptual eligibility and must be excluded "
+                f"before fingerprinting"
+            )
+        fp = cached.get(uid)
+        n_items = len(fp) if is_valid_fingerprint(fp) else 0
+        reused = n_items >= min_items
+        if not reused:
+            fp = fingerprint_fn(row)
+            n_items = len(fp) if is_valid_fingerprint(fp) else 0
+            if n_items < min_items:
+                duration = n_samples / float(sample_rate)
+                raise RuntimeError(
+                    f"U fingerprint below min_overlap_items for {uid} "
+                    f"duration_seconds={duration:.6f} items={n_items} required={min_items}"
+                )
+            pending.append({
+                "segment_uid": uid,
+                "fingerprint": fp,
+                "audio_sha256": str(row.get("segment_pcm16_sha256") or ""),
+            })
+            if len(pending) >= 32:
+                append_fingerprint_shard(context, "segment_fingerprints", pending)
+                pending = []
+        stored = [int(item) for item in fp]
+        out[uid] = stored
+        row["fingerprint_sha256"] = fingerprint_sha256(stored)
+    if pending:
+        append_fingerprint_shard(context, "segment_fingerprints", pending)
+    return out
+
+
 def perceptual_deduplicate(
     segments: List[dict],
     fingerprints_by_uid: Dict[str, Sequence[int]],
@@ -1952,8 +2075,8 @@ def perceptual_deduplicate(
     for row in retained:
         uid = row["segment_uid"]
         fp = fingerprints_by_uid.get(uid)
-        if fp is None:
-            continue  # coverage gate handles missing fingerprints elsewhere
+        if not _u_fingerprint_indexable(fp, ov):
+            continue
         best = None
         for cand_uid in index.candidates(fp):
             score, offset, overlap = compare_fingerprints_detailed(fp, index.fingerprint_of(cand_uid), ov)
@@ -2022,7 +2145,7 @@ def build_u_candidate_index(
         if row.get("u_clean_status") != RETAINED_STATUS:
             continue
         fp = segment_fingerprints_by_uid.get(row["segment_uid"])
-        if not is_valid_fingerprint(fp):
+        if not _u_fingerprint_indexable(fp, config.overlap):
             continue
         index.add(str(row["segment_uid"]), fp)
     return index, time.perf_counter() - started
@@ -2153,12 +2276,19 @@ def probe_protected_audio_identity(entries: Sequence[ProtectedReferenceEntry], r
     return report
 
 
-def _fingerprint_coverage_complete(segments: Sequence[dict], fingerprints_by_uid: Dict[str, Sequence[int]]) -> bool:
-    """Every segment that survived exact dedup must have a fingerprint."""
+def _u_fingerprint_indexable(fingerprint, overlap_config) -> bool:
+    """A U fingerprint can enter a matcher only when it can form a legal alignment."""
+    return is_valid_fingerprint(fingerprint) and len(fingerprint) >= int(overlap_config.min_overlap_items)
+
+
+def _fingerprint_coverage_complete(segments: Sequence[dict], fingerprints_by_uid: Dict[str, Sequence[int]], config: UCleanConfig) -> bool:
+    """Every segment that still requires perceptual protection has a long-enough fingerprint."""
+    min_items = int(config.overlap.min_overlap_items)
     for row in segments:
         status = row["u_clean_status"]
         if status == RETAINED_STATUS or status in (EXCLUDED_PERCEPTUAL_DUPLICATE, EXCLUDED_PROTECTED_OVERLAP):
-            if fingerprints_by_uid.get(row["segment_uid"]) is None:
+            fp = fingerprints_by_uid.get(row["segment_uid"])
+            if not is_valid_fingerprint(fp) or len(fp) < min_items:
                 return False
     return True
 
@@ -2188,7 +2318,7 @@ def protect_and_deduplicate(
         context.completion.protected_overlap_check_complete = False
         return segments
 
-    segment_coverage = _fingerprint_coverage_complete(segments, fps)
+    segment_coverage = _fingerprint_coverage_complete(segments, fps, context.config)
     context.completion.segment_fingerprint_coverage_complete = segment_coverage
     if segment_coverage:
         ev1 = perceptual_deduplicate(segments, fps, context.config)
@@ -2243,7 +2373,10 @@ def validate_u_clean(segments: Sequence[dict], context: UCleanContext) -> None:
         if not context.completion.segment_fingerprint_coverage_complete:
             raise RuntimeError("full run requires complete segment fingerprint coverage")
         if not context.completion.reference_fingerprint_coverage_complete:
-            raise RuntimeError("full run requires a fingerprint for every protected reference")
+            raise RuntimeError(
+                "full run requires every protected reference to be accounted for "
+                "(fingerprint or SHORT_NOT_PERCEPTUALLY_ELIGIBLE)"
+            )
         if not context.completion.u_u_protection_complete:
             raise RuntimeError("full run requires completed U-U protection")
         if not context.completion.protected_overlap_check_complete:
@@ -2270,9 +2403,15 @@ def validate_u_clean(segments: Sequence[dict], context: UCleanContext) -> None:
         duration = float(row["duration_seconds"])
         if duration + 1e-9 < seg_cfg.min_segment_seconds or duration > seg_cfg.max_segment_seconds + 1e-9:
             raise RuntimeError(f"segment {uid} duration {duration} out of range")
-        expected = (int(row["end_sample"]) - int(row["start_sample"])) / float(seg_cfg.sample_rate)
+        n_samples = int(row["end_sample"]) - int(row["start_sample"])
+        expected = n_samples / float(seg_cfg.sample_rate)
         if abs(expected - duration) > 1e-6:
             raise RuntimeError(f"segment {uid} duration arithmetic inconsistent")
+        if not _duration_reaches_perceptual_minimum(n_samples, int(seg_cfg.sample_rate)):
+            raise RuntimeError(
+                f"retained segment {uid} is below U perceptual eligibility "
+                f"duration_samples={n_samples} required_seconds={U_PERCEPTUAL_MIN_DURATION_SECONDS}"
+            )
         if float(row["vad_speech_fraction"]) + 1e-9 < seg_cfg.min_speech_fraction:
             raise RuntimeError(f"segment {uid} speech fraction below minimum")
 
@@ -2310,7 +2449,11 @@ def u_clean_rows(segments: Sequence[dict]) -> List[dict]:
 
 
 def exclusion_rows(segments: Sequence[dict]) -> List[dict]:
-    cols = ["segment_uid", "source_id", "start_sample", "end_sample", "duration_seconds", "u_clean_status", "exclusion_reason", "canonical_segment_uid"]
+    cols = [
+        "segment_uid", "source_id", "start_sample", "end_sample", "duration_seconds",
+        "u_clean_status", "exclusion_reason", "canonical_segment_uid",
+        "u_perceptual_min_duration_seconds", "perceptual_eligibility_min_overlap_items",
+    ]
     return [
         {c: row.get(c, "") for c in cols}
         for row in segments
@@ -2433,6 +2576,14 @@ def build_summary(segments: Sequence[dict], context: UCleanContext) -> dict:
         "n_perceptual_duplicates_u": counts.get(EXCLUDED_PERCEPTUAL_DUPLICATE, 0),
         "n_excluded_perceptual_duplicate": counts.get(EXCLUDED_PERCEPTUAL_DUPLICATE, 0),
         "n_excluded_protected_overlap": counts.get(EXCLUDED_PROTECTED_OVERLAP, 0),
+        "n_u_perceptual_ineligible": counts.get(EXCLUDED_PERCEPTUAL_INELIGIBLE, 0),
+        "u_perceptual_eligibility": {
+            "n_u_perceptual_ineligible": counts.get(EXCLUDED_PERCEPTUAL_INELIGIBLE, 0),
+            "u_perceptual_min_duration_seconds": U_PERCEPTUAL_MIN_DURATION_SECONDS,
+            "min_overlap_items": int(cfg.overlap.min_overlap_items),
+            "policy": U_PERCEPTUAL_POLICY,
+            "fpcalc_version": PROTECTED_PERCEPTUAL_FPCALC_VERSION,
+        },
         "n_overlap_g_train": sum(1 for row in segments if row.get("overlap_g_train")),
         "n_overlap_g_validation": sum(1 for row in segments if row.get("overlap_g_validation")),
         "n_overlap_frozen_test": sum(1 for row in segments if row.get("overlap_frozen_test")),
@@ -2635,6 +2786,8 @@ def _empty_checkpoint_state(context: UCleanContext) -> dict:
         "next_segment_shard_id": 0,
         "next_segment_fingerprint_shard_id": 0,
         "next_protected_fingerprint_shard_id": 0,
+        "protected_short_eligibility": {},
+        "protected_exact_identity": {},
     }
 
 
@@ -2651,6 +2804,8 @@ def _read_checkpoint_state(context: UCleanContext) -> dict:
     state.setdefault("next_segment_shard_id", 0)
     state.setdefault("next_segment_fingerprint_shard_id", 0)
     state.setdefault("next_protected_fingerprint_shard_id", 0)
+    state.setdefault("protected_short_eligibility", {})
+    state.setdefault("protected_exact_identity", {})
     return state
 
 
@@ -3160,7 +3315,10 @@ def load_resumable_checkpoint(context: UCleanContext, path=None, load_protected_
                     raise RuntimeError("hash")
                 rows = _load_fingerprint_shard(file_path, kind)
                 if kind == "segment_fingerprints":
+                    allowed = {str(uid) for uid in (shard.get("uids") or [])}
                     for row in rows:
+                        if allowed and str(row["uid"]) not in allowed:
+                            continue
                         loaded["segment_fingerprints_by_uid"][row["uid"]] = row["fingerprint"]
                         loaded["segment_fingerprint_audio_sha256"][row["uid"]] = row.get("audio_sha256") or ""
                     kept_fp.append(shard)
@@ -3170,7 +3328,13 @@ def load_resumable_checkpoint(context: UCleanContext, path=None, load_protected_
                         for entry in context.protected_entries
                     }
                     matched = []
+                    min_items = int(context.config.overlap.min_overlap_items)
                     for row in rows:
+                        fingerprint = row.get("fingerprint")
+                        n_items = len(fingerprint) if is_valid_fingerprint(fingerprint) else 0
+                        if n_items < min_items:
+                            loaded["discarded_reference_fingerprints"] += 1
+                            continue
                         stored = str(row.get("source_sha256") or "").strip().lower()
                         wanted = expected.get(row["uid"]) if expected else None
                         if not _is_valid_sha256(stored) or (wanted and wanted != stored):
@@ -3237,27 +3401,238 @@ def _drop_unbound_cached_fingerprints(context: UCleanContext, loaded: dict, stat
         )
 
 
-def protected_fingerprint_coverage_complete(context: UCleanContext) -> bool:
-    """True when every protected entry has one verified shard fingerprint for its split.
+# fpcalc 1.5.1 cannot emit min_overlap_items=20 below this duration.
+# These are NB11 eligibility rules. They are not segmentation or overlap parameters.
+_FPCALC_MIN_OVERLAP_DURATION_SECONDS = 5.1
+PROTECTED_PERCEPTUAL_MIN_DURATION_SECONDS = _FPCALC_MIN_OVERLAP_DURATION_SECONDS
+U_PERCEPTUAL_MIN_DURATION_SECONDS = _FPCALC_MIN_OVERLAP_DURATION_SECONDS
+PROTECTED_PERCEPTUAL_POLICY = "protected_perceptual_min_duration_v1"
+U_PERCEPTUAL_POLICY = "u_perceptual_min_duration_v1"
+PROTECTED_PERCEPTUAL_FPCALC_VERSION = "1.5.1"
+SHORT_NOT_PERCEPTUALLY_ELIGIBLE = "SHORT_NOT_PERCEPTUALLY_ELIGIBLE"
+PROTECTED_EXACT_POLICY = "protected_exact_pcm_v1"
+PROTECTED_EXACT_MATCH = "protected_exact"
+_SHORT_ELIGIBILITY_FILENAME = "protected_short_eligibility.jsonl"
+_EXACT_IDENTITY_FILENAME = "protected_exact_identity.jsonl"
+_SHORT_WRITE_BATCH = 32
 
-    Shards are read one at a time. Only uid and split are retained between shards.
-    """
-    entries = list(context.protected_entries)
-    if not references_cover_splits(entries):
-        return False
-    seen: Dict[str, str] = {}
+
+def _duration_reaches_perceptual_minimum(n_samples: int, sample_rate: int) -> bool:
+    """True when duration >= 5.1s. Compared in integers so the 5.1 boundary is exact."""
+    return int(n_samples) * 10 >= int(sample_rate) * 51
+
+
+def _actual_wav_dimensions(path) -> dict:
+    """Read frames and rate from a reconstructed WAV. Zero metadata is not used."""
+    try:
+        with wave.open(str(path), "rb") as handle:
+            channels = handle.getnchannels()
+            width = handle.getsampwidth()
+            sample_rate = int(handle.getframerate() or 0)
+            n_samples = int(handle.getnframes() or 0)
+    except Exception as exc:
+        raise RuntimeError(f"invalid reconstructed protected audio: {path}") from exc
+    if channels != 1 or width != 2 or sample_rate <= 0 or n_samples <= 0:
+        raise RuntimeError(
+            f"invalid reconstructed protected audio: rate={sample_rate} samples={n_samples} "
+            f"channels={channels} width={width}"
+        )
+    return {
+        "actual_n_samples": n_samples,
+        "actual_sample_rate": sample_rate,
+        "actual_duration_seconds": round(n_samples / float(sample_rate), 6),
+    }
+
+
+def _verify_pinned_wav_dimensions(entry: ProtectedReferenceEntry, dims: dict) -> None:
+    """Nonzero pinned metadata must match the WAV. Zero means the metadata is unavailable."""
+    if int(entry.n_samples or 0) and int(entry.n_samples) != int(dims["actual_n_samples"]):
+        raise RuntimeError(
+            f"n_samples mismatch for {entry.reference_uid}: "
+            f"wav {dims['actual_n_samples']} != pinned {entry.n_samples}"
+        )
+    if int(entry.sample_rate or 0) and int(entry.sample_rate) != int(dims["actual_sample_rate"]):
+        raise RuntimeError(
+            f"sample_rate mismatch for {entry.reference_uid}: "
+            f"wav {dims['actual_sample_rate']} != pinned {entry.sample_rate}"
+        )
+
+
+def _short_eligibility_path(context: UCleanContext) -> Path:
+    return checkpoint_root(context) / _SHORT_ELIGIBILITY_FILENAME
+
+
+def _load_short_eligibility_records(context: UCleanContext) -> List[dict]:
+    """Load audited short references. A policy or hash mismatch drops only this file."""
+    state = _read_checkpoint_state(context)
+    meta = dict(state.get("protected_short_eligibility") or {})
+    path = _short_eligibility_path(context)
+    if not path.is_file() or not meta.get("sha256"):
+        return []
+    payload = path.read_bytes()
+    if hashlib.sha256(payload).hexdigest() != str(meta.get("sha256") or ""):
+        return []
+    if str(meta.get("policy") or "") != PROTECTED_PERCEPTUAL_POLICY:
+        return []
+    if float(meta.get("protected_perceptual_min_duration_seconds") or 0) != PROTECTED_PERCEPTUAL_MIN_DURATION_SECONDS:
+        return []
+    if int(meta.get("min_overlap_items") or 0) != int(context.config.overlap.min_overlap_items):
+        return []
+    rows = []
+    seen = set()
+    for line in payload.decode("utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        uid = str(row.get("reference_uid") or "")
+        if not uid or uid in seen:
+            raise RuntimeError(f"duplicate protected short-eligibility uid: {uid}")
+        if str(row.get("status") or "") != SHORT_NOT_PERCEPTUALLY_ELIGIBLE:
+            raise RuntimeError(f"unexpected protected eligibility status for {uid}")
+        if float(row.get("protected_perceptual_min_duration_seconds") or 0) != PROTECTED_PERCEPTUAL_MIN_DURATION_SECONDS:
+            return []
+        if str(row.get("fpcalc_version") or "") != PROTECTED_PERCEPTUAL_FPCALC_VERSION:
+            raise RuntimeError(
+                f"fpcalc version {row.get('fpcalc_version')!r} is outside {PROTECTED_PERCEPTUAL_POLICY}; "
+                f"the 5.1s boundary was calibrated on fpcalc {PROTECTED_PERCEPTUAL_FPCALC_VERSION}"
+            )
+        if not _is_valid_sha256(str(row.get("sha256_pcm") or "")):
+            return []
+        seen.add(uid)
+        rows.append(row)
+    if str(meta.get("fpcalc_version") or "") not in ("", PROTECTED_PERCEPTUAL_FPCALC_VERSION):
+        raise RuntimeError(
+            f"fpcalc version {meta.get('fpcalc_version')!r} is outside {PROTECTED_PERCEPTUAL_POLICY}"
+        )
+    return rows
+
+
+def _write_short_eligibility_records(context: UCleanContext, rows: Sequence[dict]) -> None:
+    ordered = sorted(rows, key=lambda row: (str(row.get("split") or ""), str(row.get("reference_uid") or "")))
+    payload = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in ordered)
+    path = _short_eligibility_path(context)
+    atomic_write_text(path, payload)
+    state = _read_checkpoint_state(context)
+    state["protected_short_eligibility"] = {
+        "path": _SHORT_ELIGIBILITY_FILENAME,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "policy": PROTECTED_PERCEPTUAL_POLICY,
+        "protected_perceptual_min_duration_seconds": PROTECTED_PERCEPTUAL_MIN_DURATION_SECONDS,
+        "min_overlap_items": int(context.config.overlap.min_overlap_items),
+        "fpcalc_version": PROTECTED_PERCEPTUAL_FPCALC_VERSION,
+        "n_records": len(ordered),
+        "uids": [str(row["reference_uid"]) for row in ordered],
+    }
+    _write_checkpoint_state(context, state)
+
+
+def _protected_identity_key(split, uid) -> Tuple[str, str]:
+    return (str(split or ""), str(uid or ""))
+
+
+def _bind_protected_identity(expected: Dict[Tuple[str, str], str], kind: str, split, uid) -> Tuple[str, str]:
+    """Fail closed unless (split, uid) is exactly one current protected entry."""
+    key = _protected_identity_key(split, uid)
+    if not key[1]:
+        raise RuntimeError(f"unknown protected {kind} uid")
+    owners = [item for item in expected if item[1] == key[1]]
+    if not owners:
+        raise RuntimeError(f"unknown protected {kind} uid {key[1]}")
+    if key not in expected:
+        raise RuntimeError(
+            f"protected {kind} split mismatch for {key[1]}: "
+            f"stored {key[0]} != entry {owners[0][0]}"
+        )
+    return key
+
+
+def _indexed_protected_pcm(context: UCleanContext) -> dict:
+    """PCM hashes keyed by (split, reference_uid). Wrong or duplicate identities fail closed."""
+    expected: Dict[Tuple[str, str], ProtectedReferenceEntry] = {}
+    for entry in context.protected_entries:
+        key = _protected_identity_key(entry.split, entry.reference_uid)
+        if not key[1] or key in expected:
+            raise RuntimeError(f"duplicate protected identity {key[0]}:{key[1]}")
+        expected[key] = entry
+    min_items = int(context.config.overlap.min_overlap_items)
+    fingerprinted: Dict[Tuple[str, str], str] = {}
     for batch in iter_protected_fingerprint_shards(context):
         for row in batch:
             uid = str(row.get("uid") or "")
-            if not uid or uid in seen or not is_valid_fingerprint(row.get("fingerprint")):
-                return False
-            seen[uid] = str(row.get("split") or "")
-    if len(seen) != len(entries):
+            fingerprint = row.get("fingerprint")
+            if not is_valid_fingerprint(fingerprint):
+                raise RuntimeError(f"invalid protected fingerprint uid: {uid}")
+            if len(fingerprint) < min_items:
+                raise RuntimeError(
+                    f"protected fingerprint shorter than min_overlap_items for {uid}: "
+                    f"items={len(fingerprint)} required={min_items}"
+                )
+            key = _bind_protected_identity(expected, "fingerprint", row.get("split"), uid)
+            if key in fingerprinted:
+                raise RuntimeError(f"duplicate protected fingerprint identity {key[0]}:{key[1]}")
+            digest = str(row.get("source_sha256") or "").strip().lower()
+            if not _is_valid_sha256(digest):
+                raise RuntimeError(f"protected fingerprint {uid} has no materialized sha256_pcm")
+            fingerprinted[key] = digest
+    shorts: Dict[Tuple[str, str], str] = {}
+    for row in _load_short_eligibility_records(context):
+        key = _bind_protected_identity(expected, "short-eligibility", row.get("split"), row.get("reference_uid"))
+        if key in shorts or key in fingerprinted:
+            raise RuntimeError(f"duplicate protected accounting for {key[0]}:{key[1]}")
+        digest = str(row.get("sha256_pcm") or "").strip().lower()
+        if not _is_valid_sha256(digest):
+            raise RuntimeError(f"short protected reference {key[1]} has no materialized sha256_pcm")
+        shorts[key] = digest
+    unaccounted = [key for key in expected if key not in fingerprinted and key not in shorts]
+    return {
+        "expected": expected,
+        "fingerprinted": fingerprinted,
+        "shorts": shorts,
+        "unaccounted": unaccounted,
+        "min_overlap_items": min_items,
+    }
+
+
+def protected_reference_accounting(context: UCleanContext) -> dict:
+    """Count fingerprints and audited shorts by (split, reference_uid)."""
+    indexed = _indexed_protected_pcm(context)
+    total = len(indexed["expected"])
+    fingerprinted = indexed["fingerprinted"]
+    shorts = indexed["shorts"]
+    unaccounted = indexed["unaccounted"]
+    if len(fingerprinted) + len(shorts) + len(unaccounted) != total:
+        raise RuntimeError("protected accounting identities are not a partition of the reference set")
+    return {
+        "policy": PROTECTED_PERCEPTUAL_POLICY,
+        "protected_perceptual_min_duration_seconds": PROTECTED_PERCEPTUAL_MIN_DURATION_SECONDS,
+        "fpcalc_version": PROTECTED_PERCEPTUAL_FPCALC_VERSION,
+        "min_overlap_items": indexed["min_overlap_items"],
+        "n_protected_total": total,
+        "n_protected_perceptual_eligible": len(fingerprinted),
+        "n_protected_fingerprinted": len(fingerprinted),
+        "n_protected_short_not_perceptually_eligible": len(shorts),
+        "n_protected_unaccounted": len(unaccounted),
+    }
+
+
+def protected_fingerprint_coverage_complete(context: UCleanContext) -> bool:
+    """True when every protected UID is accounted for.
+
+    Accounted means exactly one of: a persisted fingerprint with at least
+    ``min_overlap_items`` values, or an audited SHORT_NOT_PERCEPTUALLY_ELIGIBLE
+    record from the materialized WAV. The historical name is kept for the
+    downstream success gate. Short rows are not fingerprints.
+    """
+    stats = protected_reference_accounting(context)
+    provenance = dict(context.reference_provenance)
+    provenance["protected_perceptual_eligibility"] = stats
+    context.reference_provenance = provenance
+    if not references_cover_splits(context.protected_entries):
         return False
-    for entry in entries:
-        if seen.get(entry.reference_uid) != entry.split:
-            return False
-    return True
+    return (
+        stats["n_protected_unaccounted"] == 0
+        and stats["n_protected_fingerprinted"] + stats["n_protected_short_not_perceptually_eligible"] == stats["n_protected_total"]
+    )
 
 
 def protected_reference_uids(context: UCleanContext) -> set:
@@ -3266,43 +3641,265 @@ def protected_reference_uids(context: UCleanContext) -> set:
     return _shard_uids(state["protected_fingerprint_shards"])
 
 
-def generate_protected_fingerprints(context: UCleanContext, resolver, *, fingerprint_fn=None) -> int:
-    """Fingerprint protected refs that are not already in a valid shard.
+def _remember_protected_eligibility(context: UCleanContext) -> dict:
+    stats = protected_reference_accounting(context)
+    provenance = dict(context.reference_provenance)
+    provenance["protected_perceptual_eligibility"] = stats
+    context.reference_provenance = provenance
+    return stats
 
-    Completed shard files are not rewritten. Fingerprint arrays are appended in
-    batches and are not retained after the shard write.
+
+def _short_eligibility_record(entry: ProtectedReferenceEntry, dims: dict, sha256_pcm: str, min_overlap_items: int) -> dict:
+    return {
+        "reference_uid": entry.reference_uid,
+        "split": entry.split,
+        "sha256_pcm": sha256_pcm,
+        "actual_n_samples": int(dims["actual_n_samples"]),
+        "actual_sample_rate": int(dims["actual_sample_rate"]),
+        "actual_duration_seconds": float(dims["actual_duration_seconds"]),
+        "status": SHORT_NOT_PERCEPTUALLY_ELIGIBLE,
+        "reason": SHORT_NOT_PERCEPTUALLY_ELIGIBLE,
+        "protected_perceptual_min_duration_seconds": PROTECTED_PERCEPTUAL_MIN_DURATION_SECONDS,
+        "min_overlap_items": int(min_overlap_items),
+        "fpcalc_version": PROTECTED_PERCEPTUAL_FPCALC_VERSION,
+        "policy": PROTECTED_PERCEPTUAL_POLICY,
+    }
+
+
+def _require_compatible_fpcalc(context: UCleanContext) -> str:
+    """The 5.1s boundary is valid for fpcalc 1.5.1. Another version fails closed."""
+    from src.rq2_audio_fingerprint import fpcalc_version
+
+    version = fpcalc_version(context.config.overlap.fpcalc_binary)
+    if version != PROTECTED_PERCEPTUAL_FPCALC_VERSION:
+        raise RuntimeError(
+            f"fpcalc {version} is outside {PROTECTED_PERCEPTUAL_POLICY}; "
+            f"protected perceptual eligibility was calibrated on fpcalc {PROTECTED_PERCEPTUAL_FPCALC_VERSION}"
+        )
+    return version
+
+
+def generate_protected_fingerprints(context: UCleanContext, resolver, *, fingerprint_fn=None) -> int:
+    """Fingerprint protected refs that are long enough for the frozen matcher.
+
+    A materialized WAV shorter than 5.1 seconds is audited as
+    SHORT_NOT_PERCEPTUALLY_ELIGIBLE and is not sent to fpcalc. Completed
+    fingerprint shards and the short-eligibility file are reused. Segmentation
+    and U fingerprint shards are not rewritten.
     """
+    short_rows = _load_short_eligibility_records(context)
+    short_uids = {str(row["reference_uid"]) for row in short_rows}
+    fingerprinted = protected_reference_uids(context)
+    overlap = sorted(short_uids & fingerprinted)
+    if overlap:
+        raise RuntimeError(f"duplicate protected accounting for {overlap[:5]}")
     pending = [
         entry for entry in context.protected_entries
-        if entry.reference_uid not in protected_reference_uids(context)
+        if entry.reference_uid not in fingerprinted and entry.reference_uid not in short_uids
     ]
-    if not pending:
-        return 0
-    if fingerprint_fn is None:
-        from src.rq2_audio_fingerprint import compute_fingerprint
-
-        def fingerprint_fn(path):  # type: ignore
-            return compute_fingerprint(path, context.config.overlap)
-
     written = 0
-    batch: List[dict] = []
-    for item in resolver.iter_materialized_audio(pending):
-        fingerprint = fingerprint_fn(item.path)
-        batch.append({
-            "uid": item.entry.reference_uid,
-            "reference_uid": item.entry.reference_uid,
-            "split": item.entry.split,
-            "source_sha256": item.sha256_pcm,
-            "fingerprint": fingerprint,
-        })
-        if len(batch) >= 32:
+    if pending:
+        if fingerprint_fn is None:
+            _require_compatible_fpcalc(context)
+            from src.rq2_audio_fingerprint import compute_fingerprint
+
+            def fingerprint_fn(path):  # type: ignore
+                return compute_fingerprint(path, context.config.overlap)
+        min_items = int(context.config.overlap.min_overlap_items)
+        records = list(short_rows)
+        pending_shorts: List[dict] = []
+        batch: List[dict] = []
+
+        def flush_shorts(force: bool = False) -> None:
+            if not pending_shorts:
+                return
+            if not force and len(pending_shorts) < _SHORT_WRITE_BATCH:
+                return
+            records.extend(pending_shorts)
+            pending_shorts.clear()
+            _write_short_eligibility_records(context, records)
+
+        for item in resolver.iter_materialized_audio(pending):
+            entry = item.entry
+            try:
+                dims = _actual_wav_dimensions(item.path)
+            except RuntimeError as exc:
+                flush_shorts(force=True)
+                raise RuntimeError(
+                    f"invalid reconstructed protected audio for {entry.reference_uid} "
+                    f"split={entry.split}: {exc}"
+                ) from exc
+            _verify_pinned_wav_dimensions(entry, dims)
+            pcm_hash = str(item.sha256_pcm or "").strip().lower()
+            if not _is_valid_sha256(pcm_hash):
+                flush_shorts(force=True)
+                raise RuntimeError(f"materialized protected audio has no sha256_pcm for {entry.reference_uid}")
+            if not _duration_reaches_perceptual_minimum(dims["actual_n_samples"], dims["actual_sample_rate"]):
+                pending_shorts.append(_short_eligibility_record(entry, dims, pcm_hash, min_items))
+                flush_shorts()
+                continue
+            flush_shorts(force=True)
+            try:
+                fingerprint = fingerprint_fn(item.path)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"fpcalc failed for protected reference {entry.reference_uid} "
+                    f"split={entry.split} duration={dims['actual_duration_seconds']}: {exc}"
+                ) from exc
+            n_items = len(fingerprint) if is_valid_fingerprint(fingerprint) else 0
+            if n_items < min_items:
+                raise RuntimeError(
+                    f"protected fingerprint below min_overlap_items for {entry.reference_uid} "
+                    f"split={entry.split} duration={dims['actual_duration_seconds']} "
+                    f"items={n_items} required={min_items}"
+                )
+            batch.append({
+                "uid": entry.reference_uid,
+                "reference_uid": entry.reference_uid,
+                "split": entry.split,
+                "source_sha256": pcm_hash,
+                "fingerprint": fingerprint,
+            })
+            if len(batch) >= 32:
+                append_fingerprint_shard(context, "protected_fingerprints", batch)
+                written += len(batch)
+                batch = []
+        flush_shorts(force=True)
+        if batch:
             append_fingerprint_shard(context, "protected_fingerprints", batch)
             written += len(batch)
-            batch = []
-    if batch:
-        append_fingerprint_shard(context, "protected_fingerprints", batch)
-        written += len(batch)
+    _remember_protected_eligibility(context)
     return written
+
+
+def _exact_identity_path(context: UCleanContext) -> Path:
+    return checkpoint_root(context) / _EXACT_IDENTITY_FILENAME
+
+
+def _load_exact_identity_records(context: UCleanContext) -> List[dict]:
+    state = _read_checkpoint_state(context)
+    meta = dict(state.get("protected_exact_identity") or {})
+    path = _exact_identity_path(context)
+    if not path.is_file() or not meta.get("sha256"):
+        return []
+    payload = path.read_bytes()
+    if hashlib.sha256(payload).hexdigest() != str(meta.get("sha256") or ""):
+        return []
+    if str(meta.get("policy") or "") != PROTECTED_EXACT_POLICY:
+        return []
+    rows = []
+    seen = set()
+    for line in payload.decode("utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        key = _protected_identity_key(row.get("split"), row.get("reference_uid"))
+        if not key[1] or key in seen:
+            raise RuntimeError(f"duplicate protected exact identity {key[0]}:{key[1]}")
+        if str(row.get("policy") or "") != PROTECTED_EXACT_POLICY:
+            return []
+        if not _is_valid_sha256(str(row.get("sha256_pcm") or "")):
+            return []
+        seen.add(key)
+        rows.append(row)
+    return rows
+
+
+def _write_exact_identity_records(context: UCleanContext, rows: Sequence[dict]) -> None:
+    ordered = sorted(rows, key=lambda row: (str(row.get("split") or ""), str(row.get("reference_uid") or "")))
+    payload = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in ordered)
+    path = _exact_identity_path(context)
+    atomic_write_text(path, payload)
+    state = _read_checkpoint_state(context)
+    state["protected_exact_identity"] = {
+        "path": _EXACT_IDENTITY_FILENAME,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "policy": PROTECTED_EXACT_POLICY,
+        "n_records": len(ordered),
+        "identities": [f"{row['split']}:{row['reference_uid']}" for row in ordered],
+    }
+    _write_checkpoint_state(context, state)
+
+
+def protected_exact_identity_complete(context: UCleanContext) -> bool:
+    """True when every current protected identity has a matching exact-PCM ledger row."""
+    indexed = _indexed_protected_pcm(context)
+    if indexed["unaccounted"]:
+        return False
+    rows = _load_exact_identity_records(context)
+    found: Dict[Tuple[str, str], str] = {}
+    for row in rows:
+        key = _protected_identity_key(row.get("split"), row.get("reference_uid"))
+        if key in found:
+            raise RuntimeError(f"duplicate protected exact identity {key[0]}:{key[1]}")
+        found[key] = str(row.get("sha256_pcm") or "").strip().lower()
+    hashes = dict(indexed["fingerprinted"])
+    hashes.update(indexed["shorts"])
+    if set(found) != set(hashes):
+        return False
+    return all(found[key] == digest for key, digest in hashes.items())
+
+
+def apply_protected_exact_identity(segments: List[dict], context: UCleanContext) -> List[MatchEvidence]:
+    """Exclude retained U segments whose PCM hash equals a protected reference.
+
+    Every materialized protected reference is checked, including clips that are
+    too short to fingerprint. The comparison always runs against the segments
+    in memory, so a resume cannot keep a matching segment just because a ledger
+    file already exists. No fingerprint is invented for a short reference.
+    """
+    indexed = _indexed_protected_pcm(context)
+    if indexed["unaccounted"]:
+        sample = [f"{split}:{uid}" for split, uid in indexed["unaccounted"][:5]]
+        raise RuntimeError(
+            "exact protected identity requires every protected reference to be materialized first; "
+            f"unaccounted={sample}"
+        )
+    hashes = dict(indexed["fingerprinted"])
+    hashes.update(indexed["shorts"])
+    by_pcm: Dict[str, List[dict]] = {}
+    for row in segments:
+        if row.get("u_clean_status") != RETAINED_STATUS:
+            continue
+        digest = str(row.get("segment_pcm16_sha256") or "").strip().lower()
+        if _is_valid_sha256(digest):
+            by_pcm.setdefault(digest, []).append(row)
+    evidence: List[MatchEvidence] = []
+    records = []
+    for split, uid in sorted(hashes):
+        digest = hashes[(split, uid)]
+        matched = list(by_pcm.get(digest, []))
+        for row in matched:
+            flag = _SPLIT_TO_FLAG.get(split)
+            if flag:
+                row[flag] = True
+            _exclude(row, EXCLUDED_PROTECTED_OVERLAP)
+            evidence.append(MatchEvidence(
+                candidate_uid=str(row.get("segment_uid") or ""),
+                reference_uid=uid,
+                reference_split=split,
+                matched_duration_seconds=float(row.get("duration_seconds") or 0.0),
+                alignment_offset=0,
+                similarity=1.0,
+                match_type=PROTECTED_EXACT_MATCH,
+            ))
+        records.append({
+            "reference_uid": uid,
+            "split": split,
+            "sha256_pcm": digest,
+            "n_exact_matches": len(matched),
+            "match_type": PROTECTED_EXACT_MATCH,
+            "policy": PROTECTED_EXACT_POLICY,
+        })
+    _write_exact_identity_records(context, records)
+    provenance = dict(context.reference_provenance)
+    provenance["protected_exact_identity"] = {
+        "policy": PROTECTED_EXACT_POLICY,
+        "n_checked": len(records),
+        "n_exact_matches": sum(int(row["n_exact_matches"]) for row in records),
+    }
+    context.reference_provenance = provenance
+    return evidence
 
 
 def iter_protected_fingerprint_shards(context: UCleanContext):
@@ -3328,6 +3925,14 @@ def iter_protected_fingerprint_shards(context: UCleanContext):
             wanted = expected.get(row["uid"]) if expected else None
             if not _is_valid_sha256(stored) or (wanted and wanted != stored):
                 continue
+            fingerprint = row["fingerprint"]
+            min_items = int(context.config.overlap.min_overlap_items)
+            n_items = len(fingerprint) if is_valid_fingerprint(fingerprint) else 0
+            if n_items < min_items:
+                raise RuntimeError(
+                    f"protected fingerprint below min_overlap_items for {row['uid']} "
+                    f"split={row.get('split')} items={n_items} required={min_items}"
+                )
             batch.append({
                 "uid": row["uid"],
                 "split": row["split"],

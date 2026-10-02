@@ -14,14 +14,16 @@ step that turns an audio file into a fingerprint requires ``fpcalc``.
 This module never reads transcripts, runs a speech model, or computes
 BLEU/CER/WER. It only compares audio identity.
 
-``OverlapConfig.frozen`` gates the *threshold*, which must be frozen on
-synthetic re-encode/trim/gain/different pairs — never on the frozen-test
+``OverlapConfig.frozen`` gates the threshold. The production notebook's frozen
+OverlapConfig is authoritative. That threshold was calibrated on controlled
+real VOV4 transformations and negative pairs, never on the frozen-test
 similarity distribution.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 from collections import Counter
 import subprocess
@@ -47,7 +49,8 @@ class OverlapConfig:
     shingle_k: int = 8
     min_shared_shingles: int = 1
     min_overlap_items: int = 20
-    # Decision boundary in [0, 1]. PLACEHOLDER until frozen.
+    # Decision boundary in [0, 1]. This class default is not the production
+    # threshold. Notebook 11's frozen OverlapConfig is authoritative.
     similarity_threshold: float = 0.90
     frozen: bool = False
 
@@ -107,6 +110,17 @@ def require_fpcalc(binary: str = FPCALC_BINARY) -> str:
             "precomputed fingerprints for offline tests."
         )
     return path
+
+
+def fpcalc_version(binary: str = FPCALC_BINARY) -> str:
+    """Return the fpcalc release version. The binary path is not a contract field."""
+    path = require_fpcalc(binary)
+    completed = subprocess.run([path, "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    text = (completed.stdout + b"\n" + completed.stderr).decode(errors="replace")
+    match = re.search(r"(\d+\.\d+\.\d+)", text)
+    if completed.returncode != 0 or match is None:
+        raise RuntimeError(f"cannot read fpcalc version from {path}: {text[-200:]}")
+    return match.group(1)
 
 
 def compute_fingerprint(wav_path, config: OverlapConfig) -> List[int]:
@@ -192,8 +206,9 @@ def matched_duration_seconds(overlap_items: int, config: OverlapConfig) -> float
 def is_perceptual_match(fp_a: Sequence[int], fp_b: Sequence[int], config: OverlapConfig) -> bool:
     if not config.frozen:
         raise RuntimeError(
-            "OverlapConfig is not frozen; freeze the similarity threshold on "
-            "synthetic pairs before making perceptual match decisions."
+            "OverlapConfig is not frozen; the production notebook freezes the "
+            "similarity threshold after calibration on controlled real VOV4 "
+            "transformations and negative pairs."
         )
     return compare_fingerprints(fp_a, fp_b, config) >= config.similarity_threshold
 

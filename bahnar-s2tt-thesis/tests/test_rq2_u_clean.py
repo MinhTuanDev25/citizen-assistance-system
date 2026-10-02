@@ -1493,11 +1493,11 @@ def _wav_payload(n_samples=1600):
     return buffer.getvalue()
 
 
-def _decoded_wav():
+def _decoded_wav(n_samples=1600):
     pytest.importorskip("soundfile")
     from src.asr_full_pcm import canonical_pcm16_from_bytes
 
-    raw = _wav_payload()
+    raw = _wav_payload(n_samples)
     return raw, canonical_pcm16_from_bytes(raw, target_sr=16000)
 
 
@@ -1628,7 +1628,7 @@ def test_protected_fingerprint_resume_reuses_valid_shards(tmp_path):
     pytest.importorskip("soundfile")
     from src.rq2_u_clean import generate_protected_fingerprints
 
-    raw, decoded = _decoded_wav()
+    raw, decoded = _decoded_wav(81600)
     calls = {"n": 0, "indices": []}
     materializer, _shard = _materializer(tmp_path, {1: {"id": "id-1", "audio": raw}}, calls)
     entry = _reconstruct_entry("A", 1, decoded)
@@ -1653,7 +1653,7 @@ def test_changed_identity_index_sha_invalidates_resume(tmp_path):
     pytest.importorskip("soundfile")
     from src.rq2_u_clean import generate_protected_fingerprints
 
-    raw, decoded = _decoded_wav()
+    raw, decoded = _decoded_wav(81600)
     materializer, _shard = _materializer(tmp_path, {1: {"id": "id-1", "audio": raw}}, {"n": 0, "indices": []})
     ctx = _fingerprint_context(tmp_path, [_reconstruct_entry("A", 1, decoded)])
     generate_protected_fingerprints(ctx, materializer, fingerprint_fn=lambda path: _rand_fp(4))
@@ -1667,13 +1667,904 @@ def test_changed_overlap_contract_invalidates_resume(tmp_path):
     pytest.importorskip("soundfile")
     from src.rq2_u_clean import generate_protected_fingerprints
 
-    raw, decoded = _decoded_wav()
+    raw, decoded = _decoded_wav(81600)
     materializer, _shard = _materializer(tmp_path, {1: {"id": "id-1", "audio": raw}}, {"n": 0, "indices": []})
     ctx = _fingerprint_context(tmp_path, [_reconstruct_entry("A", 1, decoded)])
     generate_protected_fingerprints(ctx, materializer, fingerprint_fn=lambda path: _rand_fp(5))
     ctx.config.overlap = OverlapConfig(similarity_threshold=0.50)
     with pytest.raises(RuntimeError, match="stale"):
         generate_protected_fingerprints(ctx, materializer, fingerprint_fn=lambda path: _rand_fp(5))
+
+
+def _eligibility_entry(uid, split, **overrides):
+    values = dict(
+        reference_uid=uid,
+        split=split,
+        audio_locator=uid + ".flac",
+        sha256_pcm="ab" * 32,
+        n_samples=0,
+        sample_rate=0,
+    )
+    values.update(overrides)
+    return ProtectedReferenceEntry(**values)
+
+
+class _WavResolver:
+    def __init__(self, root, samples_by_uid, calls, corrupt=()):
+        self.root = Path(root)
+        self.samples_by_uid = dict(samples_by_uid)
+        self.calls = calls
+        self.corrupt = set(corrupt)
+
+    def iter_materialized_audio(self, entries):
+        from src.rq2_u_clean import MaterializedProtectedAudio
+
+        self.calls["n"] += 1
+        self.calls["uids"].extend(entry.reference_uid for entry in entries)
+        for entry in entries:
+            path = self.root / (entry.reference_uid + ".wav")
+            n_samples = int(self.samples_by_uid.get(entry.reference_uid) or 0)
+            if entry.reference_uid in self.corrupt:
+                path.write_bytes(b"not-a-wav")
+            else:
+                pcm = np.zeros(n_samples, dtype="<i2")
+                write_wav_pcm16_atomic(path, pcm, 16000)
+            yield MaterializedProtectedAudio(
+                entry=entry,
+                path=path,
+                sha256_pcm=entry.sha256_pcm or ("ab" * 32),
+                sha256_source=entry.sha256_source or ("cd" * 32),
+                n_samples=n_samples,
+                sample_rate=16000,
+            )
+
+
+def _short_rows(ctx):
+    path = ctx.config.out_dir / "checkpoint" / "protected_short_eligibility.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_short_protected_reference_is_audited_without_fpcalc(tmp_path):
+    from src.rq2_u_clean import (
+        SHORT_NOT_PERCEPTUALLY_ELIGIBLE,
+        generate_protected_fingerprints,
+        protected_fingerprint_coverage_complete,
+        protected_reference_accounting,
+    )
+
+    calls = {"n": 0}
+    samples = {"TR": 81599, "VA": 32000, "TE": 24000}
+    entries = [
+        _eligibility_entry("TR", "g_train"),
+        _eligibility_entry("VA", "g_validation"),
+        _eligibility_entry("TE", "frozen_test"),
+    ]
+    ctx = _fingerprint_context(tmp_path, entries)
+    resolver = _WavResolver(tmp_path, samples, {"n": 0, "uids": []})
+
+    def fingerprint_fn(path):
+        calls["n"] += 1
+        return _rand_fp(1)
+
+    assert generate_protected_fingerprints(ctx, resolver, fingerprint_fn=fingerprint_fn) == 0
+    assert calls["n"] == 0
+    rows = _short_rows(ctx)
+    assert [row["reference_uid"] for row in rows] == ["TE", "TR", "VA"]
+    assert {row["status"] for row in rows} == {SHORT_NOT_PERCEPTUALLY_ELIGIBLE}
+    assert {row["reason"] for row in rows} == {SHORT_NOT_PERCEPTUALLY_ELIGIBLE}
+    by_uid = {row["reference_uid"]: row for row in rows}
+    assert by_uid["TR"]["actual_n_samples"] == 81599
+    assert by_uid["TR"]["actual_sample_rate"] == 16000
+    assert by_uid["TR"]["actual_duration_seconds"] < 5.1
+    assert by_uid["TR"]["protected_perceptual_min_duration_seconds"] == 5.1
+    assert by_uid["TR"]["min_overlap_items"] == 20
+    stats = protected_reference_accounting(ctx)
+    assert stats["n_protected_total"] == 3
+    assert stats["n_protected_fingerprinted"] == 0
+    assert stats["n_protected_short_not_perceptually_eligible"] == 3
+    assert stats["n_protected_unaccounted"] == 0
+    assert protected_fingerprint_coverage_complete(ctx) is True
+
+
+def test_duration_at_boundary_persists_fingerprint(tmp_path):
+    from src.rq2_u_clean import generate_protected_fingerprints, iter_protected_fingerprint_shards
+
+    calls = {"n": 0}
+    entries = [
+        _eligibility_entry("TR", "g_train"),
+        _eligibility_entry("VA", "g_validation"),
+        _eligibility_entry("TE", "frozen_test"),
+    ]
+    ctx = _fingerprint_context(tmp_path, entries)
+    resolver = _WavResolver(tmp_path, {"TR": 81600, "VA": 16000, "TE": 16000}, {"n": 0, "uids": []})
+
+    def fingerprint_fn(path):
+        calls["n"] += 1
+        return _rand_fp(9)
+
+    assert generate_protected_fingerprints(ctx, resolver, fingerprint_fn=fingerprint_fn) == 1
+    assert calls["n"] == 1
+    yielded = [row for batch in iter_protected_fingerprint_shards(ctx) for row in batch]
+    assert [row["uid"] for row in yielded] == ["TR"]
+    assert len(yielded[0]["fingerprint"]) >= 20
+
+
+def test_eligible_duration_fails_closed_on_empty_fingerprint(tmp_path):
+    from src.rq2_u_clean import generate_protected_fingerprints
+
+    entry = _eligibility_entry("TR", "g_train", n_samples=81600, sample_rate=16000)
+    ctx = _fingerprint_context(tmp_path, [entry])
+    resolver = _WavResolver(tmp_path, {"TR": 81600}, {"n": 0, "uids": []})
+    with pytest.raises(RuntimeError, match="TR"):
+        generate_protected_fingerprints(ctx, resolver, fingerprint_fn=lambda path: [])
+    (tmp_path / "err").mkdir()
+    ctx = _fingerprint_context(tmp_path / "err", [entry])
+    resolver = _WavResolver(tmp_path / "err", {"TR": 81600}, {"n": 0, "uids": []})
+
+    def boom(path):
+        raise RuntimeError("Empty fingerprint")
+
+    with pytest.raises(RuntimeError, match="Empty fingerprint") as caught:
+        generate_protected_fingerprints(ctx, resolver, fingerprint_fn=boom)
+    message = str(caught.value)
+    assert "TR" in message and "g_train" in message and "5.1" in message
+
+
+def test_eligible_duration_fails_closed_when_fingerprint_is_too_short(tmp_path):
+    from src.rq2_u_clean import generate_protected_fingerprints
+
+    entry = _eligibility_entry("TR", "g_train", n_samples=81600, sample_rate=16000)
+    ctx = _fingerprint_context(tmp_path, [entry])
+    resolver = _WavResolver(tmp_path, {"TR": 81600}, {"n": 0, "uids": []})
+    with pytest.raises(RuntimeError, match="items=19") as caught:
+        generate_protected_fingerprints(
+            ctx, resolver, fingerprint_fn=lambda path: _rand_fp(2, size=19),
+        )
+    message = str(caught.value)
+    assert "TR" in message and "g_train" in message and "required=20" in message
+
+
+def test_mixed_protected_coverage_requires_every_uid(tmp_path):
+    from src.rq2_u_clean import (
+        generate_protected_fingerprints,
+        protected_fingerprint_coverage_complete,
+        protected_reference_accounting,
+    )
+
+    entries = [
+        _eligibility_entry("TR", "g_train"),
+        _eligibility_entry("VA", "g_validation"),
+        _eligibility_entry("TE", "frozen_test"),
+    ]
+    ctx = _fingerprint_context(tmp_path, entries)
+    resolver = _WavResolver(tmp_path, {"TR": 81600, "VA": 24000, "TE": 32000}, {"n": 0, "uids": []})
+    generate_protected_fingerprints(ctx, resolver, fingerprint_fn=lambda path: _rand_fp(3))
+    stats = protected_reference_accounting(ctx)
+    assert stats["n_protected_fingerprinted"] == 1
+    assert stats["n_protected_short_not_perceptually_eligible"] == 2
+    assert stats["n_protected_perceptual_eligible"] == 1
+    assert stats["n_protected_unaccounted"] == 0
+    assert protected_fingerprint_coverage_complete(ctx) is True
+    ctx.protected_entries = entries + [_eligibility_entry("MISSING", "g_train")]
+    stats = protected_reference_accounting(ctx)
+    assert stats["n_protected_unaccounted"] == 1
+    assert protected_fingerprint_coverage_complete(ctx) is False
+
+
+def test_zero_metadata_uses_materialized_wav_dimensions(tmp_path):
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("soundfile")
+    from src.rq2_u_clean import generate_protected_fingerprints
+
+    raw_short, decoded_short = _decoded_wav(1600)
+    raw_long, decoded_long = _decoded_wav(81600)
+    calls = {"n": 0, "indices": []}
+    materializer, _shard = _materializer(tmp_path, {
+        1: {"id": "id-1", "audio": raw_short},
+        2: {"id": "id-2", "audio": raw_long},
+    }, calls)
+    short = _reconstruct_entry("S", 1, decoded_short, n_samples=0, sample_rate=0, split="g_train")
+    long = _reconstruct_entry("L", 2, decoded_long, n_samples=0, sample_rate=0, split="g_validation")
+    ctx = _fingerprint_context(tmp_path, [short, long])
+    fingerprints = {"n": 0}
+
+    def fingerprint_fn(path):
+        fingerprints["n"] += 1
+        return _rand_fp(6)
+
+    assert generate_protected_fingerprints(ctx, materializer, fingerprint_fn=fingerprint_fn) == 1
+    assert fingerprints["n"] == 1
+    rows = _short_rows(ctx)
+    assert len(rows) == 1
+    assert rows[0]["reference_uid"] == "S"
+    assert rows[0]["actual_n_samples"] == int(decoded_short["n_samples"])
+    assert rows[0]["actual_sample_rate"] == 16000
+    assert rows[0]["actual_n_samples"] > 0
+
+
+def test_nonzero_metadata_mismatch_fails_closed(tmp_path):
+    pytest.importorskip("soundfile")
+    from src.rq2_u_clean import generate_protected_fingerprints
+
+    calls = {"n": 0}
+    entry = _eligibility_entry("TR", "g_train", n_samples=100, sample_rate=16000)
+    ctx = _fingerprint_context(tmp_path, [entry])
+    resolver = _WavResolver(tmp_path, {"TR": 81600}, {"n": 0, "uids": []})
+    with pytest.raises(RuntimeError, match="n_samples mismatch"):
+        generate_protected_fingerprints(ctx, resolver, fingerprint_fn=lambda path: calls.__setitem__("n", calls["n"] + 1) or _rand_fp(1))
+    assert calls["n"] == 0
+
+    raw, decoded = _decoded_wav(1600)
+    (tmp_path / "mat").mkdir()
+    materializer, _shard = _materializer(tmp_path / "mat", {1: {"id": "id-1", "audio": raw}}, {"n": 0, "indices": []})
+    mismatched = _reconstruct_entry("A", 1, decoded, n_samples=1)
+    with pytest.raises(RuntimeError, match="n_samples mismatch"):
+        list(materializer.iter_materialized_audio([mismatched]))
+
+
+def test_invalid_reconstructed_wav_fails_closed(tmp_path):
+    from src.rq2_u_clean import generate_protected_fingerprints
+
+    calls = {"n": 0}
+    entry = _eligibility_entry("TR", "g_train")
+    ctx = _fingerprint_context(tmp_path, [entry])
+    resolver = _WavResolver(tmp_path, {"TR": 81600}, {"n": 0, "uids": []}, corrupt={"TR"})
+    with pytest.raises(RuntimeError, match="invalid reconstructed"):
+        generate_protected_fingerprints(ctx, resolver, fingerprint_fn=lambda path: calls.__setitem__("n", calls["n"] + 1) or _rand_fp(1))
+    assert calls["n"] == 0
+
+
+def test_protected_fingerprint_and_short_accounting_resume(tmp_path):
+    from src.rq2_u_clean import generate_protected_fingerprints, protected_reference_accounting
+
+    calls = {"n": 0}
+    samples = {"TR": 81600, "VA": 24000, "TE": 32000}
+    entries = [
+        _eligibility_entry("TR", "g_train"),
+        _eligibility_entry("VA", "g_validation"),
+        _eligibility_entry("TE", "frozen_test"),
+    ]
+    ctx = _fingerprint_context(tmp_path, entries)
+    resolver = _WavResolver(tmp_path, samples, {"n": 0, "uids": []})
+
+    def fingerprint_fn(path):
+        calls["n"] += 1
+        return _rand_fp(8)
+
+    assert generate_protected_fingerprints(ctx, resolver, fingerprint_fn=fingerprint_fn) == 1
+    state_path = ctx.config.out_dir / "checkpoint" / "state.json"
+    short_path = ctx.config.out_dir / "checkpoint" / "protected_short_eligibility.jsonl"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["segment_shards"] = [{"name": "keep.parquet", "sha256": "cd" * 32, "uids": ["seg-1"]}]
+    state["segment_fingerprint_shards"] = [{"name": "keep-fp.parquet", "sha256": "ef" * 32, "uids": ["seg-1"]}]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    short_bytes = short_path.read_bytes()
+    assert generate_protected_fingerprints(ctx, resolver, fingerprint_fn=fingerprint_fn) == 0
+    assert calls["n"] == 1
+    assert resolver.calls["n"] == 1
+    assert short_path.read_bytes() == short_bytes
+    resumed = json.loads(state_path.read_text(encoding="utf-8"))
+    assert resumed["segment_shards"] == state["segment_shards"]
+    assert resumed["segment_fingerprint_shards"] == state["segment_fingerprint_shards"]
+
+    original = short_path.read_bytes()
+    original_state = state_path.read_bytes()
+    duplicated = original.decode("utf-8") + original.decode("utf-8").splitlines()[0] + "\n"
+    short_path.write_text(duplicated, encoding="utf-8")
+    tampered = json.loads(original_state.decode("utf-8"))
+    tampered["protected_short_eligibility"]["sha256"] = hashlib.sha256(short_path.read_bytes()).hexdigest()
+    state_path.write_text(json.dumps(tampered), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="duplicate protected short-eligibility"):
+        protected_reference_accounting(ctx)
+
+    short_path.write_bytes(original)
+    state_path.write_bytes(original_state)
+    both = original.decode("utf-8") + json.dumps({
+        "reference_uid": "TR",
+        "split": "g_train",
+        "actual_n_samples": 1000,
+        "actual_sample_rate": 16000,
+        "actual_duration_seconds": 0.0625,
+        "status": "SHORT_NOT_PERCEPTUALLY_ELIGIBLE",
+        "reason": "SHORT_NOT_PERCEPTUALLY_ELIGIBLE",
+        "protected_perceptual_min_duration_seconds": 5.1,
+        "min_overlap_items": 20,
+        "fpcalc_version": "1.5.1",
+        "sha256_pcm": "ab" * 32,
+        "policy": "protected_perceptual_min_duration_v1",
+    }, sort_keys=True) + "\n"
+    short_path.write_text(both, encoding="utf-8")
+    tampered = json.loads(original_state.decode("utf-8"))
+    tampered["protected_short_eligibility"]["sha256"] = hashlib.sha256(short_path.read_bytes()).hexdigest()
+    state_path.write_text(json.dumps(tampered), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="duplicate protected accounting"):
+        protected_reference_accounting(ctx)
+
+
+def test_short_rows_never_reach_protected_matcher(tmp_path):
+    from src.rq2_u_clean import (
+        generate_protected_fingerprints,
+        iter_protected_fingerprint_shards,
+        match_protected_batch,
+    )
+
+    entries = [
+        _eligibility_entry("TR", "g_train"),
+        _eligibility_entry("VA", "g_validation"),
+        _eligibility_entry("TE", "frozen_test"),
+    ]
+    ctx = _fingerprint_context(tmp_path, entries)
+    resolver = _WavResolver(tmp_path, {"TR": 81600, "VA": 24000, "TE": 16000}, {"n": 0, "uids": []})
+    generate_protected_fingerprints(ctx, resolver, fingerprint_fn=lambda path: _rand_fp(7))
+    index = FingerprintIndex(ctx.config.overlap)
+    seen = []
+    for batch in iter_protected_fingerprint_shards(ctx):
+        assert all(row["uid"] != "VA" and row["uid"] != "TE" for row in batch)
+        match_protected_batch([], SegmentCandidateIndex(ctx.config.overlap), batch, ctx.config)
+        for row in batch:
+            seen.append(row["uid"])
+            index.add(row["uid"], row["fingerprint"])
+    assert seen == ["TR"]
+    with pytest.raises(KeyError):
+        index.fingerprint_of("VA")
+
+
+def _open_segment(uid, pcm_sha, duration=4.0):
+    return {
+        "segment_uid": uid,
+        "source_id": "VOV4",
+        "start_sample": 0,
+        "u_clean_status": RETAINED_STATUS,
+        "segment_pcm16_sha256": pcm_sha,
+        "duration_seconds": duration,
+        "overlap_g_train": False,
+        "overlap_g_validation": False,
+        "overlap_frozen_test": False,
+    }
+
+
+def test_exact_protected_pcm_excludes_short_reference(tmp_path):
+    from src.rq2_u_clean import (
+        EXCLUDED_PROTECTED_OVERLAP,
+        apply_protected_exact_identity,
+        generate_protected_fingerprints,
+    )
+
+    pcm = "ab" * 32
+    calls = {"n": 0}
+    entry = _eligibility_entry("TR", "g_train", sha256_pcm=pcm)
+    ctx = _fingerprint_context(tmp_path, [entry])
+    resolver = _WavResolver(tmp_path, {"TR": 64000}, {"n": 0, "uids": []})
+    assert generate_protected_fingerprints(ctx, resolver, fingerprint_fn=lambda path: calls.__setitem__("n", 1) or _rand_fp(1)) == 0
+    assert calls["n"] == 0
+    segment = _open_segment("SEG", pcm, duration=4.0)
+    evidence = apply_protected_exact_identity([segment], ctx)
+    assert segment["u_clean_status"] == EXCLUDED_PROTECTED_OVERLAP
+    assert segment["overlap_g_train"] is True
+    assert evidence[0].match_type == "protected_exact"
+    assert evidence[0].reference_uid == "TR"
+    assert evidence[0].reference_split == "g_train"
+
+
+def test_exact_protected_pcm_keeps_different_short_reference(tmp_path):
+    from src.rq2_u_clean import apply_protected_exact_identity, generate_protected_fingerprints
+
+    entry = _eligibility_entry("TR", "g_train", sha256_pcm="ab" * 32)
+    ctx = _fingerprint_context(tmp_path, [entry])
+    resolver = _WavResolver(tmp_path, {"TR": 64000}, {"n": 0, "uids": []})
+    generate_protected_fingerprints(ctx, resolver, fingerprint_fn=lambda path: _rand_fp(1))
+    segment = _open_segment("SEG", "cd" * 32, duration=4.0)
+    evidence = apply_protected_exact_identity([segment], ctx)
+    assert segment["u_clean_status"] == RETAINED_STATUS
+    assert evidence == []
+
+
+def test_exact_protected_pcm_records_reference_split(tmp_path):
+    from src.rq2_u_clean import apply_protected_exact_identity, generate_protected_fingerprints
+
+    pcm = "ef" * 32
+    entry = _eligibility_entry("TE", "frozen_test", sha256_pcm=pcm)
+    ctx = _fingerprint_context(tmp_path, [entry])
+    resolver = _WavResolver(tmp_path, {"TE": 48000}, {"n": 0, "uids": []})
+    generate_protected_fingerprints(ctx, resolver, fingerprint_fn=lambda path: _rand_fp(1))
+    segment = _open_segment("SEG", pcm, duration=3.0)
+    evidence = apply_protected_exact_identity([segment], ctx)
+    assert segment["overlap_frozen_test"] is True
+    assert segment["overlap_g_train"] is False
+    assert evidence[0].reference_split == "frozen_test"
+    assert evidence[0].reference_uid == "TE"
+    assert evidence[0].match_type == "protected_exact"
+
+
+def test_exact_protected_pcm_uses_materialized_hash_when_metadata_is_zero(tmp_path):
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("soundfile")
+    from src.rq2_u_clean import (
+        EXCLUDED_PROTECTED_OVERLAP,
+        apply_protected_exact_identity,
+        generate_protected_fingerprints,
+    )
+
+    raw, decoded = _decoded_wav(64000)
+    calls = {"n": 0, "indices": []}
+    materializer, _shard = _materializer(tmp_path, {1: {"id": "id-1", "audio": raw}}, calls)
+    entry = _reconstruct_entry("S", 1, decoded, n_samples=0, sample_rate=0, split="g_train")
+    assert entry.n_samples == 0 and entry.sample_rate == 0
+    ctx = _fingerprint_context(tmp_path, [entry])
+    assert generate_protected_fingerprints(ctx, materializer, fingerprint_fn=lambda path: _rand_fp(1)) == 0
+    row = _short_rows(ctx)[0]
+    assert row["actual_n_samples"] == int(decoded["n_samples"])
+    assert row["actual_sample_rate"] == 16000
+    assert row["sha256_pcm"] == decoded["sha256_pcm"]
+    segment = _open_segment("SEG", decoded["sha256_pcm"], duration=4.0)
+    apply_protected_exact_identity([segment], ctx)
+    assert segment["u_clean_status"] == EXCLUDED_PROTECTED_OVERLAP
+
+
+def test_exact_protected_check_reruns_when_ledger_is_missing(tmp_path):
+    from src.rq2_u_clean import (
+        EXCLUDED_PROTECTED_OVERLAP,
+        apply_protected_exact_identity,
+        generate_protected_fingerprints,
+        protected_exact_identity_complete,
+    )
+
+    pcm = "ab" * 32
+    entry = _eligibility_entry("TR", "g_train", sha256_pcm=pcm)
+    ctx = _fingerprint_context(tmp_path, [entry])
+    resolver = _WavResolver(tmp_path, {"TR": 64000}, {"n": 0, "uids": []})
+    generate_protected_fingerprints(ctx, resolver, fingerprint_fn=lambda path: _rand_fp(1))
+    state_path = ctx.config.out_dir / "checkpoint" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["segment_shards"] = [{"name": "keep.parquet", "sha256": "cd" * 32, "uids": ["seg-1"]}]
+    state["segment_fingerprint_shards"] = [{"name": "keep-fp.parquet", "sha256": "ef" * 32, "uids": ["seg-1"]}]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    segment = _open_segment("SEG", pcm, duration=4.0)
+    apply_protected_exact_identity([segment], ctx)
+    assert segment["u_clean_status"] == EXCLUDED_PROTECTED_OVERLAP
+    segment["u_clean_status"] = RETAINED_STATUS
+    segment["overlap_g_train"] = False
+    exact_path = ctx.config.out_dir / "checkpoint" / "protected_exact_identity.jsonl"
+    exact_path.unlink()
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["protected_exact_identity"] = {}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    assert protected_exact_identity_complete(ctx) is False
+    apply_protected_exact_identity([segment], ctx)
+    assert segment["u_clean_status"] == EXCLUDED_PROTECTED_OVERLAP
+    resumed = json.loads(state_path.read_text(encoding="utf-8"))
+    assert resumed["segment_shards"][0]["name"] == "keep.parquet"
+    assert resumed["segment_fingerprint_shards"][0]["name"] == "keep-fp.parquet"
+
+
+def test_exact_protected_pcm_also_matches_long_reference(tmp_path):
+    pytest.importorskip("pyarrow")
+    from src.rq2_u_clean import (
+        EXCLUDED_PROTECTED_OVERLAP,
+        apply_protected_exact_identity,
+        generate_protected_fingerprints,
+    )
+
+    pcm = "12" * 32
+    entry = _eligibility_entry("TR", "g_validation", sha256_pcm=pcm)
+    ctx = _fingerprint_context(tmp_path, [entry])
+    resolver = _WavResolver(tmp_path, {"TR": 81600}, {"n": 0, "uids": []})
+    assert generate_protected_fingerprints(ctx, resolver, fingerprint_fn=lambda path: _rand_fp(4)) == 1
+    segment = _open_segment("SEG", pcm, duration=6.0)
+    evidence = apply_protected_exact_identity([segment], ctx)
+    assert segment["u_clean_status"] == EXCLUDED_PROTECTED_OVERLAP
+    assert segment["overlap_g_validation"] is True
+    assert evidence[0].match_type == "protected_exact"
+
+
+def test_swapped_protected_split_cannot_complete_coverage(tmp_path):
+    pytest.importorskip("pyarrow")
+    from src.rq2_u_clean import (
+        append_fingerprint_shard,
+        generate_protected_fingerprints,
+        protected_fingerprint_coverage_complete,
+    )
+
+    entries = [
+        _eligibility_entry("TR", "g_train"),
+        _eligibility_entry("VA", "g_validation"),
+        _eligibility_entry("TE", "frozen_test"),
+    ]
+    ctx = _fingerprint_context(tmp_path, entries)
+    append_fingerprint_shard(ctx, "protected_fingerprints", [{
+        "uid": "TR",
+        "split": "frozen_test",
+        "source_sha256": "ab" * 32,
+        "fingerprint": _rand_fp(1),
+    }])
+    completed = None
+    with pytest.raises(RuntimeError, match="split mismatch"):
+        completed = protected_fingerprint_coverage_complete(ctx)
+    assert completed is not True
+
+    (tmp_path / "shorts").mkdir()
+    short_ctx = _fingerprint_context(tmp_path / "shorts", entries)
+    resolver = _WavResolver(tmp_path / "shorts", {"TR": 24000, "VA": 24000, "TE": 24000}, {"n": 0, "uids": []})
+    generate_protected_fingerprints(short_ctx, resolver, fingerprint_fn=lambda path: _rand_fp(1))
+    path = short_ctx.config.out_dir / "checkpoint" / "protected_short_eligibility.jsonl"
+    lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    for row in lines:
+        if row["reference_uid"] == "TR":
+            row["split"] = "frozen_test"
+    payload = "".join(json.dumps(row, sort_keys=True) + "\n" for row in lines)
+    path.write_text(payload, encoding="utf-8")
+    state_path = short_ctx.config.out_dir / "checkpoint" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["protected_short_eligibility"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    completed = None
+    with pytest.raises(RuntimeError, match="split mismatch"):
+        completed = protected_fingerprint_coverage_complete(short_ctx)
+    assert completed is not True
+
+
+def _plant_protected_fingerprint(ctx, uid, pcm, n_items, split="g_train"):
+    from src.rq2_u_clean import append_fingerprint_shard
+
+    append_fingerprint_shard(ctx, "protected_fingerprints", [{
+        "uid": uid,
+        "split": split,
+        "source_sha256": pcm,
+        "fingerprint": _rand_fp(1, size=n_items),
+    }])
+
+
+def _plant_segment_checkpoint(ctx):
+    from src.rq2_u_clean import append_fingerprint_shard, mark_source_segmentation_complete
+
+    mark_source_segmentation_complete(ctx, "VOV4", [{
+        "source_id": "VOV4",
+        "segment_uid": "S1",
+        "segment_pcm16_sha256": "cd" * 32,
+    }])
+    append_fingerprint_shard(ctx, "segment_fingerprints", [{
+        "segment_uid": "S1",
+        "fingerprint": _rand_fp(3, size=19),
+        "audio_sha256": "cd" * 32,
+    }])
+
+
+def test_old_short_protected_fingerprint_is_discarded_on_resume(tmp_path):
+    pytest.importorskip("pyarrow")
+    from src.rq2_u_clean import iter_protected_fingerprint_shards, load_resumable_checkpoint, protected_reference_uids
+
+    pcm = "ab" * 32
+    ctx = _fingerprint_context(tmp_path, [_eligibility_entry("TR", "g_train", sha256_pcm=pcm)])
+    _plant_protected_fingerprint(ctx, "TR", pcm, 19)
+    with pytest.raises(RuntimeError, match="items=19"):
+        list(iter_protected_fingerprint_shards(ctx))
+    loaded = load_resumable_checkpoint(ctx)
+    assert loaded["discarded_reference_fingerprints"] == 1
+    assert "TR" not in protected_reference_uids(ctx)
+    state = json.loads((ctx.config.out_dir / "checkpoint" / "state.json").read_text(encoding="utf-8"))
+    assert state["protected_fingerprint_shards"] == []
+    assert list(iter_protected_fingerprint_shards(ctx)) == []
+
+
+def test_discarded_short_fingerprint_is_rematerialized_as_ineligible(tmp_path):
+    pytest.importorskip("pyarrow")
+    from src.rq2_u_clean import (
+        SHORT_NOT_PERCEPTUALLY_ELIGIBLE,
+        generate_protected_fingerprints,
+        load_resumable_checkpoint,
+    )
+
+    pcm = "ab" * 32
+    calls = {"n": 0}
+    ctx = _fingerprint_context(tmp_path, [_eligibility_entry("TR", "g_train", sha256_pcm=pcm)])
+    resolver = _WavResolver(tmp_path, {"TR": 64000}, {"n": 0, "uids": []})
+    _plant_protected_fingerprint(ctx, "TR", pcm, 19)
+    load_resumable_checkpoint(ctx)
+    assert generate_protected_fingerprints(
+        ctx, resolver, fingerprint_fn=lambda path: calls.__setitem__("n", calls["n"] + 1) or _rand_fp(1),
+    ) == 0
+    assert resolver.calls["n"] == 1
+    assert calls["n"] == 0
+    rows = _short_rows(ctx)
+    assert rows[0]["reference_uid"] == "TR"
+    assert rows[0]["status"] == SHORT_NOT_PERCEPTUALLY_ELIGIBLE
+    assert rows[0]["actual_n_samples"] == 64000
+
+
+def test_discarded_short_fingerprint_is_recomputed_when_long_enough(tmp_path):
+    pytest.importorskip("pyarrow")
+    from src.rq2_u_clean import generate_protected_fingerprints, iter_protected_fingerprint_shards, load_resumable_checkpoint
+
+    pcm = "ab" * 32
+    calls = {"n": 0}
+    ctx = _fingerprint_context(tmp_path, [_eligibility_entry("TR", "g_train", sha256_pcm=pcm)])
+    resolver = _WavResolver(tmp_path, {"TR": 81600}, {"n": 0, "uids": []})
+    _plant_protected_fingerprint(ctx, "TR", pcm, 19)
+    load_resumable_checkpoint(ctx)
+
+    def fingerprint_fn(path):
+        calls["n"] += 1
+        return _rand_fp(4)
+
+    assert generate_protected_fingerprints(ctx, resolver, fingerprint_fn=fingerprint_fn) == 1
+    assert resolver.calls["n"] == 1
+    assert calls["n"] == 1
+    yielded = [row for batch in iter_protected_fingerprint_shards(ctx) for row in batch]
+    assert [row["uid"] for row in yielded] == ["TR"]
+    assert len(yielded[0]["fingerprint"]) >= 20
+
+
+def test_valid_protected_fingerprint_is_reused_after_resume(tmp_path):
+    pytest.importorskip("pyarrow")
+    from src.rq2_u_clean import generate_protected_fingerprints, load_resumable_checkpoint, protected_reference_uids
+
+    pcm = "ab" * 32
+    calls = {"n": 0}
+    ctx = _fingerprint_context(tmp_path, [_eligibility_entry("TR", "g_train", sha256_pcm=pcm)])
+    resolver = _WavResolver(tmp_path, {"TR": 81600}, {"n": 0, "uids": []})
+    _plant_protected_fingerprint(ctx, "TR", pcm, 80)
+    loaded = load_resumable_checkpoint(ctx)
+    assert loaded["discarded_reference_fingerprints"] == 0
+    assert "TR" in protected_reference_uids(ctx)
+    assert generate_protected_fingerprints(
+        ctx, resolver, fingerprint_fn=lambda path: calls.__setitem__("n", calls["n"] + 1) or _rand_fp(1),
+    ) == 0
+    assert resolver.calls["n"] == 0
+    assert calls["n"] == 0
+
+
+def test_protected_fingerprint_migration_leaves_segment_shards(tmp_path):
+    pytest.importorskip("pyarrow")
+    from src.rq2_u_clean import load_resumable_checkpoint
+
+    pcm = "ab" * 32
+    ctx = _fingerprint_context(tmp_path, [_eligibility_entry("TR", "g_train", sha256_pcm=pcm)])
+    _plant_segment_checkpoint(ctx)
+    _plant_protected_fingerprint(ctx, "TR", pcm, 19)
+    state_path = ctx.config.out_dir / "checkpoint" / "state.json"
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+    loaded = load_resumable_checkpoint(ctx)
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    assert loaded["discarded_reference_fingerprints"] == 1
+    assert after["segment_shards"] == before["segment_shards"]
+    assert after["segment_fingerprint_shards"] == before["segment_fingerprint_shards"]
+    assert "S1" in loaded["segment_fingerprints_by_uid"]
+    assert len(loaded["segment_fingerprints_by_uid"]["S1"]) == 19
+    assert after["protected_fingerprint_shards"] == []
+
+
+def _u_span_row(uid, n_samples, pcm):
+    return {
+        "segment_uid": uid,
+        "source_id": "VOV4",
+        "start_sample": 0,
+        "end_sample": int(n_samples),
+        "duration_seconds": round(int(n_samples) / 16000.0, 6),
+        "u_clean_status": RETAINED_STATUS,
+        "segment_pcm16_sha256": pcm,
+        "exclusion_reason": "",
+        "canonical_segment_uid": uid,
+    }
+
+
+def test_u_segment_below_5_1_skips_fpcalc_and_u_clean(tmp_path):
+    from src.rq2_u_clean import (
+        EXCLUDED_PERCEPTUAL_INELIGIBLE,
+        apply_u_perceptual_eligibility,
+        fingerprint_retained_u_segments,
+    )
+
+    cfg = _config()
+    row = _u_span_row("S", 64000, "cd" * 32)
+    calls = {"n": 0}
+    ctx = _fingerprint_context(tmp_path, [])
+    ctx.config.overlap = cfg.overlap
+    ctx.config.segmentation = cfg.segmentation
+    assert apply_u_perceptual_eligibility([row], ctx.config) == 1
+    assert row["u_clean_status"] == EXCLUDED_PERCEPTUAL_INELIGIBLE
+    assert row["exclusion_reason"] == EXCLUDED_PERCEPTUAL_INELIGIBLE
+    assert row["u_perceptual_min_duration_seconds"] == 5.1
+    assert row["perceptual_eligibility_min_overlap_items"] == 20
+    assert row["duration_seconds"] == 4.0
+    assert fingerprint_retained_u_segments(
+        [row], ctx, lambda item: calls.__setitem__("n", calls["n"] + 1) or _rand_fp(1),
+    ) == {}
+    assert calls["n"] == 0
+    assert retained_segments([row]) == []
+
+
+def test_u_segment_at_5_1_requires_20_item_fingerprint(tmp_path):
+    pytest.importorskip("pyarrow")
+    from src.rq2_u_clean import apply_u_perceptual_eligibility, fingerprint_retained_u_segments
+
+    row = _u_span_row("S", 81600, "cd" * 32)
+    calls = {"n": 0}
+    ctx = _fingerprint_context(tmp_path, [])
+    assert apply_u_perceptual_eligibility([row], ctx.config) == 0
+
+    def fingerprint_fn(item):
+        calls["n"] += 1
+        return _rand_fp(2, size=20)
+
+    fps = fingerprint_retained_u_segments([row], ctx, fingerprint_fn)
+    assert calls["n"] == 1
+    assert row["u_clean_status"] == RETAINED_STATUS
+    assert len(fps["S"]) >= 20
+
+
+def test_u_segment_at_least_5_1_rejects_19_item_fingerprint(tmp_path):
+    from src.rq2_u_clean import fingerprint_retained_u_segments
+
+    row = _u_span_row("S", 81600, "cd" * 32)
+    ctx = _fingerprint_context(tmp_path, [])
+    with pytest.raises(RuntimeError, match="S"):
+        fingerprint_retained_u_segments([row], ctx, lambda item: _rand_fp(3, size=19))
+
+
+def test_cached_short_u_fingerprint_excludes_without_recompute(tmp_path):
+    pytest.importorskip("pyarrow")
+    from src.rq2_u_clean import (
+        EXCLUDED_PERCEPTUAL_INELIGIBLE,
+        append_fingerprint_shard,
+        fingerprint_retained_u_segments,
+        load_resumable_checkpoint,
+        migrate_cached_u_fingerprints,
+    )
+
+    pcm = "cd" * 32
+    long_pcm = "ef" * 32
+    ctx = _fingerprint_context(tmp_path, [])
+    short = _u_span_row("SHORT", 64000, pcm)
+    long = _u_span_row("LONG", 81600, long_pcm)
+    from src.rq2_u_clean import mark_source_segmentation_complete
+
+    mark_source_segmentation_complete(ctx, "VOV4", [short, long])
+    append_fingerprint_shard(ctx, "segment_fingerprints", [{
+        "segment_uid": "SHORT",
+        "fingerprint": _rand_fp(5, size=19),
+        "audio_sha256": pcm,
+    }])
+    append_fingerprint_shard(ctx, "segment_fingerprints", [{
+        "segment_uid": "LONG",
+        "fingerprint": _rand_fp(6, size=80),
+        "audio_sha256": long_pcm,
+    }])
+    _plant_protected_fingerprint(ctx, "TR", "ab" * 32, 80)
+    state_path = ctx.config.out_dir / "checkpoint" / "state.json"
+    segment_file = next((ctx.config.out_dir / "checkpoint" / "segments").iterdir())
+    segment_bytes = segment_file.read_bytes()
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+    loaded = load_resumable_checkpoint(ctx)
+    calls = {"n": 0}
+    cached = migrate_cached_u_fingerprints(loaded["segments"], ctx, loaded["segment_fingerprints_by_uid"])
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    by_uid = {row["segment_uid"]: row for row in loaded["segments"]}
+    assert by_uid["SHORT"]["u_clean_status"] == EXCLUDED_PERCEPTUAL_INELIGIBLE
+    assert "SHORT" not in cached
+    assert len(cached["LONG"]) >= 20
+    assert fingerprint_retained_u_segments(
+        loaded["segments"], ctx, lambda item: calls.__setitem__("n", calls["n"] + 1) or _rand_fp(7), cached,
+    )
+    assert calls["n"] == 0
+    assert after["segment_shards"] == before["segment_shards"]
+    assert after["protected_fingerprint_shards"] == before["protected_fingerprint_shards"]
+    assert segment_file.read_bytes() == segment_bytes
+    assert [list(shard["uids"]) for shard in after["segment_fingerprint_shards"]] == [["LONG"]]
+
+
+def test_cached_long_u_fingerprint_below_20_is_recomputed(tmp_path):
+    pytest.importorskip("pyarrow")
+    from src.rq2_u_clean import (
+        append_fingerprint_shard,
+        fingerprint_retained_u_segments,
+        load_resumable_checkpoint,
+        mark_source_segmentation_complete,
+        migrate_cached_u_fingerprints,
+    )
+
+    pcm = "cd" * 32
+    ctx = _fingerprint_context(tmp_path, [])
+    row = _u_span_row("LONG", 81600, pcm)
+    mark_source_segmentation_complete(ctx, "VOV4", [row])
+    append_fingerprint_shard(ctx, "segment_fingerprints", [{
+        "segment_uid": "LONG",
+        "fingerprint": _rand_fp(8, size=19),
+        "audio_sha256": pcm,
+    }])
+    loaded = load_resumable_checkpoint(ctx)
+    calls = {"n": 0}
+    cached = migrate_cached_u_fingerprints(loaded["segments"], ctx, loaded["segment_fingerprints_by_uid"])
+    assert cached == {}
+    assert loaded["segments"][0]["u_clean_status"] == RETAINED_STATUS
+
+    def fingerprint_fn(item):
+        calls["n"] += 1
+        return _rand_fp(9, size=24)
+
+    first = fingerprint_retained_u_segments(loaded["segments"], ctx, fingerprint_fn, cached)
+    assert calls["n"] == 1
+    assert len(first["LONG"]) >= 20
+    fingerprint_retained_u_segments(loaded["segments"], ctx, fingerprint_fn, first)
+    assert calls["n"] == 1
+    resumed = load_resumable_checkpoint(ctx)
+    reused = migrate_cached_u_fingerprints(resumed["segments"], ctx, resumed["segment_fingerprints_by_uid"])
+    fingerprint_retained_u_segments(resumed["segments"], ctx, fingerprint_fn, reused)
+    assert calls["n"] == 1
+    assert len(reused["LONG"]) >= 20
+
+
+def test_cached_valid_u_fingerprint_is_reused(tmp_path):
+    pytest.importorskip("pyarrow")
+    from src.rq2_u_clean import (
+        append_fingerprint_shard,
+        fingerprint_retained_u_segments,
+        load_resumable_checkpoint,
+        mark_source_segmentation_complete,
+        migrate_cached_u_fingerprints,
+    )
+
+    pcm = "cd" * 32
+    ctx = _fingerprint_context(tmp_path, [])
+    row = _u_span_row("LONG", 96000, pcm)
+    mark_source_segmentation_complete(ctx, "VOV4", [row])
+    append_fingerprint_shard(ctx, "segment_fingerprints", [{
+        "segment_uid": "LONG",
+        "fingerprint": _rand_fp(10, size=80),
+        "audio_sha256": pcm,
+    }])
+    before = json.loads((ctx.config.out_dir / "checkpoint" / "state.json").read_text(encoding="utf-8"))
+    loaded = load_resumable_checkpoint(ctx)
+    calls = {"n": 0}
+    cached = migrate_cached_u_fingerprints(loaded["segments"], ctx, loaded["segment_fingerprints_by_uid"])
+    after = json.loads((ctx.config.out_dir / "checkpoint" / "state.json").read_text(encoding="utf-8"))
+    assert len(cached["LONG"]) >= 20
+    fingerprint_retained_u_segments(
+        loaded["segments"], ctx, lambda item: calls.__setitem__("n", calls["n"] + 1) or _rand_fp(11), cached,
+    )
+    assert calls["n"] == 0
+    assert after["segment_fingerprint_shards"] == before["segment_fingerprint_shards"]
+    assert after["segment_shards"] == before["segment_shards"]
+    assert after["protected_fingerprint_shards"] == before["protected_fingerprint_shards"]
+
+
+def test_coverage_rejects_u_fingerprint_below_min_overlap_items():
+    from src.rq2_u_clean import EXCLUDED_PERCEPTUAL_INELIGIBLE, _fingerprint_coverage_complete, apply_u_perceptual_eligibility
+
+    cfg = _config()
+    eligible = _u_span_row("LONG", 81600, "cd" * 32)
+    assert _fingerprint_coverage_complete([eligible], {"LONG": _rand_fp(12, size=19)}, cfg) is False
+    assert _fingerprint_coverage_complete([eligible], {"LONG": _rand_fp(12, size=20)}, cfg) is True
+    short = _u_span_row("SHORT", 64000, "ef" * 32)
+    apply_u_perceptual_eligibility([short], cfg)
+    assert short["u_clean_status"] == EXCLUDED_PERCEPTUAL_INELIGIBLE
+    assert _fingerprint_coverage_complete([short], {}, cfg) is True
+
+
+def test_matcher_indexes_keep_only_long_enough_u_fingerprints(monkeypatch):
+    from src.rq2_u_clean import build_u_candidate_index, perceptual_deduplicate
+
+    cfg = _config()
+    cfg.overlap = OverlapConfig(frozen=True, min_overlap_items=20, similarity_threshold=0.775236)
+    short = _u_span_row("SHORT", 81600, "cd" * 32)
+    long = _u_span_row("LONG", 81600, "ef" * 32)
+    long["start_sample"] = 81600
+    long["end_sample"] = 163200
+    fps = {"SHORT": _rand_fp(13, size=19), "LONG": _rand_fp(14, size=80)}
+    added = []
+    real_add = FingerprintIndex.add
+
+    def spy_add(self, item_id, fingerprint, meta=None):
+        added.append((item_id, len(list(fingerprint))))
+        return real_add(self, item_id, fingerprint, meta)
+
+    monkeypatch.setattr(FingerprintIndex, "add", spy_add)
+    ctx = UCleanContext(config=cfg)
+    perceptual_deduplicate([short, long], fps, cfg)
+    assert added == [("LONG", 80)]
+    index, _elapsed = build_u_candidate_index([short, long], fps, cfg)
+    assert index.fingerprint_of("LONG")
+    with pytest.raises(KeyError):
+        index.fingerprint_of("SHORT")
 
 
 def test_golden_rq1_frozen_test_reconstruction():
