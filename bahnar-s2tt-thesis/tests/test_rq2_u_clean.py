@@ -3767,3 +3767,357 @@ def test_streaming_does_not_change_scientific_contract_fields():
     assert "workers" not in fields
     assert "protected_match_shards" not in fields
     assert "progress" not in fields
+
+
+def _blank_entry(uid, split):
+    return _eligibility_entry(uid, split, sha256_pcm="", source_sha256="")
+
+
+def _plant_fingerprint_rows(ctx, rows):
+    append_fingerprint_shard(ctx, "protected_fingerprints", rows)
+
+
+def _reload_fingerprint_context(ctx):
+    reloaded = UCleanContext(config=ctx.config, protected_entries=list(ctx.protected_entries))
+    reloaded.reference_provenance = dict(ctx.reference_provenance)
+    reloaded.reference_summary = dict(ctx.reference_summary)
+    return reloaded
+
+
+def _spy_protected_reads(monkeypatch):
+    import src.rq2_u_clean as clean
+
+    reads = []
+    real_read = clean._read_expected_file_bytes
+
+    def spy(path, expected_sha):
+        reads.append(Path(path).name)
+        return real_read(path, expected_sha)
+
+    monkeypatch.setattr(clean, "_read_expected_file_bytes", spy)
+    return reads
+
+
+def test_blank_pinned_sha_recovered_from_fingerprint_shard(tmp_path):
+    import src.rq2_u_clean as clean
+
+    pytest.importorskip("pyarrow")
+    pcm = "ab" * 32
+    ctx = _fingerprint_context(tmp_path, [_blank_entry("LEGACY", "g_train")])
+    _plant_fingerprint_rows(ctx, [{
+        "uid": "LEGACY",
+        "split": "g_train",
+        "source_sha256": pcm,
+        "fingerprint": _rand_fp(1),
+    }])
+
+    class UnusedResolver:
+        def iter_materialized_audio(self, entries):
+            raise AssertionError("blank pinned identity must reuse the fingerprint shard")
+
+    assert clean.generate_protected_fingerprints(ctx, UnusedResolver()) == 0
+    pinned = clean._pinned_protected_pcm(ctx)
+    assert pinned["fingerprinted"][("g_train", "LEGACY")] == pcm
+    assert pinned["unaccounted"] == []
+    assert pinned["shorts"] == {}
+
+
+def test_fallback_reads_only_unresolved_shards(tmp_path, monkeypatch):
+    import src.rq2_u_clean as clean
+
+    pytest.importorskip("pyarrow")
+    pinned_pcm = "11" * 32
+    fallback_pcm = "22" * 32
+    entries = [
+        _eligibility_entry("P0", "g_train", sha256_pcm=pinned_pcm),
+        _eligibility_entry("P1", "g_validation", sha256_pcm=pinned_pcm),
+        _eligibility_entry("P2", "frozen_test", sha256_pcm=pinned_pcm),
+        _blank_entry("LEG", "g_train"),
+    ]
+    ctx = _fingerprint_context(tmp_path, entries)
+    for entry in entries[:3]:
+        _plant_fingerprint_rows(ctx, [{
+            "uid": entry.reference_uid,
+            "split": entry.split,
+            "source_sha256": pinned_pcm,
+            "fingerprint": _rand_fp(1),
+        }])
+    _plant_fingerprint_rows(ctx, [{
+        "uid": "LEG",
+        "split": "g_train",
+        "source_sha256": fallback_pcm,
+        "fingerprint": _rand_fp(2),
+    }])
+    state = json.loads((ctx.config.out_dir / "checkpoint" / "state.json").read_text(encoding="utf-8"))
+    pinned_names = [shard["name"] for shard in state["protected_fingerprint_shards"][:3]]
+    fallback_name = state["protected_fingerprint_shards"][3]["name"]
+    clean._PROTECTED_SHARD_CACHE.clear()
+    reads = _spy_protected_reads(monkeypatch)
+    pinned = clean._pinned_protected_pcm(ctx)
+    assert pinned["fingerprinted"][("g_train", "LEG")] == fallback_pcm
+    assert reads == [fallback_name]
+    assert len(reads) <= 1
+    for name in pinned_names:
+        assert name not in reads
+
+
+def test_unresolved_uids_in_one_shard_are_read_once(tmp_path, monkeypatch):
+    import src.rq2_u_clean as clean
+
+    pytest.importorskip("pyarrow")
+    pcm = {"A": "ab" * 32, "B": "cd" * 32, "C": "ef" * 32}
+    entries = [
+        _blank_entry("A", "g_train"),
+        _blank_entry("B", "g_validation"),
+        _blank_entry("C", "frozen_test"),
+    ]
+    ctx = _fingerprint_context(tmp_path, entries)
+    _plant_fingerprint_rows(ctx, [
+        {"uid": uid, "split": entry.split, "source_sha256": pcm[uid], "fingerprint": _rand_fp(index + 1)}
+        for index, (uid, entry) in enumerate(zip(pcm, entries))
+    ])
+    writes = {"n": 0}
+    real_write = clean._write_checkpoint_state
+
+    def spy_write(context, state):
+        writes["n"] += 1
+        return real_write(context, state)
+
+    monkeypatch.setattr(clean, "_write_checkpoint_state", spy_write)
+    clean._PROTECTED_SHARD_CACHE.clear()
+    reads = _spy_protected_reads(monkeypatch)
+    pinned = clean._pinned_protected_pcm(ctx)
+    assert writes["n"] == 1
+    assert len(reads) == 1
+    assert pinned["fingerprinted"] == {
+        ("g_train", "A"): pcm["A"],
+        ("g_validation", "B"): pcm["B"],
+        ("frozen_test", "C"): pcm["C"],
+    }
+    shard = json.loads((ctx.config.out_dir / "checkpoint" / "state.json").read_text(encoding="utf-8"))
+    shard_name = shard["protected_fingerprint_shards"][0]["name"]
+    path = ctx.config.out_dir / "checkpoint" / "protected_fingerprints" / shard_name
+    before = len(reads)
+    clean._match_shard_rows(ctx, shard["protected_fingerprint_shards"][0], path, keep_arrays=False)
+    assert len(reads) == before
+
+
+def _mutate_protected_parquet(path, state, mutate):
+    import os
+    import pandas as pd
+
+    frame = pd.read_parquet(path)
+    mutate(frame)
+    tmp = path.with_suffix(".tmp")
+    frame.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
+    state["protected_fingerprint_shards"][0]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_corrupt_fallback_shard_fails_closed(tmp_path, monkeypatch):
+    import src.rq2_u_clean as clean
+
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("pandas")
+
+    def plant(name):
+        root = tmp_path / name
+        root.mkdir()
+        ctx = _fingerprint_context(root, [
+            _blank_entry("LEG", "g_train"),
+            _blank_entry("NEXT", "g_validation"),
+        ])
+        _plant_fingerprint_rows(ctx, [{
+            "uid": "LEG",
+            "split": "g_train",
+            "source_sha256": "ab" * 32,
+            "fingerprint": _rand_fp(1),
+        }])
+        _plant_fingerprint_rows(ctx, [{
+            "uid": "NEXT",
+            "split": "g_validation",
+            "source_sha256": "cd" * 32,
+            "fingerprint": _rand_fp(2),
+        }])
+        state_path = ctx.config.out_dir / "checkpoint" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        shard = state["protected_fingerprint_shards"][0]
+        path = ctx.config.out_dir / "checkpoint" / "protected_fingerprints" / shard["name"]
+        return ctx, state, state_path, shard, path
+
+    def fail(ctx, state, state_path, match):
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        clean._PROTECTED_SHARD_CACHE.pop(id(ctx), None)
+        verified = []
+        real_rows = clean._match_shard_rows
+
+        def spy(context, shard, path, *, keep_arrays):
+            verified.append(str(shard.get("name")))
+            return real_rows(context, shard, path, keep_arrays=keep_arrays)
+
+        monkeypatch.setattr(clean, "_match_shard_rows", spy)
+        with pytest.raises(RuntimeError, match=match):
+            clean._pinned_protected_pcm(ctx)
+        monkeypatch.setattr(clean, "_match_shard_rows", real_rows)
+        written = json.loads(state_path.read_text(encoding="utf-8"))
+        assert written["protected_fingerprint_shards"] == state["protected_fingerprint_shards"]
+        assert not (ctx.config.out_dir / "checkpoint" / "protected_materialized_pcm.json").is_file()
+        assert verified == [state["protected_fingerprint_shards"][0]["name"]]
+
+    ctx, state, state_path, shard, path = plant("missing")
+    path.unlink()
+    fail(ctx, state, state_path, "ordinal=0 shard=%s reason=missing file" % shard["name"])
+
+    ctx, state, state_path, shard, path = plant("sha")
+    state["protected_fingerprint_shards"][0]["sha256"] = "ab" * 32
+    fail(ctx, state, state_path, "ordinal=0 shard=%s reason=file sha256 mismatch" % shard["name"])
+
+    ctx, state, state_path, shard, path = plant("fingerprint")
+    _mutate_protected_parquet(path, state, lambda frame: frame.__setitem__("fingerprint_sha256", "0" * 64))
+    fail(ctx, state, state_path, "ordinal=0 shard=%s reason=invalid fingerprint_sha256" % shard["name"])
+
+    ctx, state, state_path, shard, path = plant("source")
+    _mutate_protected_parquet(path, state, lambda frame: frame.__setitem__("source_audio_sha256", ""))
+    fail(ctx, state, state_path, "invalid source_audio_sha256")
+
+    ctx, state, state_path, shard, path = plant("split")
+    _mutate_protected_parquet(path, state, lambda frame: frame.__setitem__("split", "frozen_test"))
+    fail(ctx, state, state_path, "split mismatch for LEG")
+
+    ctx, state, state_path, shard, path = plant("missing-uid")
+    _mutate_protected_parquet(path, state, lambda frame: frame.__setitem__("reference_uid", "OTHER"))
+    fail(ctx, state, state_path, "LEG missing from shard")
+
+    ctx, state, state_path, shard, path = plant("duplicate")
+    state["protected_fingerprint_shards"].append({
+        "name": "part-000099.parquet",
+        "sha256": "ef" * 32,
+        "uids": ["LEG"],
+    })
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    clean._PROTECTED_SHARD_CACHE.pop(id(ctx), None)
+    verified = []
+    real_rows = clean._match_shard_rows
+
+    def spy(context, shard, path, *, keep_arrays):
+        verified.append(str(shard.get("name")))
+        return real_rows(context, shard, path, keep_arrays=keep_arrays)
+
+    monkeypatch.setattr(clean, "_match_shard_rows", spy)
+    with pytest.raises(RuntimeError, match="duplicate protected fingerprint identity g_train:LEG"):
+        clean._pinned_protected_pcm(ctx)
+    assert verified == []
+
+
+def test_recovered_pcm_persists_across_restart(tmp_path, monkeypatch):
+    import src.rq2_u_clean as clean
+
+    pytest.importorskip("pyarrow")
+    pcm = "ab" * 32
+    ctx = _fingerprint_context(tmp_path, [_blank_entry("LEGACY", "g_train")])
+    _plant_fingerprint_rows(ctx, [{
+        "uid": "LEGACY",
+        "split": "g_train",
+        "source_sha256": pcm,
+        "fingerprint": _rand_fp(3),
+    }])
+    clean._PROTECTED_SHARD_CACHE.clear()
+    reads = _spy_protected_reads(monkeypatch)
+    first = clean._pinned_protected_pcm(ctx)
+    assert reads == [
+        json.loads((ctx.config.out_dir / "checkpoint" / "state.json").read_text(encoding="utf-8"))[
+            "protected_fingerprint_shards"
+        ][0]["name"]
+    ]
+    ledger_path = ctx.config.out_dir / "checkpoint" / "protected_materialized_pcm.json"
+    document = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert document["schema_version"] == "rq2-protected-materialized-pcm-1"
+    assert document["protected_audio_identity_sha256"] == ctx.reference_provenance["protected_audio_identity_sha256"]
+    assert document["compatibility_key"] == clean.compatibility_key(ctx)
+    assert document["records"] == [{"sha256_pcm": pcm, "split": "g_train", "uid": "LEGACY"}]
+    state = json.loads((ctx.config.out_dir / "checkpoint" / "state.json").read_text(encoding="utf-8"))
+    assert state["protected_materialized_pcm"]["sha256"] == hashlib.sha256(ledger_path.read_bytes()).hexdigest()
+    assert state["protected_materialized_pcm"]["n_records"] == 1
+
+    clean._PROTECTED_SHARD_CACHE.clear()
+    reads.clear()
+    reloaded = _reload_fingerprint_context(ctx)
+    second = clean._pinned_protected_pcm(reloaded)
+    assert reads == []
+    assert second["fingerprinted"] == first["fingerprinted"]
+    assert second["fingerprinted"][("g_train", "LEGACY")] == pcm
+
+
+def test_pinned_fallback_matches_verified_pcm_index(tmp_path):
+    import src.rq2_u_clean as clean
+
+    pytest.importorskip("pyarrow")
+    pcm = {"TR": "ab" * 32, "TE": "cd" * 32, "VA": "ef" * 32}
+    ctx = _fingerprint_context(tmp_path, [
+        _eligibility_entry("TR", "g_train", sha256_pcm=pcm["TR"]),
+        _blank_entry("TE", "frozen_test"),
+        _eligibility_entry("VA", "g_validation", sha256_pcm=pcm["VA"]),
+    ])
+    _plant_fingerprint_rows(ctx, [{
+        "uid": "TR",
+        "split": "g_train",
+        "source_sha256": pcm["TR"],
+        "fingerprint": _rand_fp(4),
+    }])
+    _plant_fingerprint_rows(ctx, [{
+        "uid": "TE",
+        "split": "frozen_test",
+        "source_sha256": pcm["TE"],
+        "fingerprint": _rand_fp(5),
+    }])
+    resolver = _WavResolver(tmp_path, {"VA": 24000}, {"n": 0, "uids": []})
+    assert clean.generate_protected_fingerprints(ctx, resolver, fingerprint_fn=lambda path: _rand_fp(4)) == 0
+    pinned = clean._pinned_protected_pcm(ctx)
+    verified = clean._indexed_protected_pcm(ctx)
+    assert pinned["fingerprinted"] == verified["fingerprinted"]
+    assert pinned["shorts"] == verified["shorts"]
+    assert pinned["unaccounted"] == verified["unaccounted"] == []
+    assert set(pinned["expected"]) == set(verified["expected"])
+    assert set(pinned["fingerprinted"]) == {("g_train", "TR"), ("frozen_test", "TE")}
+    assert pinned["fingerprinted"][("frozen_test", "TE")] == pcm["TE"]
+    assert set(pinned["shorts"]) == {("g_validation", "VA")}
+
+
+def test_blank_pinned_recovery_does_not_scan_every_shard(tmp_path, monkeypatch):
+    import src.rq2_u_clean as clean
+
+    pytest.importorskip("pyarrow")
+    pinned_pcm = "11" * 32
+    entries = [
+        _eligibility_entry("P%d" % index, ("g_train", "g_validation", "frozen_test")[index % 3], sha256_pcm=pinned_pcm)
+        for index in range(5)
+    ]
+    entries.extend([
+        _blank_entry("L0", "g_train"),
+        _blank_entry("L1", "g_validation"),
+    ])
+    ctx = _fingerprint_context(tmp_path, entries)
+    for entry in entries[:5]:
+        _plant_fingerprint_rows(ctx, [{
+            "uid": entry.reference_uid,
+            "split": entry.split,
+            "source_sha256": pinned_pcm,
+            "fingerprint": _rand_fp(1),
+        }])
+    _plant_fingerprint_rows(ctx, [
+        {"uid": "L0", "split": "g_train", "source_sha256": "22" * 32, "fingerprint": _rand_fp(2)},
+        {"uid": "L1", "split": "g_validation", "source_sha256": "33" * 32, "fingerprint": _rand_fp(3)},
+    ])
+    state = json.loads((ctx.config.out_dir / "checkpoint" / "state.json").read_text(encoding="utf-8"))
+    shards = state["protected_fingerprint_shards"]
+    assert len(shards) == 6
+    pinned_names = {shard["name"] for shard in shards[:5]}
+    unresolved_name = shards[5]["name"]
+    clean._PROTECTED_SHARD_CACHE.clear()
+    reads = _spy_protected_reads(monkeypatch)
+    pinned = clean._pinned_protected_pcm(ctx)
+    unresolved_shards = 1
+    assert len(reads) <= unresolved_shards
+    assert reads == [unresolved_name]
+    assert pinned_names.isdisjoint(reads)
+    assert len(pinned["fingerprinted"]) == 7

@@ -3481,6 +3481,7 @@ def _empty_checkpoint_state(context: UCleanContext) -> dict:
         "next_protected_fingerprint_shard_id": 0,
         "protected_short_eligibility": {},
         "protected_exact_identity": {},
+        "protected_materialized_pcm": {},
         "protected_match_shards": [],
     }
 
@@ -3500,6 +3501,7 @@ def _read_checkpoint_state(context: UCleanContext) -> dict:
     state.setdefault("next_protected_fingerprint_shard_id", 0)
     state.setdefault("protected_short_eligibility", {})
     state.setdefault("protected_exact_identity", {})
+    state.setdefault("protected_materialized_pcm", {})
     state.setdefault("protected_match_shards", [])
     return state
 
@@ -4130,6 +4132,8 @@ PROTECTED_EXACT_POLICY = "protected_exact_pcm_v1"
 PROTECTED_EXACT_MATCH = "protected_exact"
 _SHORT_ELIGIBILITY_FILENAME = "protected_short_eligibility.jsonl"
 _EXACT_IDENTITY_FILENAME = "protected_exact_identity.jsonl"
+_MATERIALIZED_PCM_FILENAME = "protected_materialized_pcm.json"
+_MATERIALIZED_PCM_SCHEMA = "rq2-protected-materialized-pcm-1"
 _SHORT_WRITE_BATCH = 32
 
 
@@ -4344,18 +4348,135 @@ def _indexed_protected_pcm(context: UCleanContext) -> dict:
     return _protected_pcm_index(context, fingerprinted, shorts, expected)
 
 
-def _pinned_protected_pcm(context: UCleanContext) -> dict:
-    """Exact-PCM hashes from pinned identity and the short ledger.
+def _materialized_pcm_path(context: UCleanContext) -> Path:
+    return checkpoint_root(context) / _MATERIALIZED_PCM_FILENAME
 
-    Membership of a fingerprinted reference comes from the checkpoint UID list.
-    Protected fingerprint parquet files are not opened. On a valid checkpoint
+
+def _load_materialized_pcm_index(context: UCleanContext) -> Dict[Tuple[str, str], str]:
+    """PCM hashes recovered from an earlier shard fallback.
+
+    The ledger is trusted only when its file hash, schema, and checkpoint
+    compatibility match. A missing or stale ledger is ignored so the shard
+    fallback can rebuild it.
+    """
+    state = _read_checkpoint_state(context)
+    meta = dict(state.get("protected_materialized_pcm") or {})
+    path = _materialized_pcm_path(context)
+    expected_sha = str(meta.get("sha256") or "")
+    if not path.is_file() or not _is_valid_sha256(expected_sha):
+        return {}
+    payload = path.read_bytes()
+    if hashlib.sha256(payload).hexdigest() != expected_sha:
+        return {}
+    if str(meta.get("schema_version") or "") != _MATERIALIZED_PCM_SCHEMA:
+        return {}
+    try:
+        document = json.loads(payload.decode("utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    if str(document.get("schema_version") or "") != _MATERIALIZED_PCM_SCHEMA:
+        return {}
+    if document.get("compatibility_key") != compatibility_key(context):
+        return {}
+    audio_identity = str(context.reference_provenance.get("protected_audio_identity_sha256") or "")
+    if str(document.get("protected_audio_identity_sha256") or "") != audio_identity:
+        return {}
+    found: Dict[Tuple[str, str], str] = {}
+    for row in document.get("records") or []:
+        if not isinstance(row, dict):
+            return {}
+        key = _protected_identity_key(row.get("split"), row.get("uid"))
+        digest = str(row.get("sha256_pcm") or "").strip().lower()
+        if not key[1] or key in found or not _is_valid_sha256(digest):
+            return {}
+        found[key] = digest
+    return found
+
+
+def _write_materialized_pcm_index(context: UCleanContext, hashes: Dict[Tuple[str, str], str]) -> None:
+    """Atomically store one recovery batch. state.json is rewritten once."""
+    document = {
+        "schema_version": _MATERIALIZED_PCM_SCHEMA,
+        "compatibility_key": compatibility_key(context),
+        "protected_audio_identity_sha256": str(
+            context.reference_provenance.get("protected_audio_identity_sha256") or ""
+        ),
+        "records": [
+            {"split": split, "uid": uid, "sha256_pcm": digest}
+            for (split, uid), digest in sorted(hashes.items())
+        ],
+    }
+    path = _materialized_pcm_path(context)
+    atomic_write_text(path, json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True))
+    state = _read_checkpoint_state(context)
+    state["protected_materialized_pcm"] = {
+        "path": _MATERIALIZED_PCM_FILENAME,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "schema_version": _MATERIALIZED_PCM_SCHEMA,
+        "n_records": len(hashes),
+    }
+    _write_checkpoint_state(context, state)
+
+
+def _pinned_fingerprint_digest(entry: ProtectedReferenceEntry) -> str:
+    return str(entry.sha256_pcm or entry.source_sha256 or "").strip().lower()
+
+
+def _recover_pinned_pcm_from_shards(context: UCleanContext, groups: Dict[int, dict]) -> Dict[Tuple[str, str], str]:
+    """Read source_audio_sha256 from each affected shard once."""
+    root = checkpoint_root(context) / "protected_fingerprints"
+    recovered: Dict[Tuple[str, str], str] = {}
+    for ordinal in sorted(groups):
+        group = groups[ordinal]
+        shard = group["shard"]
+        path = root / str(shard.get("name") or "")
+        rows, reason = _match_shard_rows(context, shard, path, keep_arrays=False)
+        if reason or rows is None:
+            _fail_protected_match_shard(ordinal, shard, reason or "invalid logical batch")
+        listed = {str(uid) for uid in (shard.get("uids") or [])}
+        by_uid: Dict[str, dict] = {}
+        for row in rows:
+            uid = str(row.get("uid") or "")
+            if uid in by_uid:
+                raise RuntimeError(
+                    f"duplicate protected fingerprint identity in shard {shard.get('name')}: {uid}"
+                )
+            by_uid[uid] = row
+        for key, entry, uid in group["pending"]:
+            if uid not in listed or uid not in by_uid or str(by_uid[uid].get("uid") or "") != uid:
+                raise RuntimeError(f"protected fingerprint {uid} missing from shard {shard.get('name')}")
+            row = by_uid[uid]
+            stored_split = str(row.get("split") or "")
+            if stored_split != str(entry.split):
+                raise RuntimeError(
+                    f"protected fingerprint split mismatch for {uid}: "
+                    f"stored {stored_split} != entry {entry.split}"
+                )
+            digest = str(row.get("source_sha256") or "").strip().lower()
+            if not _is_valid_sha256(digest):
+                raise RuntimeError(f"protected fingerprint {uid} has invalid source_audio_sha256")
+            recovered[key] = digest
+    return recovered
+
+
+def _pinned_protected_pcm(context: UCleanContext) -> dict:
+    """Exact-PCM hashes from pinned identity, with a shard fallback for blank rows.
+
+    A valid ``sha256_pcm`` or ``source_sha256`` is used directly and does not
+    open parquet. A blank derived row whose UID is already fingerprinted
+    recovers ``source_audio_sha256`` from that checkpoint shard. Shards are
+    grouped, so each affected shard is verified once. Recovered hashes are
+    written once to ``protected_materialized_pcm.json``. On a valid checkpoint
     the hash set matches ``_indexed_protected_pcm``.
     """
     expected = _expected_protected_index(context)
     owners_by_uid = _protected_uid_owner_index(expected)
     state = _read_checkpoint_state(context)
+    ledger = _load_materialized_pcm_index(context)
     fingerprinted: Dict[Tuple[str, str], str] = {}
-    for shard in list(state["protected_fingerprint_shards"]):
+    groups: Dict[int, dict] = {}
+    seen_uids = set()
+    for ordinal, shard in enumerate(list(state["protected_fingerprint_shards"])):
         for raw_uid in shard.get("uids") or []:
             uid = str(raw_uid or "")
             owners = owners_by_uid.get(uid, [])
@@ -4365,12 +4486,29 @@ def _pinned_protected_pcm(context: UCleanContext) -> dict:
                 raise RuntimeError(f"ambiguous protected fingerprint uid {uid}")
             entry = expected[owners[0]]
             key = _protected_identity_key(entry.split, entry.reference_uid)
+            if uid in seen_uids or key in fingerprinted:
+                raise RuntimeError(f"duplicate protected fingerprint identity {key[0]}:{key[1]}")
+            seen_uids.add(uid)
+            digest = _pinned_fingerprint_digest(entry)
+            if _is_valid_sha256(digest):
+                fingerprinted[key] = digest
+                continue
+            recovered = ledger.get(key)
+            if recovered and _is_valid_sha256(recovered):
+                fingerprinted[key] = recovered
+                continue
+            group = groups.get(ordinal)
+            if group is None:
+                group = {"shard": shard, "pending": []}
+                groups[ordinal] = group
+            group["pending"].append((key, entry, uid))
+    if groups:
+        for key, digest in _recover_pinned_pcm_from_shards(context, groups).items():
             if key in fingerprinted:
                 raise RuntimeError(f"duplicate protected fingerprint identity {key[0]}:{key[1]}")
-            digest = str(entry.sha256_pcm or entry.source_sha256 or "").strip().lower()
-            if not _is_valid_sha256(digest):
-                raise RuntimeError(f"protected fingerprint {uid} has no materialized sha256_pcm")
             fingerprinted[key] = digest
+            ledger[key] = digest
+        _write_materialized_pcm_index(context, ledger)
     shorts = _protected_short_hashes(context, expected)
     return _protected_pcm_index(context, fingerprinted, shorts, expected)
 
