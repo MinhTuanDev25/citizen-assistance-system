@@ -1,0 +1,18 @@
+Notebook 13 same-budget selection review bundle.
+
+Files:
+- notebooks/13_RQ2_SameBudget_Selection_Freeze.ipynb
+- src/rq2_selection_contract.py
+- src/rq2_selection.py
+- tests/rq2_nb13_fixtures.py
+- tests/test_rq2_selection.py
+
+Flags remain RUN_REAL_SELECTION=False, SELECTION_POLICY_FROZEN=False, SELECTION_BUDGET_HOURS=None.
+Real selection was not run. No RQ1, NB11, or NB12 source was modified for this notebook.
+
+Validation from this tree:
+- tests/test_rq2_selection.py: 28 passed
+- NB12 + NB13 tests: 140 passed
+- full pytest: 1116 passed, 2 skipped
+- compileall src tests: pass
+- Notebook 13 code cells: 7/7 compiled, not executed

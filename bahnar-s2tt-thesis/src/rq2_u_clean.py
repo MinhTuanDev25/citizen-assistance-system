@@ -27,6 +27,7 @@ import tempfile
 import time
 import uuid
 import wave
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from contextlib import contextmanager
 from collections import Counter
 from dataclasses import dataclass, field, replace
@@ -41,6 +42,7 @@ from src.rq2_audio_fingerprint import (
     SegmentCandidateIndex,
     MatchEvidence,
     OverlapConfig,
+    canonical_json_bytes,
     compare_fingerprints_detailed,
     fingerprint_sha256,
     is_valid_fingerprint,
@@ -2117,17 +2119,18 @@ def protect_against_references(
         benchmark_sink["index_build_elapsed_seconds"] = round(build_seconds, 6)
         benchmark_sink["index_entry_count"] = int(index.entry_count)
         benchmark_sink["n_references_fingerprinted"] = 0
+    by_uid = {str(row["segment_uid"]): row for row in segments}
     evidence: List[MatchEvidence] = []
     batch: List[dict] = []
     for ref in reference_fingerprints:
         batch.append(ref)
         if len(batch) >= 32:
-            evidence.extend(match_protected_batch(segments, index, batch, config))
+            evidence.extend(match_protected_batch(segments, index, batch, config, by_uid=by_uid))
             if benchmark_sink is not None:
                 benchmark_sink["n_references_fingerprinted"] = int(benchmark_sink["n_references_fingerprinted"]) + len(batch)
             batch = []
     if batch:
-        evidence.extend(match_protected_batch(segments, index, batch, config))
+        evidence.extend(match_protected_batch(segments, index, batch, config, by_uid=by_uid))
         if benchmark_sink is not None:
             benchmark_sink["n_references_fingerprinted"] = int(benchmark_sink["n_references_fingerprinted"]) + len(batch)
     return evidence
@@ -2151,43 +2154,667 @@ def build_u_candidate_index(
     return index, time.perf_counter() - started
 
 
-def match_protected_batch(
-    segments: List[dict],
+def _eligible_protected_match_uids(by_uid: Dict[str, dict]) -> frozenset:
+    """Statuses the protected matcher is allowed to compare.
+
+    A protected hit sets EXCLUDED_PROTECTED_OVERLAP and leaves the segment in
+    later comparisons. Exact and perceptual exclusions are already absent from
+    the candidate index, so read-only matching over this set is equivalent to
+    checking status inside the historical per-reference loop.
+    """
+    allowed = (RETAINED_STATUS, EXCLUDED_PROTECTED_OVERLAP)
+    return frozenset(
+        uid for uid, row in by_uid.items()
+        if row.get("u_clean_status") in allowed
+    )
+
+
+def compute_protected_matches(
     index: SegmentCandidateIndex,
     reference_batch: Sequence[dict],
-    config: UCleanConfig,
-) -> List[MatchEvidence]:
-    """Query one protected batch against the U index and verify alignments."""
-    ov = config.overlap
-    by_uid = {str(row["segment_uid"]): row for row in segments}
+    overlap: OverlapConfig,
+    eligible_uids,
+) -> dict:
+    """Read-only protected comparison. Does not mutate segments or exclusions."""
+    eligible = set(eligible_uids)
     evidence: List[MatchEvidence] = []
+    n_comparisons = 0
     for ref in reference_batch:
         ref_fp = ref.get("fingerprint")
         if not is_valid_fingerprint(ref_fp):
             continue
         split = str(ref.get("split") or "")
         for uid in index.candidates_for_reference(ref_fp):
-            row = by_uid.get(uid)
-            status = row.get("u_clean_status") if row is not None else ""
-            if row is None or status not in (RETAINED_STATUS, EXCLUDED_PROTECTED_OVERLAP):
+            if uid not in eligible:
                 continue
-            score, offset, overlap = compare_fingerprints_detailed(index.fingerprint_of(uid), ref_fp, ov)
-            if score < ov.similarity_threshold:
+            n_comparisons += 1
+            score, offset, overlap_items = compare_fingerprints_detailed(
+                index.fingerprint_of(uid), ref_fp, overlap,
+            )
+            if score < overlap.similarity_threshold:
                 continue
-            flag = _SPLIT_TO_FLAG.get(split)
-            if flag:
-                row[flag] = True
             evidence.append(MatchEvidence(
                 candidate_uid=uid,
                 reference_uid=str(ref.get("uid") or ""),
                 reference_split=split,
-                matched_duration_seconds=matched_duration_seconds(overlap, ov),
-                alignment_offset=offset,
-                similarity=round(score, 6),
+                matched_duration_seconds=matched_duration_seconds(overlap_items, overlap),
+                alignment_offset=int(offset),
+                similarity=round(float(score), 6),
                 match_type="protected",
             ))
-            _exclude(row, EXCLUDED_PROTECTED_OVERLAP)
-    return evidence
+    return {
+        "evidence": evidence,
+        "n_references_processed": len(reference_batch),
+        "n_candidate_comparisons": n_comparisons,
+        "n_matches": len(evidence),
+    }
+
+
+def apply_protected_match_evidence(evidence: Sequence[MatchEvidence], by_uid: Dict[str, dict]) -> None:
+    """Apply overlap flags and protected-overlap exclusion in evidence order."""
+    for item in evidence:
+        row = by_uid.get(item.candidate_uid)
+        if row is None:
+            continue
+        flag = _SPLIT_TO_FLAG.get(item.reference_split)
+        if flag:
+            row[flag] = True
+        _exclude(row, EXCLUDED_PROTECTED_OVERLAP)
+
+
+def match_protected_batch(
+    segments: List[dict],
+    index: SegmentCandidateIndex,
+    reference_batch: Sequence[dict],
+    config: UCleanConfig,
+    *,
+    by_uid: Optional[Dict[str, dict]] = None,
+) -> List[MatchEvidence]:
+    """Query one protected batch against the U index and verify alignments."""
+    if by_uid is None:
+        by_uid = {str(row["segment_uid"]): row for row in segments}
+    computed = compute_protected_matches(
+        index, reference_batch, config.overlap, _eligible_protected_match_uids(by_uid),
+    )
+    apply_protected_match_evidence(computed["evidence"], by_uid)
+    return computed["evidence"]
+
+
+_PROTECTED_MATCH_RUNTIME: Dict[str, object] = {}
+_LAST_MATCH_WORKER_PIDS: List[int] = []
+_LAST_MATCH_MAX_INFLIGHT = 0
+_PROTECTED_MATCH_KIND = "rq2_protected_match_shard_v1"
+_PROTECTED_MATCH_FIELDS = (
+    "kind",
+    "status",
+    "ordinal",
+    "input_shard_name",
+    "input_shard_sha256",
+    "input_batch_sha256",
+    "overlap_contract_sha256",
+    "u_segment_uid_sha256",
+    "u_fingerprint_identity_sha256",
+    "compatibility",
+    "compatibility_sha256",
+    "result_sha256",
+    "n_references_processed",
+    "n_candidate_comparisons",
+    "n_matches",
+    "evidence",
+)
+
+
+def protected_match_worker_count(explicit: Optional[int] = None) -> int:
+    """Runtime worker count. This is not a scientific contract field."""
+    if explicit is not None:
+        if isinstance(explicit, bool) or not isinstance(explicit, int):
+            raise RuntimeError("protected match worker count must be a positive integer")
+        count = explicit
+    else:
+        raw = os.environ.get("BAHNAR_NB11_MATCH_WORKERS", "").strip()
+        if raw:
+            if not raw.isdigit():
+                raise RuntimeError("BAHNAR_NB11_MATCH_WORKERS must be a positive integer")
+            count = int(raw)
+        else:
+            count = min(32, max(1, os.cpu_count() or 1))
+    if count < 1:
+        raise RuntimeError("BAHNAR_NB11_MATCH_WORKERS must be a positive integer")
+    return count
+
+
+def _u_candidate_identity(index: SegmentCandidateIndex) -> Tuple[str, str]:
+    uids = sorted(index._fingerprints)
+    uid_sha = hashlib.sha256(canonical_json_bytes(uids)).hexdigest()
+    pairs = [[uid, list(index.fingerprint_of(uid))] for uid in uids]
+    fingerprint_sha = hashlib.sha256(canonical_json_bytes(pairs)).hexdigest()
+    return uid_sha, fingerprint_sha
+
+
+def _base_match_compatibility(context: UCleanContext, index: SegmentCandidateIndex) -> dict:
+    """U and overlap identity. Computed once per orchestration call."""
+    key = compatibility_key(context)
+    uid_sha, fingerprint_sha = _u_candidate_identity(index)
+    return {
+        "overlap_contract_sha256": key["overlap_contract_sha256"],
+        "u_segment_uid_sha256": uid_sha,
+        "u_fingerprint_identity_sha256": fingerprint_sha,
+        "nb10_locks": key["nb10_locks"],
+        "reference_set_sha256": key["reference_set_sha256"],
+        "rq1_final_contract_hash": key["rq1_final_contract_hash"],
+        "rq1_test_contract_hash": key["rq1_test_contract_hash"],
+        "protected_audio_identity_sha256": key["protected_audio_identity_sha256"],
+        "parquet_revision": key["parquet_revision"],
+        "pcm_pipeline_version": key["pcm_pipeline_version"],
+    }
+
+
+def _shard_match_compatibility(base: dict, input_shard_sha256: str, input_batch_sha256: str) -> dict:
+    """Per-shard identity. Does not walk or hash the U index."""
+    compatibility = dict(base)
+    compatibility["input_shard_sha256"] = str(input_shard_sha256)
+    compatibility["input_batch_sha256"] = str(input_batch_sha256)
+    return compatibility
+
+
+def _protected_input_batch_sha256(batch: Sequence[dict]) -> str:
+    """Hash the exact rows the matcher will see, in iterator order."""
+    rows = [
+        {
+            "uid": str(row.get("uid") or ""),
+            "split": str(row.get("split") or ""),
+            "source_sha256": str(row.get("source_sha256") or ""),
+            "fingerprint_sha256": fingerprint_sha256(row.get("fingerprint") or []),
+        }
+        for row in batch
+    ]
+    return hashlib.sha256(canonical_json_bytes(rows)).hexdigest()
+
+
+def _evidence_rows(evidence: Sequence[MatchEvidence]) -> List[dict]:
+    return [
+        {
+            "candidate_uid": item.candidate_uid,
+            "reference_uid": item.reference_uid,
+            "reference_split": item.reference_split,
+            "matched_duration_seconds": item.matched_duration_seconds,
+            "alignment_offset": int(item.alignment_offset),
+            "similarity": item.similarity,
+            "match_type": item.match_type,
+        }
+        for item in evidence
+    ]
+
+
+def _match_evidence_from_row(row: dict) -> MatchEvidence:
+    return MatchEvidence(
+        candidate_uid=str(row["candidate_uid"]),
+        reference_uid=str(row["reference_uid"]),
+        reference_split=str(row["reference_split"]),
+        matched_duration_seconds=float(row["matched_duration_seconds"]),
+        alignment_offset=int(row["alignment_offset"]),
+        similarity=float(row["similarity"]),
+        match_type=str(row["match_type"]),
+    )
+
+
+def _protected_match_dir(context: UCleanContext) -> Path:
+    return checkpoint_root(context) / "protected_matches"
+
+
+def _protected_match_path(context: UCleanContext, ordinal: int) -> Path:
+    return _protected_match_dir(context) / ("match-%06d.json" % int(ordinal))
+
+
+def _result_sha256(evidence_rows: Sequence[dict]) -> str:
+    return hashlib.sha256(canonical_json_bytes(list(evidence_rows))).hexdigest()
+
+
+def _compatibility_sha256(compatibility: dict) -> str:
+    return hashlib.sha256(canonical_json_bytes(compatibility)).hexdigest()
+
+
+def _read_protected_match_shard(
+    context: UCleanContext,
+    ordinal: int,
+    expected: dict,
+    batch_length: int,
+) -> Optional[dict]:
+    """Return a complete compatible result, or None so the shard is recomputed.
+
+    A partial, corrupt, or stale file is not reused. The caller replaces it
+    only after a new verified result has been written.
+    """
+    path = _protected_match_path(context, ordinal)
+    if not path.is_file():
+        return None
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(document, dict):
+        return None
+    if any(field not in document for field in _PROTECTED_MATCH_FIELDS):
+        return None
+    if document.get("kind") != _PROTECTED_MATCH_KIND or document.get("status") != "COMPLETE":
+        return None
+    if int(document.get("ordinal")) != int(ordinal):
+        return None
+    compatibility = document.get("compatibility")
+    if compatibility != expected:
+        return None
+    if document.get("input_shard_sha256") != expected["input_shard_sha256"]:
+        return None
+    if document.get("input_batch_sha256") != expected["input_batch_sha256"]:
+        return None
+    if document.get("overlap_contract_sha256") != expected["overlap_contract_sha256"]:
+        return None
+    if document.get("u_segment_uid_sha256") != expected["u_segment_uid_sha256"]:
+        return None
+    if document.get("u_fingerprint_identity_sha256") != expected["u_fingerprint_identity_sha256"]:
+        return None
+    if document.get("compatibility_sha256") != _compatibility_sha256(expected):
+        return None
+    evidence = document.get("evidence")
+    if not isinstance(evidence, list):
+        return None
+    for row in evidence:
+        if not isinstance(row, dict):
+            return None
+        if any(key not in row for key in (
+            "candidate_uid",
+            "reference_uid",
+            "reference_split",
+            "matched_duration_seconds",
+            "alignment_offset",
+            "similarity",
+            "match_type",
+        )):
+            return None
+    if document.get("result_sha256") != _result_sha256(evidence):
+        return None
+    try:
+        n_matches = int(document["n_matches"])
+        n_references = int(document["n_references_processed"])
+        n_comparisons = int(document["n_candidate_comparisons"])
+    except (TypeError, ValueError):
+        return None
+    if n_matches != len(evidence) or n_references < 0 or n_comparisons < 0:
+        return None
+    if n_references != int(batch_length):
+        return None
+    if (
+        type(document["n_matches"]) is not int
+        or type(document["n_references_processed"]) is not int
+        or type(document["n_candidate_comparisons"]) is not int
+    ):
+        return None
+    return document
+
+
+def _match_shard_record(context: UCleanContext, document: dict) -> dict:
+    ordinal = int(document["ordinal"])
+    return {
+        "ordinal": ordinal,
+        "name": _protected_match_path(context, ordinal).name,
+        "input_shard_name": document["input_shard_name"],
+        "input_shard_sha256": document["input_shard_sha256"],
+        "input_batch_sha256": document["input_batch_sha256"],
+        "result_sha256": document["result_sha256"],
+        "compatibility_sha256": document["compatibility_sha256"],
+        "n_references_processed": document["n_references_processed"],
+        "n_candidate_comparisons": document["n_candidate_comparisons"],
+        "n_matches": document["n_matches"],
+        "status": "COMPLETE",
+    }
+
+
+def _snapshot_protected_match_checkpoint(context: UCleanContext, results: Dict[int, dict]) -> None:
+    """Write match bookkeeping once, after every shard has a verified file.
+
+    Resume does not read this snapshot. match-*.json is the source of truth,
+    so a crash before this write still reuses committed shards.
+    """
+    records = [_match_shard_record(context, results[ordinal]) for ordinal in sorted(results)]
+    directory = _protected_match_dir(context)
+    directory.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(
+        directory / "manifest.json",
+        json.dumps({"shards": records}, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+    state = _read_checkpoint_state(context)
+    state["protected_match_shards"] = records
+    _write_checkpoint_state(context, state)
+
+
+def _write_match_progress(context: UCleanContext, progress: dict) -> None:
+    directory = _protected_match_dir(context)
+    directory.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(
+        directory / "progress.json",
+        json.dumps(progress, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+
+
+def _format_match_eta(seconds: Optional[float]) -> str:
+    if seconds is None:
+        return "unknown"
+    remaining = int(max(0, round(seconds)))
+    hours, rem = divmod(remaining, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return "%dh %dm" % (hours, minutes)
+    if minutes:
+        return "%dm %ds" % (minutes, secs)
+    return "%ds" % secs
+
+
+def _emit_match_progress(
+    context: UCleanContext,
+    *,
+    done: int,
+    total: int,
+    references: int,
+    total_references: int,
+    matches: int,
+    started: float,
+    computed_references: int,
+) -> None:
+    elapsed = max(time.perf_counter() - started, 1e-9)
+    rate = references / elapsed
+    if computed_references > 0:
+        remaining = max(total_references - references, 0)
+        eta = remaining / (computed_references / elapsed)
+    else:
+        eta = None
+    progress = {
+        "elapsed_seconds": round(elapsed, 6),
+        "eta_seconds": None if eta is None else round(eta, 6),
+        "n_match_shards_completed": int(done),
+        "n_match_shards_total": int(total),
+        "n_matches": int(matches),
+        "n_references_processed": int(references),
+        "n_references_total": int(total_references),
+        "refs_per_second": round(rate, 6),
+    }
+    _write_match_progress(context, progress)
+    print(
+        "Protected match: %d/%d shards\nreferences: %d/%d\nmatches: %d\nelapsed: %.1fs\nrate: %.1f refs/s\nETA: %s"
+        % (done, total, references, total_references, matches, elapsed, rate, _format_match_eta(eta)),
+        flush=True,
+    )
+
+
+def _init_protected_match_worker(index, overlap, eligible, ready_barrier=None) -> None:
+    _PROTECTED_MATCH_RUNTIME["index"] = index
+    _PROTECTED_MATCH_RUNTIME["overlap"] = overlap
+    _PROTECTED_MATCH_RUNTIME["eligible"] = eligible
+    _PROTECTED_MATCH_RUNTIME["ready_barrier"] = ready_barrier
+    _PROTECTED_MATCH_RUNTIME["barrier_passed"] = False
+
+
+def _match_ready_barrier(workers: int):
+    """Optional test latch. It is not a scientific contract field."""
+    if os.environ.get("BAHNAR_NB11_MATCH_READY_BARRIER", "").strip() != "1":
+        return None
+    import multiprocessing
+    return multiprocessing.Barrier(int(workers))
+
+
+def _match_worker_result(job: dict, computed: dict) -> dict:
+    return {
+        "ordinal": int(job["ordinal"]),
+        "input_shard_name": job["input_shard_name"],
+        "input_shard_sha256": job["input_shard_sha256"],
+        "input_batch_sha256": job["input_batch_sha256"],
+        "n_references_processed": computed["n_references_processed"],
+        "n_candidate_comparisons": computed["n_candidate_comparisons"],
+        "n_matches": computed["n_matches"],
+        "evidence": computed["evidence"],
+        "worker_pid": os.getpid(),
+    }
+
+
+def _run_protected_match_worker(job: dict) -> dict:
+    barrier = _PROTECTED_MATCH_RUNTIME.get("ready_barrier")
+    if barrier is not None and not _PROTECTED_MATCH_RUNTIME.get("barrier_passed"):
+        barrier.wait()
+        _PROTECTED_MATCH_RUNTIME["barrier_passed"] = True
+    computed = compute_protected_matches(
+        _PROTECTED_MATCH_RUNTIME["index"],
+        job["batch"],
+        _PROTECTED_MATCH_RUNTIME["overlap"],
+        _PROTECTED_MATCH_RUNTIME["eligible"],
+    )
+    return _match_worker_result(job, computed)
+
+
+def _compute_protected_match_job(job, index, overlap, eligible) -> dict:
+    computed = compute_protected_matches(index, job["batch"], overlap, eligible)
+    return _match_worker_result(job, computed)
+
+
+def _protected_match_max_inflight(workers: int) -> int:
+    return max(1, int(workers) * 2)
+
+
+def _completed_match_futures(inflight: Dict[object, dict]):
+    done, _pending = wait(set(inflight), return_when=FIRST_COMPLETED)
+    return list(done)
+
+
+def _shutdown_match_executor(executor, inflight, *, wait_for_running: bool) -> None:
+    for future in list(inflight):
+        future.cancel()
+    inflight.clear()
+    executor.shutdown(wait=wait_for_running, cancel_futures=True)
+
+
+def _parallel_protected_match_jobs(jobs, index, overlap, eligible, workers: int):
+    """Run at most workers*2 shards at once. Completion order is not scientific order."""
+    global _LAST_MATCH_MAX_INFLIGHT
+    _LAST_MATCH_MAX_INFLIGHT = 0
+    max_inflight = _protected_match_max_inflight(workers)
+    executor = ProcessPoolExecutor(
+        max_workers=workers,
+        initializer=_init_protected_match_worker,
+        initargs=(index, overlap, eligible, _match_ready_barrier(workers)),
+    )
+    pending = iter(jobs)
+    inflight = {}
+    closed = False
+
+    def close(wait_for_running: bool) -> None:
+        nonlocal closed
+        if closed:
+            return
+        closed = True
+        _shutdown_match_executor(executor, inflight, wait_for_running=wait_for_running)
+
+    def submit_available() -> None:
+        global _LAST_MATCH_MAX_INFLIGHT
+        while len(inflight) < max_inflight:
+            try:
+                job = next(pending)
+            except StopIteration:
+                return
+            future = executor.submit(_run_protected_match_worker, job)
+            inflight[future] = job
+            if len(inflight) > _LAST_MATCH_MAX_INFLIGHT:
+                _LAST_MATCH_MAX_INFLIGHT = len(inflight)
+
+    try:
+        submit_available()
+        while inflight:
+            for future in _completed_match_futures(inflight):
+                inflight.pop(future)
+                yield future.result()
+            submit_available()
+    except BaseException:
+        close(True)
+        raise
+    else:
+        close(True)
+
+
+def _protected_match_document(base: dict, payload: dict) -> dict:
+    compatibility = _shard_match_compatibility(
+        base, payload["input_shard_sha256"], payload["input_batch_sha256"],
+    )
+    evidence_rows = _evidence_rows(payload["evidence"])
+    result_sha = _result_sha256(evidence_rows)
+    compatibility_sha = _compatibility_sha256(compatibility)
+    return {
+        "kind": _PROTECTED_MATCH_KIND,
+        "status": "COMPLETE",
+        "ordinal": int(payload["ordinal"]),
+        "input_shard_name": payload["input_shard_name"],
+        "input_shard_sha256": payload["input_shard_sha256"],
+        "input_batch_sha256": payload["input_batch_sha256"],
+        "overlap_contract_sha256": compatibility["overlap_contract_sha256"],
+        "u_segment_uid_sha256": compatibility["u_segment_uid_sha256"],
+        "u_fingerprint_identity_sha256": compatibility["u_fingerprint_identity_sha256"],
+        "compatibility": compatibility,
+        "compatibility_sha256": compatibility_sha,
+        "result_sha256": result_sha,
+        "n_references_processed": int(payload["n_references_processed"]),
+        "n_candidate_comparisons": int(payload["n_candidate_comparisons"]),
+        "n_matches": int(payload["n_matches"]),
+        "evidence": evidence_rows,
+    }
+
+
+def _commit_protected_match_shard(context: UCleanContext, document: dict, batch_length: int) -> dict:
+    """Persist one verified result. The match file itself is the resume record."""
+    path = _protected_match_path(context, int(document["ordinal"]))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True))
+    loaded = _read_protected_match_shard(
+        context, int(document["ordinal"]), document["compatibility"], batch_length,
+    )
+    if loaded is None or loaded.get("result_sha256") != document["result_sha256"]:
+        raise RuntimeError("protected match shard failed verification: %s" % path.name)
+    if loaded.get("status") != "COMPLETE":
+        raise RuntimeError("protected match shard was not complete: %s" % path.name)
+    return loaded
+
+
+def match_protected_references_resumable(
+    segments: List[dict],
+    index: SegmentCandidateIndex,
+    context: UCleanContext,
+    *,
+    workers: Optional[int] = None,
+) -> dict:
+    """Match protected fingerprint shards, resume completed shards, then apply.
+
+    Workers only compute evidence. Flags and exclusions are applied in the
+    parent after results are ordered by shard ordinal. Worker count cannot
+    change the scientific result. Match files, not state.json, decide reuse.
+    """
+    global _LAST_MATCH_WORKER_PIDS
+    if not context.config.overlap_config_frozen:
+        raise RuntimeError("overlap protection requires a frozen OverlapConfig")
+    started = time.perf_counter()
+    worker_count = protected_match_worker_count(workers)
+    by_uid = {str(row["segment_uid"]): row for row in segments}
+    eligible = _eligible_protected_match_uids(by_uid)
+    base = _base_match_compatibility(context, index)
+    jobs = []
+    for job in _iter_protected_fingerprint_jobs(context):
+        job["input_batch_sha256"] = _protected_input_batch_sha256(job["batch"])
+        jobs.append(job)
+    job_by_ordinal = {int(job["ordinal"]): job for job in jobs}
+    results: Dict[int, dict] = {}
+    reused = 0
+    references = 0
+    matches = 0
+    comparisons = 0
+    for job in jobs:
+        expected = _shard_match_compatibility(
+            base, job["input_shard_sha256"], job["input_batch_sha256"],
+        )
+        loaded = _read_protected_match_shard(
+            context, job["ordinal"], expected, len(job["batch"]),
+        )
+        if loaded is None:
+            continue
+        results[int(job["ordinal"])] = loaded
+        reused += 1
+        references += len(job["batch"])
+        matches += int(loaded["n_matches"])
+        comparisons += int(loaded["n_candidate_comparisons"])
+    total = len(jobs)
+    total_references = sum(len(job["batch"]) for job in jobs)
+    computed_references = 0
+    _emit_match_progress(
+        context,
+        done=len(results),
+        total=total,
+        references=references,
+        total_references=total_references,
+        matches=matches,
+        started=started,
+        computed_references=computed_references,
+    )
+    todo = [job for job in jobs if int(job["ordinal"]) not in results]
+    overlap = context.config.overlap
+    computed = 0
+    worker_pids: List[int] = []
+    if todo:
+        if worker_count <= 1:
+            produced = (
+                _compute_protected_match_job(job, index, overlap, eligible)
+                for job in todo
+            )
+        else:
+            produced = _parallel_protected_match_jobs(todo, index, overlap, eligible, worker_count)
+        for payload in produced:
+            worker_pids.append(int(payload.pop("worker_pid")))
+            ordinal = int(payload["ordinal"])
+            batch_length = len(job_by_ordinal[ordinal]["batch"])
+            document = _protected_match_document(base, payload)
+            committed = _commit_protected_match_shard(context, document, batch_length)
+            results[ordinal] = committed
+            computed += 1
+            references += batch_length
+            matches += int(committed["n_matches"])
+            comparisons += int(committed["n_candidate_comparisons"])
+            computed_references += batch_length
+            _emit_match_progress(
+                context,
+                done=len(results),
+                total=total,
+                references=references,
+                total_references=total_references,
+                matches=matches,
+                started=started,
+                computed_references=computed_references,
+            )
+    evidence: List[MatchEvidence] = []
+    for ordinal in sorted(results):
+        for row in results[ordinal]["evidence"]:
+            evidence.append(_match_evidence_from_row(row))
+    apply_protected_match_evidence(evidence, by_uid)
+    _snapshot_protected_match_checkpoint(context, results)
+    _LAST_MATCH_WORKER_PIDS = worker_pids
+    elapsed = max(time.perf_counter() - started, 1e-9)
+    benchmark = {
+        "workers": worker_count,
+        "n_match_shards_total": total,
+        "n_match_shards_reused": reused,
+        "n_match_shards_computed": computed,
+        "n_references_processed": references,
+        "n_candidate_comparisons": comparisons,
+        "n_matches": len(evidence),
+        "elapsed_seconds": round(elapsed, 6),
+        "refs_per_second": round(references / elapsed, 6),
+    }
+    return {
+        "evidence": evidence,
+        "benchmark": benchmark,
+        "n_references_processed": references,
+    }
 
 
 def references_cover_splits(entries: Sequence[ProtectedReferenceEntry]) -> bool:
@@ -2788,6 +3415,7 @@ def _empty_checkpoint_state(context: UCleanContext) -> dict:
         "next_protected_fingerprint_shard_id": 0,
         "protected_short_eligibility": {},
         "protected_exact_identity": {},
+        "protected_match_shards": [],
     }
 
 
@@ -2806,6 +3434,7 @@ def _read_checkpoint_state(context: UCleanContext) -> dict:
     state.setdefault("next_protected_fingerprint_shard_id", 0)
     state.setdefault("protected_short_eligibility", {})
     state.setdefault("protected_exact_identity", {})
+    state.setdefault("protected_match_shards", [])
     return state
 
 
@@ -3902,15 +4531,15 @@ def apply_protected_exact_identity(segments: List[dict], context: UCleanContext)
     return evidence
 
 
-def iter_protected_fingerprint_shards(context: UCleanContext):
-    """Yield one verified protected shard at a time."""
+def _iter_protected_fingerprint_jobs(context: UCleanContext):
+    """Verified protected shards in checkpoint order. Hash mismatches are skipped."""
     state = _read_checkpoint_state(context)
     expected = {
         entry.reference_uid: str(entry.sha256_pcm or entry.source_sha256 or "").strip().lower()
         for entry in context.protected_entries
     }
     root = checkpoint_root(context) / "protected_fingerprints"
-    for shard in list(state["protected_fingerprint_shards"]):
+    for ordinal, shard in enumerate(list(state["protected_fingerprint_shards"])):
         allowed = {str(uid) for uid in (shard.get("uids") or [])}
         file_path = root / shard["name"]
         digest = hashlib.sha256(file_path.read_bytes()).hexdigest() if file_path.is_file() else ""
@@ -3940,7 +4569,18 @@ def iter_protected_fingerprint_shards(context: UCleanContext):
                 "fingerprint": row["fingerprint"],
             })
         if batch:
-            yield batch
+            yield {
+                "ordinal": ordinal,
+                "input_shard_name": shard["name"],
+                "input_shard_sha256": shard["sha256"],
+                "batch": batch,
+            }
+
+
+def iter_protected_fingerprint_shards(context: UCleanContext):
+    """Yield one verified protected shard at a time."""
+    for job in _iter_protected_fingerprint_jobs(context):
+        yield job["batch"]
 
 
 def scan_nb11_safety(paths: Sequence[object]) -> List[str]:

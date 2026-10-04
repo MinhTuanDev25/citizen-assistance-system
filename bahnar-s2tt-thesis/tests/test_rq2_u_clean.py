@@ -2605,3 +2605,641 @@ def test_golden_rq1_frozen_test_reconstruction():
         assert item.path.is_file()
         wav_path = item.path
     assert not wav_path.exists()
+
+
+# --------------------------------------------------------------------------- #
+# Resumable protected matching                                                 #
+# --------------------------------------------------------------------------- #
+_MATCH_FP = [0xAAAAAAAA] * 8
+_OTHER_FP = [0xFFFFFFFF] * 8
+_NOISE_FP = [0x55555555] * 8
+
+
+def _match_overlap(**overrides):
+    values = dict(
+        frozen=True,
+        shingle_k=4,
+        min_shared_shingles=1,
+        min_overlap_items=4,
+        similarity_threshold=0.90,
+    )
+    values.update(overrides)
+    return OverlapConfig(**values)
+
+
+def _match_segment(uid, pcm):
+    row = _u_span_row(uid, 160000, pcm)
+    row["overlap_g_train"] = False
+    row["overlap_g_validation"] = False
+    row["overlap_frozen_test"] = False
+    row["exclusion_reason"] = ""
+    return row
+
+
+def _evidence_tuples(evidence):
+    return [
+        (
+            item.candidate_uid,
+            item.reference_uid,
+            item.reference_split,
+            item.matched_duration_seconds,
+            item.alignment_offset,
+            item.similarity,
+            item.match_type,
+        )
+        for item in evidence
+    ]
+
+
+def _segment_views(segments):
+    return [
+        (
+            row["segment_uid"],
+            row.get("u_clean_status"),
+            row.get("exclusion_reason"),
+            row.get("overlap_g_train"),
+            row.get("overlap_g_validation"),
+            row.get("overlap_frozen_test"),
+        )
+        for row in segments
+    ]
+
+
+def _plant_protected_match_case(tmp_path):
+    pytest.importorskip("pyarrow")
+    from src.rq2_u_clean import append_fingerprint_shard, build_u_candidate_index, mark_source_segmentation_complete
+
+    pcm = "cd" * 32
+    root = Path(tmp_path)
+    root.mkdir(parents=True, exist_ok=True)
+    ctx = _fingerprint_context(root, [
+        _eligibility_entry("R0A", "g_train", sha256_pcm=pcm),
+        _eligibility_entry("R0B", "g_train", sha256_pcm=pcm),
+        _eligibility_entry("R1", "g_validation", sha256_pcm=pcm),
+        _eligibility_entry("R2", "frozen_test", sha256_pcm=pcm),
+    ])
+    ctx.config.overlap = _match_overlap()
+    segment = _match_segment("SEG", pcm)
+    other = _match_segment("OTHER", "ef" * 32)
+    mark_source_segmentation_complete(ctx, segment["source_id"], [segment])
+    append_fingerprint_shard(ctx, "segment_fingerprints", [{
+        "segment_uid": "SEG",
+        "fingerprint": list(_MATCH_FP),
+        "audio_sha256": pcm,
+    }])
+    append_fingerprint_shard(ctx, "protected_fingerprints", [
+        {"uid": "R0A", "split": "g_train", "source_sha256": pcm, "fingerprint": list(_MATCH_FP)},
+        {"uid": "R0B", "split": "g_train", "source_sha256": pcm, "fingerprint": list(_MATCH_FP)},
+    ])
+    append_fingerprint_shard(ctx, "protected_fingerprints", [
+        {"uid": "R1", "split": "g_validation", "source_sha256": pcm, "fingerprint": list(_MATCH_FP)},
+    ])
+    append_fingerprint_shard(ctx, "protected_fingerprints", [
+        {"uid": "R2", "split": "frozen_test", "source_sha256": pcm, "fingerprint": list(_MATCH_FP)},
+    ])
+    fingerprints = {"SEG": list(_MATCH_FP), "OTHER": list(_OTHER_FP)}
+    segments = [segment, other]
+    index, _elapsed = build_u_candidate_index(segments, fingerprints, ctx.config)
+    return ctx, segments, index, fingerprints
+
+
+def _legacy_match_protected_batch(segments, index, reference_batch, config):
+    """Historical single-process matcher, kept as an equivalence oracle."""
+    from src.rq2_audio_fingerprint import is_valid_fingerprint, matched_duration_seconds
+    from src.rq2_u_clean import _SPLIT_TO_FLAG, _exclude
+
+    ov = config.overlap
+    by_uid = {str(row["segment_uid"]): row for row in segments}
+    evidence = []
+    for ref in reference_batch:
+        ref_fp = ref.get("fingerprint")
+        if not is_valid_fingerprint(ref_fp):
+            continue
+        split = str(ref.get("split") or "")
+        for uid in index.candidates_for_reference(ref_fp):
+            row = by_uid.get(uid)
+            status = row.get("u_clean_status") if row is not None else ""
+            if row is None or status not in (RETAINED_STATUS, EXCLUDED_PROTECTED_OVERLAP):
+                continue
+            score, offset, overlap = compare_fingerprints_detailed(index.fingerprint_of(uid), ref_fp, ov)
+            if score < ov.similarity_threshold:
+                continue
+            flag = _SPLIT_TO_FLAG.get(split)
+            if flag:
+                row[flag] = True
+            evidence.append(MatchEvidence(
+                candidate_uid=uid,
+                reference_uid=str(ref.get("uid") or ""),
+                reference_split=split,
+                matched_duration_seconds=matched_duration_seconds(overlap, ov),
+                alignment_offset=offset,
+                similarity=round(score, 6),
+                match_type="protected",
+            ))
+            _exclude(row, EXCLUDED_PROTECTED_OVERLAP)
+    return evidence
+
+
+def _checkpoint_lists(ctx):
+    path = ctx.config.out_dir / "checkpoint" / "state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    return {key: state.get(key) for key in (
+        "sources",
+        "segment_shards",
+        "segment_fingerprint_shards",
+        "protected_fingerprint_shards",
+        "protected_short_eligibility",
+        "protected_exact_identity",
+    )}
+
+
+def _match_file_bytes(ctx):
+    directory = ctx.config.out_dir / "checkpoint" / "protected_matches"
+    return {
+        path.name: path.read_bytes()
+        for path in sorted(directory.glob("match-*.json"))
+    }
+
+
+def test_pure_matcher_matches_legacy_single_process():
+    import copy
+    from src.rq2_u_clean import (
+        _exclude,
+        apply_protected_match_evidence,
+        build_u_candidate_index,
+        compute_protected_matches,
+        match_protected_batch,
+    )
+
+    cfg = _config()
+    cfg.overlap = _match_overlap()
+    pcm = "cd" * 32
+    batch = [
+        {"uid": "R0A", "split": "g_train", "fingerprint": list(_MATCH_FP)},
+        {"uid": "R0B", "split": "g_train", "fingerprint": list(_MATCH_FP)},
+        {"uid": "R1", "split": "g_validation", "fingerprint": list(_MATCH_FP)},
+        {"uid": "R2", "split": "frozen_test", "fingerprint": list(_MATCH_FP)},
+        {"uid": "NOISE", "split": "g_train", "fingerprint": list(_NOISE_FP)},
+    ]
+    legacy_rows = [_match_segment("SEG", pcm), _match_segment("OTHER", "ef" * 32)]
+    new_rows = copy.deepcopy(legacy_rows)
+    pure_rows = copy.deepcopy(legacy_rows)
+    fingerprints = {"SEG": list(_MATCH_FP), "OTHER": list(_OTHER_FP)}
+    legacy_index, _ = build_u_candidate_index(legacy_rows, fingerprints, cfg)
+    new_index, _ = build_u_candidate_index(new_rows, fingerprints, cfg)
+    pure_index, _ = build_u_candidate_index(pure_rows, fingerprints, cfg)
+    legacy = _legacy_match_protected_batch(legacy_rows, legacy_index, batch, cfg)
+    current = match_protected_batch(new_rows, new_index, batch, cfg)
+    assert _evidence_tuples(current) == _evidence_tuples(legacy)
+    assert _segment_views(new_rows) == _segment_views(legacy_rows)
+
+    def forbid_exclude(*_args, **_kwargs):
+        raise AssertionError("pure matching must not exclude")
+
+    original = _exclude
+    try:
+        import src.rq2_u_clean as clean
+        clean._exclude = forbid_exclude
+        computed = compute_protected_matches(
+            pure_index,
+            batch,
+            cfg.overlap,
+            {row["segment_uid"] for row in pure_rows},
+        )
+    finally:
+        import src.rq2_u_clean as clean
+        clean._exclude = original
+    assert _segment_views(pure_rows) == [
+        ("SEG", RETAINED_STATUS, "", False, False, False),
+        ("OTHER", RETAINED_STATUS, "", False, False, False),
+    ]
+    assert _evidence_tuples(computed["evidence"]) == _evidence_tuples(legacy)
+    apply_protected_match_evidence(computed["evidence"], {row["segment_uid"]: row for row in pure_rows})
+    assert _segment_views(pure_rows) == _segment_views(legacy_rows)
+
+
+def test_parallel_protected_matches_match_single_worker(tmp_path):
+    import copy
+    from src.rq2_u_clean import match_protected_references_resumable
+
+    ctx_one, rows_one, index_one, _fps = _plant_protected_match_case(tmp_path / "one")
+    ctx_many, rows_many, index_many, _fps = _plant_protected_match_case(tmp_path / "many")
+    pristine = copy.deepcopy(rows_one)
+    one = match_protected_references_resumable(rows_one, index_one, ctx_one, workers=1)
+    many = match_protected_references_resumable(rows_many, index_many, ctx_many, workers=2)
+    assert one["benchmark"]["workers"] == 1
+    assert many["benchmark"]["workers"] == 2
+    assert one["benchmark"]["n_match_shards_computed"] == one["benchmark"]["n_match_shards_total"] == 3
+    assert many["benchmark"]["n_matches"] == one["benchmark"]["n_matches"] == 4
+    assert _evidence_tuples(many["evidence"]) == _evidence_tuples(one["evidence"])
+    assert _segment_views(rows_many) == _segment_views(rows_one)
+    assert _segment_views(rows_one) != _segment_views(pristine)
+    assert list(_match_file_bytes(ctx_many)) == list(_match_file_bytes(ctx_one))
+    assert [json.loads(blob)["result_sha256"] for blob in _match_file_bytes(ctx_many).values()] == [
+        json.loads(blob)["result_sha256"] for blob in _match_file_bytes(ctx_one).values()
+    ]
+
+
+def test_multiple_protected_references_and_split_flags_accumulate(tmp_path):
+    from src.rq2_u_clean import match_protected_references_resumable
+
+    ctx, rows, index, _fps = _plant_protected_match_case(tmp_path)
+    report = match_protected_references_resumable(rows, index, ctx, workers=2)
+    matched = [item for item in report["evidence"] if item.candidate_uid == "SEG"]
+    assert [item.reference_uid for item in matched] == ["R0A", "R0B", "R1", "R2"]
+    assert [item.reference_split for item in matched] == ["g_train", "g_train", "g_validation", "frozen_test"]
+    seg = rows[0]
+    assert seg["segment_uid"] == "SEG"
+    assert seg["overlap_g_train"] is True
+    assert seg["overlap_g_validation"] is True
+    assert seg["overlap_frozen_test"] is True
+    assert seg["u_clean_status"] == EXCLUDED_PROTECTED_OVERLAP
+    assert seg["exclusion_reason"] == EXCLUDED_PROTECTED_OVERLAP
+    assert rows[1]["u_clean_status"] == RETAINED_STATUS
+    assert rows[1]["overlap_g_train"] is False
+    progress = json.loads((ctx.config.out_dir / "checkpoint" / "protected_matches" / "progress.json").read_text(encoding="utf-8"))
+    assert progress["n_match_shards_completed"] == 3
+    assert progress["n_references_processed"] == 4
+
+
+def test_protected_match_resume_recomputes_only_missing_shards(tmp_path, monkeypatch):
+    import copy
+    import src.rq2_u_clean as clean
+
+    ctx, rows, index, _fps = _plant_protected_match_case(tmp_path / "resume")
+    uninterrupted_ctx, uninterrupted_rows, uninterrupted_index, _fps = _plant_protected_match_case(tmp_path / "full")
+    pristine = copy.deepcopy(rows)
+    calls = {"n": 0}
+    real_commit = clean._commit_protected_match_shard
+
+    def stop_after_first(context, document, batch_length):
+        loaded = real_commit(context, document, batch_length)
+        calls["n"] += 1
+        if calls["n"] >= 1:
+            raise RuntimeError("simulated interrupt")
+        return loaded
+
+    monkeypatch.setattr(clean, "_commit_protected_match_shard", stop_after_first)
+    with pytest.raises(RuntimeError, match="simulated interrupt"):
+        clean.match_protected_references_resumable(rows, index, ctx, workers=1)
+    assert calls["n"] == 1
+    assert _segment_views(rows) == _segment_views(pristine)
+    assert len(_match_file_bytes(ctx)) == 1
+    monkeypatch.setattr(clean, "_commit_protected_match_shard", real_commit)
+    resumed = clean.match_protected_references_resumable(rows, index, ctx, workers=1)
+    full = clean.match_protected_references_resumable(
+        uninterrupted_rows, uninterrupted_index, uninterrupted_ctx, workers=1,
+    )
+    assert resumed["benchmark"]["n_match_shards_reused"] == 1
+    assert resumed["benchmark"]["n_match_shards_computed"] == 2
+    assert resumed["benchmark"]["n_matches"] == full["benchmark"]["n_matches"] == 4
+    assert _evidence_tuples(resumed["evidence"]) == _evidence_tuples(full["evidence"])
+    assert _segment_views(rows) == _segment_views(uninterrupted_rows)
+    assert [json.loads(blob)["result_sha256"] for blob in _match_file_bytes(ctx).values()] == [
+        json.loads(blob)["result_sha256"] for blob in _match_file_bytes(uninterrupted_ctx).values()
+    ]
+
+
+def test_corrupt_match_shard_is_recomputed(tmp_path):
+    import copy
+    from src.rq2_u_clean import match_protected_references_resumable
+
+    ctx, rows, index, _fps = _plant_protected_match_case(tmp_path)
+    pristine = copy.deepcopy(rows)
+    first = match_protected_references_resumable(rows, index, ctx, workers=1)
+    path = ctx.config.out_dir / "checkpoint" / "protected_matches" / "match-000001.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["result_sha256"] = "0" * 64
+    path.write_text(json.dumps(document), encoding="utf-8")
+    fresh = copy.deepcopy(pristine)
+    second = match_protected_references_resumable(fresh, index, ctx, workers=1)
+    assert second["benchmark"]["n_match_shards_reused"] == 2
+    assert second["benchmark"]["n_match_shards_computed"] == 1
+    assert _evidence_tuples(second["evidence"]) == _evidence_tuples(first["evidence"])
+    repaired = json.loads(path.read_text(encoding="utf-8"))
+    assert repaired["result_sha256"] != "0" * 64
+    assert repaired["status"] == "COMPLETE"
+
+
+def test_changed_overlap_contract_recomputes_match_shards(tmp_path):
+    import copy
+    from src.rq2_u_clean import build_u_candidate_index, compatibility_key, match_protected_references_resumable
+
+    ctx, rows, index, fingerprints = _plant_protected_match_case(tmp_path)
+    pristine = copy.deepcopy(rows)
+    match_protected_references_resumable(rows, index, ctx, workers=1)
+    ctx.config.overlap = _match_overlap(similarity_threshold=0.99)
+    state_path = ctx.config.out_dir / "checkpoint" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["compatibility_key"] = compatibility_key(ctx)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    fresh = copy.deepcopy(pristine)
+    rebuilt, _elapsed = build_u_candidate_index(fresh, fingerprints, ctx.config)
+    report = match_protected_references_resumable(fresh, rebuilt, ctx, workers=1)
+    assert report["benchmark"]["n_match_shards_reused"] == 0
+    assert report["benchmark"]["n_match_shards_computed"] == 3
+    stored = json.loads((ctx.config.out_dir / "checkpoint" / "protected_matches" / "match-000000.json").read_text(encoding="utf-8"))
+    assert stored["overlap_contract_sha256"] == overlap_contract_sha256(ctx.config.overlap)
+
+
+def test_changed_u_fingerprint_identity_recomputes_match_shards(tmp_path):
+    import copy
+    from src.rq2_u_clean import build_u_candidate_index, match_protected_references_resumable
+
+    ctx, rows, index, fingerprints = _plant_protected_match_case(tmp_path)
+    pristine = copy.deepcopy(rows)
+    match_protected_references_resumable(rows, index, ctx, workers=1)
+    changed = dict(fingerprints)
+    changed["SEG"] = [0xAAAAAAAA] * 7 + [0xAAAAAAAB]
+    fresh = copy.deepcopy(pristine)
+    rebuilt, _elapsed = build_u_candidate_index(fresh, changed, ctx.config)
+    report = match_protected_references_resumable(fresh, rebuilt, ctx, workers=1)
+    assert report["benchmark"]["n_match_shards_reused"] == 0
+    assert report["benchmark"]["n_match_shards_computed"] == 3
+
+
+def test_changed_protected_shard_recomputes_only_that_match(tmp_path):
+    import os
+    import copy
+    import pandas as pd
+    from src.rq2_audio_fingerprint import fingerprint_sha256
+    from src.rq2_u_clean import match_protected_references_resumable
+
+    ctx, rows, index, _fps = _plant_protected_match_case(tmp_path)
+    pristine = copy.deepcopy(rows)
+    match_protected_references_resumable(rows, index, ctx, workers=1)
+    before = _match_file_bytes(ctx)
+    shard = ctx.config.out_dir / "checkpoint" / "protected_fingerprints" / "part-000002.parquet"
+    frame = pd.read_parquet(shard)
+    frame.at[0, "fingerprint"] = list(_NOISE_FP)
+    frame.at[0, "fingerprint_sha256"] = fingerprint_sha256(_NOISE_FP)
+    tmp = shard.with_suffix(".parquet.tmp")
+    frame.to_parquet(tmp, index=False)
+    os.replace(tmp, shard)
+    state_path = ctx.config.out_dir / "checkpoint" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["protected_fingerprint_shards"][1]["sha256"] = hashlib.sha256(shard.read_bytes()).hexdigest()
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    fresh = copy.deepcopy(pristine)
+    report = match_protected_references_resumable(fresh, index, ctx, workers=1)
+    after = _match_file_bytes(ctx)
+    assert report["benchmark"]["n_match_shards_reused"] == 2
+    assert report["benchmark"]["n_match_shards_computed"] == 1
+    assert after["match-000000.json"] == before["match-000000.json"]
+    assert after["match-000002.json"] == before["match-000002.json"]
+    assert after["match-000001.json"] != before["match-000001.json"]
+    assert [item.reference_uid for item in report["evidence"]] == ["R0A", "R0B", "R2"]
+
+
+def test_match_completion_order_does_not_change_output(tmp_path, monkeypatch):
+    from concurrent.futures import ALL_COMPLETED, wait as real_wait
+    from src.rq2_u_clean import match_protected_references_resumable
+
+    def reversed_completed(inflight):
+        done, _pending = real_wait(set(inflight), return_when=ALL_COMPLETED)
+        return list(reversed(list(done)))
+
+    monkeypatch.setattr("src.rq2_u_clean._completed_match_futures", reversed_completed)
+    ctx, rows, index, _fps = _plant_protected_match_case(tmp_path / "ordered")
+    other_ctx, other_rows, other_index, _fps = _plant_protected_match_case(tmp_path / "reversed")
+    forward = match_protected_references_resumable(rows, index, ctx, workers=1)
+    backward = match_protected_references_resumable(other_rows, other_index, other_ctx, workers=2)
+    assert _evidence_tuples(backward["evidence"]) == _evidence_tuples(forward["evidence"])
+    assert _segment_views(other_rows) == _segment_views(rows)
+    assert [json.loads(blob)["result_sha256"] for blob in _match_file_bytes(other_ctx).values()] == [
+        json.loads(blob)["result_sha256"] for blob in _match_file_bytes(ctx).values()
+    ]
+
+
+def test_parallel_executor_uses_requested_workers(tmp_path, monkeypatch):
+    from concurrent.futures import ProcessPoolExecutor
+    from src.rq2_u_clean import match_protected_references_resumable
+
+    seen = {}
+
+    class SpyExecutor(ProcessPoolExecutor):
+        def __init__(self, *args, **kwargs):
+            seen["max_workers"] = kwargs.get("max_workers")
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr("src.rq2_u_clean.ProcessPoolExecutor", SpyExecutor)
+    ctx, rows, index, _fps = _plant_protected_match_case(tmp_path)
+    report = match_protected_references_resumable(rows, index, ctx, workers=2)
+    assert seen["max_workers"] == 2
+    assert report["benchmark"]["workers"] == 2
+    assert report["benchmark"]["n_match_shards_computed"] == 3
+    assert report["benchmark"]["n_references_processed"] == 4
+    assert report["benchmark"]["n_candidate_comparisons"] >= report["benchmark"]["n_matches"]
+    assert report["benchmark"]["elapsed_seconds"] >= 0
+    assert report["benchmark"]["refs_per_second"] > 0
+
+
+def test_existing_checkpoint_without_match_state_stays_reusable(tmp_path):
+    from src.rq2_u_clean import load_resumable_checkpoint, match_protected_references_resumable
+
+    ctx, rows, index, _fps = _plant_protected_match_case(tmp_path)
+    loaded = load_resumable_checkpoint(ctx)
+    assert loaded["source_status"]["VOV4"]["segmentation_status"] == "COMPLETE"
+    assert "SEG" in loaded["segment_fingerprints_by_uid"]
+    state_path = ctx.config.out_dir / "checkpoint" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.pop("protected_match_shards", None)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    before = _checkpoint_lists(ctx)
+    report = match_protected_references_resumable(rows, index, ctx, workers=1)
+    after = _checkpoint_lists(ctx)
+    assert after == before
+    assert report["benchmark"]["n_matches"] == 4
+    written = json.loads(state_path.read_text(encoding="utf-8"))
+    assert len(written["protected_match_shards"]) == 3
+    assert all(row["status"] == "COMPLETE" for row in written["protected_match_shards"])
+
+
+def test_match_worker_count_is_runtime_only(monkeypatch):
+    from src.rq2_u_clean import protected_match_worker_count
+
+    monkeypatch.delenv("BAHNAR_NB11_MATCH_WORKERS", raising=False)
+    monkeypatch.setattr("src.rq2_u_clean.os.cpu_count", lambda: 128)
+    assert protected_match_worker_count() == 32
+    monkeypatch.setenv("BAHNAR_NB11_MATCH_WORKERS", "32")
+    assert protected_match_worker_count() == 32
+    assert protected_match_worker_count(1) == 1
+    with pytest.raises(RuntimeError):
+        protected_match_worker_count(0)
+    same = overlap_contract_sha256(_match_overlap())
+    monkeypatch.setenv("BAHNAR_NB11_MATCH_WORKERS", "8")
+    assert overlap_contract_sha256(_match_overlap()) == same
+
+
+def _plant_many_match_shards(tmp_path, n_shards):
+    pytest.importorskip("pyarrow")
+    from src.rq2_u_clean import append_fingerprint_shard, build_u_candidate_index, mark_source_segmentation_complete
+
+    pcm = "cd" * 32
+    splits = ("g_train", "g_validation", "frozen_test")
+    entries = [
+        _eligibility_entry("R%d" % index, splits[index % 3], sha256_pcm=pcm)
+        for index in range(n_shards)
+    ]
+    root = Path(tmp_path)
+    root.mkdir(parents=True, exist_ok=True)
+    ctx = _fingerprint_context(root, entries)
+    ctx.config.overlap = _match_overlap()
+    segment = _match_segment("SEG", pcm)
+    mark_source_segmentation_complete(ctx, segment["source_id"], [segment])
+    append_fingerprint_shard(ctx, "segment_fingerprints", [{
+        "segment_uid": "SEG",
+        "fingerprint": list(_MATCH_FP),
+        "audio_sha256": pcm,
+    }])
+    for entry in entries:
+        append_fingerprint_shard(ctx, "protected_fingerprints", [{
+            "uid": entry.reference_uid,
+            "split": entry.split,
+            "source_sha256": pcm,
+            "fingerprint": list(_MATCH_FP),
+        }])
+    fingerprints = {"SEG": list(_MATCH_FP)}
+    segments = [segment]
+    index, _elapsed = build_u_candidate_index(segments, fingerprints, ctx.config)
+    return ctx, segments, index
+
+
+def test_u_candidate_identity_computed_once(tmp_path, monkeypatch):
+    import copy
+    import src.rq2_u_clean as clean
+
+    ctx, rows, index, _fps = _plant_protected_match_case(tmp_path)
+    pristine = copy.deepcopy(rows)
+    calls = {"n": 0}
+    real_identity = clean._u_candidate_identity
+
+    def spy(candidate_index):
+        calls["n"] += 1
+        return real_identity(candidate_index)
+
+    monkeypatch.setattr(clean, "_u_candidate_identity", spy)
+    clean.match_protected_references_resumable(rows, index, ctx, workers=1)
+    assert calls["n"] == 1
+    clean.match_protected_references_resumable(copy.deepcopy(pristine), index, ctx, workers=1)
+    assert calls["n"] == 2
+
+
+def test_state_json_not_rewritten_per_match_shard(tmp_path, monkeypatch):
+    import src.rq2_u_clean as clean
+
+    ctx, rows, index, _fps = _plant_protected_match_case(tmp_path)
+    writes = {"n": 0}
+    real_write = clean._write_checkpoint_state
+
+    def spy(context, state):
+        writes["n"] += 1
+        return real_write(context, state)
+
+    monkeypatch.setattr(clean, "_write_checkpoint_state", spy)
+    clean.match_protected_references_resumable(rows, index, ctx, workers=1)
+    assert writes["n"] == 1
+    state = json.loads((ctx.config.out_dir / "checkpoint" / "state.json").read_text(encoding="utf-8"))
+    assert len(state["protected_match_shards"]) == 3
+
+
+def test_committed_match_file_resumes_without_state_record(tmp_path, monkeypatch):
+    import copy
+    import src.rq2_u_clean as clean
+
+    ctx, rows, index, _fps = _plant_protected_match_case(tmp_path / "resume")
+    full_ctx, full_rows, full_index, _fps = _plant_protected_match_case(tmp_path / "full")
+    pristine = copy.deepcopy(rows)
+    writes = {"n": 0}
+    real_write = clean._write_checkpoint_state
+    real_commit = clean._commit_protected_match_shard
+
+    def spy_write(context, state):
+        writes["n"] += 1
+        return real_write(context, state)
+
+    def stop_after_first(context, document, batch_length):
+        loaded = real_commit(context, document, batch_length)
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(clean, "_write_checkpoint_state", spy_write)
+    monkeypatch.setattr(clean, "_commit_protected_match_shard", stop_after_first)
+    with pytest.raises(KeyboardInterrupt):
+        clean.match_protected_references_resumable(rows, index, ctx, workers=2)
+    assert writes["n"] == 0
+    assert _segment_views(rows) == _segment_views(pristine)
+    assert len(_match_file_bytes(ctx)) == 1
+    state = json.loads((ctx.config.out_dir / "checkpoint" / "state.json").read_text(encoding="utf-8"))
+    assert state.get("protected_match_shards") == []
+    monkeypatch.setattr(clean, "_commit_protected_match_shard", real_commit)
+    monkeypatch.setattr(clean, "_write_checkpoint_state", real_write)
+    resumed = clean.match_protected_references_resumable(rows, index, ctx, workers=1)
+    full = clean.match_protected_references_resumable(full_rows, full_index, full_ctx, workers=1)
+    assert resumed["benchmark"]["n_match_shards_reused"] == 1
+    assert resumed["benchmark"]["n_match_shards_computed"] == 2
+    assert _evidence_tuples(resumed["evidence"]) == _evidence_tuples(full["evidence"])
+    assert _segment_views(rows) == _segment_views(full_rows)
+
+
+def test_logical_batch_change_invalidates_only_that_match(tmp_path):
+    import copy
+    from src.rq2_u_clean import match_protected_references_resumable
+
+    ctx, rows, index, _fps = _plant_protected_match_case(tmp_path)
+    pristine = copy.deepcopy(rows)
+    match_protected_references_resumable(rows, index, ctx, workers=1)
+    before = _match_file_bytes(ctx)
+    unchanged = match_protected_references_resumable(copy.deepcopy(pristine), index, ctx, workers=1)
+    assert unchanged["benchmark"]["n_match_shards_reused"] == 3
+    assert unchanged["benchmark"]["n_match_shards_computed"] == 0
+    assert _match_file_bytes(ctx) == before
+    shard_path = ctx.config.out_dir / "checkpoint" / "protected_fingerprints" / "part-000001.parquet"
+    parquet_bytes = shard_path.read_bytes()
+    state_path = ctx.config.out_dir / "checkpoint" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    dropped = state["protected_fingerprint_shards"][0]["uids"].pop()
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    assert shard_path.read_bytes() == parquet_bytes
+    report = match_protected_references_resumable(copy.deepcopy(pristine), index, ctx, workers=1)
+    after = _match_file_bytes(ctx)
+    assert shard_path.read_bytes() == parquet_bytes
+    assert report["benchmark"]["n_match_shards_reused"] == 2
+    assert report["benchmark"]["n_match_shards_computed"] == 1
+    assert after["match-000000.json"] != before["match-000000.json"]
+    assert after["match-000001.json"] == before["match-000001.json"]
+    assert after["match-000002.json"] == before["match-000002.json"]
+    assert dropped not in [item.reference_uid for item in report["evidence"]]
+
+
+def test_match_workers_execute_and_stay_bounded(tmp_path, monkeypatch):
+    import os
+    import src.rq2_u_clean as clean
+
+    monkeypatch.setenv("BAHNAR_NB11_MATCH_READY_BARRIER", "1")
+    ctx, rows, index = _plant_many_match_shards(tmp_path / "parallel", 8)
+    other_ctx, other_rows, other_index = _plant_many_match_shards(tmp_path / "serial", 8)
+    parallel = clean.match_protected_references_resumable(rows, index, ctx, workers=2)
+    worker_pids = list(clean._LAST_MATCH_WORKER_PIDS)
+    max_inflight = clean._LAST_MATCH_MAX_INFLIGHT
+    serial = clean.match_protected_references_resumable(other_rows, other_index, other_ctx, workers=1)
+    assert len(worker_pids) == 8
+    assert len(set(worker_pids)) > 1
+    assert os.getpid() not in set(worker_pids)
+    assert max_inflight == clean._protected_match_max_inflight(2) == 4
+    assert _evidence_tuples(parallel["evidence"]) == _evidence_tuples(serial["evidence"])
+    assert _segment_views(rows) == _segment_views(other_rows)
+    for blob in _match_file_bytes(ctx).values():
+        document = json.loads(blob)
+        assert "worker_pid" not in document
+        assert "worker_pid" not in document["compatibility"]
+    assert "worker_pid" not in parallel["benchmark"]
+
+
+def test_notebook_uses_resumable_protected_matcher():
+    notebook = Path(__file__).resolve().parents[1] / "notebooks" / "11_RQ2_UReal_Segmentation_Dedup_Freeze_UClean.ipynb"
+    text = notebook.read_text(encoding="utf-8")
+    assert "match_protected_references_resumable" in text
+    assert "for batch in uc.iter_protected_fingerprint_shards" not in text
+    assert "RUN_FULL_PIPELINE = True" in text
+    assert "SEGMENTATION_CONFIG_FROZEN = True" in text
+    assert "OVERLAP_CONFIG_FROZEN = True" in text

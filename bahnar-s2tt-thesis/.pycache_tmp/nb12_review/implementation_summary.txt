@@ -1,0 +1,11 @@
+Notebook 12 Cell 14 now calls build_quality_score_contract with
+nb11_input_contract_sha256=NB11.contract_sha256.
+
+tests/test_rq2_quality.py parses that call with ast and requires the keyword
+value to be the NB11.contract_sha256 attribute. A second test checks every
+Notebook 12 call into src.rq2_pseudo_contract, src.rq2_pseudo_label, and
+src.rq2_quality against the live signatures, including missing required
+keyword-only arguments.
+
+No scientific pin, formula, cache behavior, or RQ1/NB11 artifact changed.
+RUN_FULL_PIPELINE and QUALITY_SCORE_FROZEN remain False.
