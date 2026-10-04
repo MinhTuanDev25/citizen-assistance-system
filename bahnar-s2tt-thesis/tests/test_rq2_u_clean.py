@@ -3243,3 +3243,527 @@ def test_notebook_uses_resumable_protected_matcher():
     assert "RUN_FULL_PIPELINE = True" in text
     assert "SEGMENTATION_CONFIG_FROZEN = True" in text
     assert "OVERLAP_CONFIG_FROZEN = True" in text
+    assert "load_resumable_checkpoint(context, load_protected_fingerprints=False)" in text
+
+
+def test_executor_starts_before_protected_iterator_is_consumed(tmp_path, monkeypatch):
+    import os
+    from concurrent.futures import ProcessPoolExecutor
+    import src.rq2_u_clean as clean
+
+    monkeypatch.setenv("BAHNAR_NB11_MATCH_READY_BARRIER", "1")
+    n_shards = 8
+    ctx, rows, index = _plant_many_match_shards(tmp_path, n_shards)
+    consumed = {"n": 0}
+    observed = {}
+    real_units = clean._iter_protected_match_units
+    real_progress = clean._write_match_progress
+
+    def counting_units(context, base):
+        for unit in real_units(context, base):
+            consumed["n"] += 1
+            yield unit
+
+    class SpyExecutor(ProcessPoolExecutor):
+        def __init__(self, *args, **kwargs):
+            observed["consumed_at_pool"] = consumed["n"]
+            observed["max_workers"] = kwargs.get("max_workers")
+            super().__init__(*args, **kwargs)
+
+        def submit(self, fn, *args, **kwargs):
+            if "consumed_at_first_submit" not in observed:
+                observed["consumed_at_first_submit"] = consumed["n"]
+            return super().submit(fn, *args, **kwargs)
+
+    def spy_progress(context, progress):
+        if "first_progress" not in observed:
+            observed["first_progress"] = dict(progress)
+            observed["consumed_at_first_progress"] = consumed["n"]
+        return real_progress(context, progress)
+
+    monkeypatch.setattr(clean, "_iter_protected_match_units", counting_units)
+    monkeypatch.setattr(clean, "ProcessPoolExecutor", SpyExecutor)
+    monkeypatch.setattr(clean, "_write_match_progress", spy_progress)
+    report = clean.match_protected_references_resumable(rows, index, ctx, workers=2)
+    progress = json.loads(
+        (ctx.config.out_dir / "checkpoint" / "protected_matches" / "progress.json").read_text(encoding="utf-8")
+    )
+    assert observed["consumed_at_pool"] == 0
+    assert observed["consumed_at_first_submit"] < n_shards
+    assert observed["consumed_at_first_submit"] <= clean._protected_match_max_inflight(2)
+    assert n_shards - observed["consumed_at_first_submit"] > 0
+    assert observed["consumed_at_first_progress"] == 0
+    assert observed["first_progress"]["status"] == "running"
+    assert observed["first_progress"]["workers"] == 2
+    assert observed["first_progress"]["total_shards"] == n_shards
+    assert observed["first_progress"]["completed_shards"] == 0
+    assert clean._LAST_MATCH_PULLED_AT_POOL_START == 0
+    assert clean._LAST_MATCH_PULLED_AT_FIRST_SUBMIT < n_shards
+    assert clean._LAST_MATCH_MAX_INFLIGHT <= clean._protected_match_max_inflight(2)
+    assert clean._LAST_MATCH_MAX_INFLIGHT == 4
+    assert len(set(clean._LAST_MATCH_WORKER_PIDS)) > 1
+    assert os.getpid() not in set(clean._LAST_MATCH_WORKER_PIDS)
+    assert consumed["n"] == n_shards
+    assert report["benchmark"]["n_match_shards_total"] == n_shards
+    assert progress["status"] == "complete"
+    for key in (
+        "status", "workers", "total_shards", "completed_shards", "reused_shards",
+        "submitted_shards", "references_processed", "matches", "elapsed_seconds",
+    ):
+        assert key in progress
+
+
+def test_streaming_matches_materialized_reference(tmp_path):
+    import src.rq2_u_clean as clean
+
+    ctx, rows, index, _fps = _plant_protected_match_case(tmp_path / "stream")
+    other_ctx, other_rows, other_index, _fps = _plant_protected_match_case(tmp_path / "materialized")
+    jobs = []
+    for job in clean._iter_protected_fingerprint_jobs(other_ctx):
+        job["input_batch_sha256"] = clean._protected_input_batch_sha256(job["batch"])
+        jobs.append(job)
+    assert len(jobs) == 3
+    eligible = clean._eligible_protected_match_uids({row["segment_uid"]: row for row in other_rows})
+    evidence = []
+    for job in sorted(jobs, key=lambda item: int(item["ordinal"])):
+        payload = clean._compute_protected_match_job(job, other_index, other_ctx.config.overlap, eligible)
+        evidence.extend(payload["evidence"])
+    clean.apply_protected_match_evidence(evidence, {row["segment_uid"]: row for row in other_rows})
+    streamed = clean.match_protected_references_resumable(rows, index, ctx, workers=2)
+    assert _evidence_tuples(streamed["evidence"]) == _evidence_tuples(evidence)
+    assert _segment_views(rows) == _segment_views(other_rows)
+
+
+def test_resume_skips_array_materialization_for_completed_shards(tmp_path, monkeypatch):
+    import copy
+    import src.rq2_u_clean as clean
+
+    ctx, rows, index, _fps = _plant_protected_match_case(tmp_path)
+    pristine = copy.deepcopy(rows)
+    clean.match_protected_references_resumable(rows, index, ctx, workers=1)
+    clean._PROTECTED_SHARD_CACHE.clear()
+    arrays = {"n": 0}
+    computes = {"n": 0}
+    real_arrays = clean._load_protected_match_arrays
+    real_compute = clean.compute_protected_matches
+
+    def spy_arrays(context, shard, path):
+        arrays["n"] += 1
+        return real_arrays(context, shard, path)
+
+    def spy_compute(index_arg, batch, overlap, eligible):
+        computes["n"] += 1
+        return real_compute(index_arg, batch, overlap, eligible)
+
+    monkeypatch.setattr(clean, "_load_protected_match_arrays", spy_arrays)
+    monkeypatch.setattr(clean, "compute_protected_matches", spy_compute)
+    missing = ctx.config.out_dir / "checkpoint" / "protected_matches" / "match-000001.json"
+    missing.unlink()
+    report = clean.match_protected_references_resumable(copy.deepcopy(pristine), index, ctx, workers=1)
+    assert arrays["n"] == 1
+    assert computes["n"] == 1
+    assert report["benchmark"]["n_match_shards_reused"] == 2
+    assert report["benchmark"]["n_match_shards_computed"] == 1
+    arrays["n"] = 0
+    computes["n"] = 0
+    again = clean.match_protected_references_resumable(copy.deepcopy(pristine), index, ctx, workers=1)
+    assert arrays["n"] == 0
+    assert computes["n"] == 0
+    assert again["benchmark"]["n_match_shards_reused"] == 3
+    assert again["benchmark"]["n_match_shards_computed"] == 0
+
+
+def test_deferred_resume_does_not_read_protected_parquet(tmp_path, monkeypatch):
+    import src.rq2_u_clean as clean
+
+    ctx, _rows, _index, _fps = _plant_protected_match_case(tmp_path)
+    state_path = ctx.config.out_dir / "checkpoint" / "state.json"
+    before = json.loads(state_path.read_text(encoding="utf-8"))["protected_fingerprint_shards"]
+    reads = {"n": 0}
+    real_read = clean._read_expected_file_bytes
+
+    def spy_read(path, expected_sha):
+        reads["n"] += 1
+        return real_read(path, expected_sha)
+
+    monkeypatch.setattr(clean, "_read_expected_file_bytes", spy_read)
+    clean._PROTECTED_SHARD_CACHE.clear()
+    loaded = clean.load_resumable_checkpoint(ctx, load_protected_fingerprints=False)
+    assert loaded["discarded_reference_shards"] == []
+    assert reads["n"] == 0
+    after = json.loads(state_path.read_text(encoding="utf-8"))["protected_fingerprint_shards"]
+    assert after == before
+    clean._indexed_protected_pcm(ctx)
+    verified_reads = reads["n"]
+    assert verified_reads == 3
+    clean.protected_fingerprint_coverage_complete(ctx)
+    assert reads["n"] == verified_reads
+
+
+def _protected_hash_set(indexed):
+    hashes = dict(indexed["fingerprinted"])
+    hashes.update(indexed["shorts"])
+    return hashes
+
+
+def test_pinned_exact_pcm_hashes_match_verified_scan(tmp_path):
+    import src.rq2_u_clean as clean
+
+    ctx, rows, _index, _fps = _plant_protected_match_case(tmp_path / "long")
+    pinned = clean._pinned_protected_pcm(ctx)
+    verified = clean._indexed_protected_pcm(ctx)
+    assert pinned["unaccounted"] == []
+    assert verified["unaccounted"] == []
+    assert _protected_hash_set(pinned) == _protected_hash_set(verified)
+    other_ctx, other_rows, _index, _fps = _plant_protected_match_case(tmp_path / "apply")
+    old_evidence = clean._commit_exact_protected_identity(
+        other_rows, other_ctx, _protected_hash_set(clean._indexed_protected_pcm(other_ctx)),
+    )
+    new_evidence = clean.apply_protected_exact_identity(rows, ctx)
+    assert _evidence_tuples(new_evidence) == _evidence_tuples(old_evidence)
+    assert _segment_views(rows) == _segment_views(other_rows)
+
+    pcm = "ab" * 32
+    other = "cd" * 32
+    (tmp_path / "mixed").mkdir()
+    mixed = _fingerprint_context(tmp_path / "mixed", [
+        _eligibility_entry("TR", "g_train", sha256_pcm=pcm),
+        _eligibility_entry("VA", "g_validation", sha256_pcm=other),
+    ])
+    resolver = _WavResolver(tmp_path / "mixed", {"TR": 81600, "VA": 24000}, {"n": 0, "uids": []})
+    clean.generate_protected_fingerprints(mixed, resolver, fingerprint_fn=lambda path: _rand_fp(4))
+    mixed_pinned = clean._pinned_protected_pcm(mixed)
+    mixed_verified = clean._indexed_protected_pcm(mixed)
+    assert mixed_pinned["unaccounted"] == []
+    assert _protected_hash_set(mixed_pinned) == _protected_hash_set(mixed_verified)
+    assert set(mixed_pinned["shorts"]) == {("g_validation", "VA")}
+    assert set(mixed_pinned["fingerprinted"]) == {("g_train", "TR")}
+
+
+def test_notebook_path_reaches_matcher_before_all_protected_parquets_are_read(tmp_path, monkeypatch):
+    import os
+    from concurrent.futures import ProcessPoolExecutor
+    import src.rq2_u_clean as clean
+
+    monkeypatch.setenv("BAHNAR_NB11_MATCH_READY_BARRIER", "1")
+    n_shards = 8
+    ctx, _rows, _index = _plant_many_match_shards(tmp_path / "notebook", n_shards)
+    ref_ctx, _ref_rows, _ref_index = _plant_many_match_shards(tmp_path / "reference", n_shards)
+    state_path = ctx.config.out_dir / "checkpoint" / "state.json"
+    shard_list = json.loads(state_path.read_text(encoding="utf-8"))["protected_fingerprint_shards"]
+    reference_total = sum(len(shard.get("uids") or []) for shard in shard_list)
+    assert reference_total == n_shards
+    reads = {"n": 0}
+    observed = {}
+    real_read = clean._read_expected_file_bytes
+    real_progress = clean._write_match_progress
+
+    def spy_read(path, expected_sha):
+        reads["n"] += 1
+        return real_read(path, expected_sha)
+
+    class SpyExecutor(ProcessPoolExecutor):
+        def __init__(self, *args, **kwargs):
+            observed["reads_at_pool"] = reads["n"]
+            super().__init__(*args, **kwargs)
+
+        def submit(self, fn, *args, **kwargs):
+            if "reads_at_first_submit" not in observed:
+                observed["reads_at_first_submit"] = reads["n"]
+            return super().submit(fn, *args, **kwargs)
+
+    def spy_progress(context, progress):
+        if "first_progress" not in observed:
+            observed["first_progress"] = dict(progress)
+            observed["reads_at_first_progress"] = reads["n"]
+            observed["progress_exists"] = (
+                context.config.out_dir / "checkpoint" / "protected_matches" / "progress.json"
+            ).is_file()
+        return real_progress(context, progress)
+
+    monkeypatch.setattr(clean, "_read_expected_file_bytes", spy_read)
+    monkeypatch.setattr(clean, "ProcessPoolExecutor", SpyExecutor)
+    monkeypatch.setattr(clean, "_write_match_progress", spy_progress)
+
+    class UnusedResolver:
+        def iter_materialized_audio(self, entries):
+            raise AssertionError("resume reused protected fingerprints without materializing audio")
+
+    loaded = clean.load_resumable_checkpoint(ctx, load_protected_fingerprints=False)
+    assert reads["n"] == 0
+    assert json.loads(state_path.read_text(encoding="utf-8"))["protected_fingerprint_shards"] == shard_list
+    assert clean.generate_protected_fingerprints(ctx, UnusedResolver()) == 0
+    assert reads["n"] == 0
+    segments = loaded["segments"]
+    fingerprints = loaded["segment_fingerprints_by_uid"]
+    for row in segments:
+        row["segment_pcm16_sha256"] = "ef" * 32
+    exact = clean.apply_protected_exact_identity(segments, ctx)
+    assert exact == []
+    assert reads["n"] == 0
+    clean.perceptual_deduplicate(segments, fingerprints, ctx.config)
+    assert reads["n"] == 0
+    index, _elapsed = clean.build_u_candidate_index(segments, fingerprints, ctx.config)
+    assert reads["n"] == 0
+    report = clean.match_protected_references_resumable(segments, index, ctx, workers=2)
+    progress = json.loads(
+        (ctx.config.out_dir / "checkpoint" / "protected_matches" / "progress.json").read_text(encoding="utf-8")
+    )
+    assert observed["reads_at_pool"] < n_shards
+    assert observed["reads_at_first_progress"] < n_shards
+    assert observed["reads_at_first_submit"] < n_shards
+    assert observed["reads_at_first_submit"] <= clean._protected_match_max_inflight(2)
+    assert observed["first_progress"]["status"] == "running"
+    assert observed["first_progress"]["total_shards"] == n_shards
+    assert observed["first_progress"]["completed_shards"] == 0
+    assert observed["first_progress"]["n_references_total"] == reference_total
+    assert progress["n_references_total"] == reference_total
+    assert progress["total_shards"] == n_shards
+    assert progress["status"] == "complete"
+    assert len(set(clean._LAST_MATCH_WORKER_PIDS)) > 1
+    assert os.getpid() not in set(clean._LAST_MATCH_WORKER_PIDS)
+    after_match = reads["n"]
+    assert clean.protected_fingerprint_coverage_complete(ctx) is True
+    assert clean.protected_exact_identity_complete(ctx) is True
+    assert reads["n"] == after_match
+    assert json.loads(state_path.read_text(encoding="utf-8"))["protected_fingerprint_shards"] == shard_list
+
+    ref_verified = clean._indexed_protected_pcm(ref_ctx)
+    ref_pinned = clean._pinned_protected_pcm(ref_ctx)
+    assert ref_verified["unaccounted"] == []
+    assert _protected_hash_set(ref_pinned) == _protected_hash_set(ref_verified)
+    ref_loaded = clean.load_resumable_checkpoint(ref_ctx, load_protected_fingerprints=False)
+    ref_segments = ref_loaded["segments"]
+    ref_fingerprints = ref_loaded["segment_fingerprints_by_uid"]
+    for row in ref_segments:
+        row["segment_pcm16_sha256"] = "ef" * 32
+    ref_exact = clean._commit_exact_protected_identity(
+        ref_segments, ref_ctx, _protected_hash_set(ref_verified),
+    )
+    clean.perceptual_deduplicate(ref_segments, ref_fingerprints, ref_ctx.config)
+    ref_index, _elapsed = clean.build_u_candidate_index(ref_segments, ref_fingerprints, ref_ctx.config)
+    ref_report = clean.match_protected_references_resumable(ref_segments, ref_index, ref_ctx, workers=1)
+    assert exact == ref_exact
+    assert _evidence_tuples(report["evidence"]) == _evidence_tuples(ref_report["evidence"])
+    assert _segment_views(segments) == _segment_views(ref_segments)
+    assert report["benchmark"]["n_matches"] > 0
+
+
+class _CountingExpected(dict):
+    """Counts full scans. Direct membership does not increment."""
+
+    def __init__(self):
+        super().__init__()
+        self.scans = 0
+
+    def __iter__(self):
+        self.scans += 1
+        return super().__iter__()
+
+
+def test_valid_protected_identity_lookup_does_not_scan_expected():
+    from src.rq2_u_clean import _bind_protected_identity
+
+    splits = ("g_train", "g_validation", "frozen_test")
+    expected = _CountingExpected()
+    count = 6000
+    for index in range(count):
+        expected[(splits[index % 3], "U%d" % index)] = index
+    for index in range(count):
+        split = splits[index % 3]
+        uid = "U%d" % index
+        assert _bind_protected_identity(expected, "fingerprint", split, uid) == (split, uid)
+        assert _bind_protected_identity(expected, "short-eligibility", split, uid) == (split, uid)
+    assert expected.scans == 0
+    with pytest.raises(RuntimeError, match="split mismatch"):
+        _bind_protected_identity(expected, "fingerprint", "frozen_test", "U0")
+    assert expected.scans == 1
+
+
+def test_pinned_uid_owner_index_is_built_once(tmp_path, monkeypatch):
+    import src.rq2_u_clean as clean
+
+    splits = ("g_train", "g_validation", "frozen_test")
+    count = 6000
+    pcm = "ab" * 32
+    entries = [
+        _eligibility_entry("U%d" % index, splits[index % 3], sha256_pcm=pcm)
+        for index in range(count)
+    ]
+    ctx = _fingerprint_context(tmp_path, entries)
+    state = clean._empty_checkpoint_state(ctx)
+    state["protected_fingerprint_shards"] = [{
+        "name": "part-000001.parquet",
+        "sha256": "cd" * 32,
+        "uids": ["U%d" % index for index in range(count)],
+    }]
+    clean._write_checkpoint_state(ctx, state)
+    calls = {"n": 0}
+    real_index = clean._protected_uid_owner_index
+
+    def spy(expected):
+        calls["n"] += 1
+        return real_index(expected)
+
+    monkeypatch.setattr(clean, "_protected_uid_owner_index", spy)
+    pinned = clean._pinned_protected_pcm(ctx)
+    assert calls["n"] == 1
+    assert len(pinned["fingerprinted"]) == count
+    assert pinned["unaccounted"] == []
+    clean._pinned_protected_pcm(ctx)
+    assert calls["n"] == 2
+
+
+def test_ambiguous_and_unknown_protected_uids_fail_closed(tmp_path):
+    import src.rq2_u_clean as clean
+
+    pcm = "ab" * 32
+    ctx = _fingerprint_context(tmp_path, [
+        _eligibility_entry("U", "g_train", sha256_pcm=pcm),
+        _eligibility_entry("U", "g_validation", sha256_pcm=pcm),
+    ])
+    state = clean._empty_checkpoint_state(ctx)
+    state["protected_fingerprint_shards"] = [{
+        "name": "part-000001.parquet",
+        "sha256": "cd" * 32,
+        "uids": ["U", "MISSING"],
+    }]
+    clean._write_checkpoint_state(ctx, state)
+    with pytest.raises(RuntimeError, match="ambiguous protected fingerprint uid U"):
+        clean._pinned_protected_pcm(ctx)
+    state["protected_fingerprint_shards"][0]["uids"] = ["MISSING"]
+    clean._write_checkpoint_state(ctx, state)
+    with pytest.raises(RuntimeError, match="unknown protected fingerprint uid MISSING"):
+        clean._pinned_protected_pcm(ctx)
+
+
+def test_optimized_identity_matches_verified_exact_results(tmp_path):
+    import copy
+    import src.rq2_u_clean as clean
+
+    pytest.importorskip("pyarrow")
+    pcm = {
+        "TR": "ab" * 32,
+        "VA": "cd" * 32,
+        "TE": "ef" * 32,
+    }
+    ctx = _fingerprint_context(tmp_path, [
+        _eligibility_entry("TR", "g_train", sha256_pcm=pcm["TR"]),
+        _eligibility_entry("VA", "g_validation", sha256_pcm=pcm["VA"]),
+        _eligibility_entry("TE", "frozen_test", sha256_pcm=pcm["TE"]),
+    ])
+    resolver = _WavResolver(tmp_path, {"TR": 81600, "VA": 24000, "TE": 81600}, {"n": 0, "uids": []})
+    assert clean.generate_protected_fingerprints(ctx, resolver, fingerprint_fn=lambda path: _rand_fp(4)) == 2
+    pinned = clean._pinned_protected_pcm(ctx)
+    verified = clean._indexed_protected_pcm(ctx)
+    assert pinned["fingerprinted"] == verified["fingerprinted"]
+    assert pinned["shorts"] == verified["shorts"]
+    assert pinned["unaccounted"] == verified["unaccounted"] == []
+    assert set(pinned["fingerprinted"]) == {("g_train", "TR"), ("frozen_test", "TE")}
+    assert set(pinned["shorts"]) == {("g_validation", "VA")}
+    rows = [
+        _open_segment("SEG-TR", pcm["TR"], duration=6.0),
+        _open_segment("SEG-VA", pcm["VA"], duration=1.5),
+        _open_segment("OTHER", "12" * 32, duration=6.0),
+    ]
+    left = copy.deepcopy(rows)
+    right = copy.deepcopy(rows)
+    new_evidence = clean.apply_protected_exact_identity(left, ctx)
+    old_evidence = clean._commit_exact_protected_identity(right, ctx, _protected_hash_set(verified))
+    assert _evidence_tuples(new_evidence) == _evidence_tuples(old_evidence)
+    assert _segment_views(left) == _segment_views(right)
+    assert left[0]["u_clean_status"] == EXCLUDED_PROTECTED_OVERLAP
+    assert left[1]["u_clean_status"] == EXCLUDED_PROTECTED_OVERLAP
+    assert left[2]["u_clean_status"] == RETAINED_STATUS
+    ctx.protected_entries = list(ctx.protected_entries) + [
+        _eligibility_entry("MISSING", "frozen_test", sha256_pcm="34" * 32),
+    ]
+    assert clean._pinned_protected_pcm(ctx)["unaccounted"] == clean._indexed_protected_pcm(ctx)["unaccounted"]
+
+
+def test_corrupt_listed_protected_shard_fails_immediately(tmp_path, monkeypatch):
+    import os
+    import pandas as pd
+    import src.rq2_u_clean as clean
+
+    pytest.importorskip("pyarrow")
+
+    def plant(name):
+        ctx, rows, index = _plant_many_match_shards(tmp_path / name, 4)
+        state_path = ctx.config.out_dir / "checkpoint" / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        shard = state["protected_fingerprint_shards"][0]
+        path = ctx.config.out_dir / "checkpoint" / "protected_fingerprints" / shard["name"]
+        return ctx, rows, index, state, state_path, shard, path
+
+    def run(ctx, rows, index, state, state_path):
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        clean._PROTECTED_SHARD_CACHE.pop(id(ctx), None)
+        read_names = []
+        real_read = clean._read_expected_file_bytes
+
+        def spy(path, expected_sha):
+            read_names.append(path.name)
+            return real_read(path, expected_sha)
+
+        monkeypatch.setattr(clean, "_read_expected_file_bytes", spy)
+        with pytest.raises(RuntimeError, match="protected fingerprint shard failed verification") as caught:
+            clean.match_protected_references_resumable(rows, index, ctx, workers=2)
+        monkeypatch.setattr(clean, "_read_expected_file_bytes", real_read)
+        return str(caught.value), read_names
+
+    ctx, rows, index, state, state_path, shard, path = plant("missing")
+    path.unlink()
+    message, read_names = run(ctx, rows, index, state, state_path)
+    assert "ordinal=0" in message
+    assert "shard=%s" % shard["name"] in message
+    assert "reason=missing file" in message
+    assert read_names == []
+    assert list((ctx.config.out_dir / "checkpoint" / "protected_matches").glob("match-*.json")) == []
+
+    ctx, rows, index, state, state_path, shard, path = plant("sha")
+    data = path.read_bytes()
+    path.write_bytes(bytes([data[0] ^ 0xFF]) + data[1:])
+    message, read_names = run(ctx, rows, index, state, state_path)
+    assert "ordinal=0" in message and "reason=file sha256 mismatch" in message
+    assert read_names == [shard["name"]]
+    assert list((ctx.config.out_dir / "checkpoint" / "protected_matches").glob("match-*.json")) == []
+
+    ctx, rows, index, state, state_path, shard, path = plant("fingerprint")
+    frame = pd.read_parquet(path)
+    frame.at[0, "fingerprint_sha256"] = "0" * 64
+    tmp = path.with_suffix(".tmp")
+    frame.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
+    state["protected_fingerprint_shards"][0]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    message, read_names = run(ctx, rows, index, state, state_path)
+    assert "ordinal=0" in message and "reason=invalid fingerprint_sha256" in message
+    assert read_names == [shard["name"]]
+    assert list((ctx.config.out_dir / "checkpoint" / "protected_matches").glob("match-*.json")) == []
+
+    ctx, rows, index, state, state_path, shard, path = plant("batch")
+    frame = pd.read_parquet(path)
+    frame.at[0, "source_audio_sha256"] = "11" * 32
+    tmp = path.with_suffix(".tmp")
+    frame.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
+    state["protected_fingerprint_shards"][0]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    message, read_names = run(ctx, rows, index, state, state_path)
+    assert "ordinal=0" in message and "reason=invalid logical batch" in message
+    assert read_names == [shard["name"]]
+    assert list((ctx.config.out_dir / "checkpoint" / "protected_matches").glob("match-*.json")) == []
+    written = json.loads(state_path.read_text(encoding="utf-8"))
+    assert written["protected_fingerprint_shards"] == state["protected_fingerprint_shards"]
+
+
+def test_streaming_does_not_change_scientific_contract_fields():
+    from src.rq2_pseudo_contract import EXPECTED_OVERLAP_CONTRACT_SHA256, EXPECTED_SEGMENTATION_CONTRACT_SHA256
+    from src.rq2_u_clean import U_CLEAN_SCHEMA_VERSION, compatibility_key
+
+    assert EXPECTED_SEGMENTATION_CONTRACT_SHA256 == "0ce196cc20aca45bc707c4347f1eaa602cd04eacb0ced64c4665f2870a8cefab"
+    assert EXPECTED_OVERLAP_CONTRACT_SHA256 == "d5830cfa285b6cf5cf82f817262c612e254c2cd03ac13b33078c06f31c6afb2b"
+    assert U_CLEAN_SCHEMA_VERSION == "rq2-uclean-1.1"
+    fields = set(compatibility_key.__code__.co_consts)
+    assert "workers" not in fields
+    assert "protected_match_shards" not in fields
+    assert "progress" not in fields

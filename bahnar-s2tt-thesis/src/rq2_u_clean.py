@@ -2243,6 +2243,9 @@ def match_protected_batch(
 _PROTECTED_MATCH_RUNTIME: Dict[str, object] = {}
 _LAST_MATCH_WORKER_PIDS: List[int] = []
 _LAST_MATCH_MAX_INFLIGHT = 0
+_LAST_MATCH_PULLED = 0
+_LAST_MATCH_PULLED_AT_POOL_START = 0
+_LAST_MATCH_PULLED_AT_FIRST_SUBMIT = 0
 _PROTECTED_MATCH_KIND = "rq2_protected_match_shard_v1"
 _PROTECTED_MATCH_FIELDS = (
     "kind",
@@ -2319,15 +2322,17 @@ def _shard_match_compatibility(base: dict, input_shard_sha256: str, input_batch_
 
 def _protected_input_batch_sha256(batch: Sequence[dict]) -> str:
     """Hash the exact rows the matcher will see, in iterator order."""
-    rows = [
-        {
+    rows = []
+    for row in batch:
+        fp_sha = str(row.get("fingerprint_sha256") or "")
+        if not fp_sha:
+            fp_sha = fingerprint_sha256(row.get("fingerprint") or [])
+        rows.append({
             "uid": str(row.get("uid") or ""),
             "split": str(row.get("split") or ""),
             "source_sha256": str(row.get("source_sha256") or ""),
-            "fingerprint_sha256": fingerprint_sha256(row.get("fingerprint") or []),
-        }
-        for row in batch
-    ]
+            "fingerprint_sha256": fp_sha,
+        })
     return hashlib.sha256(canonical_json_bytes(rows)).hexdigest()
 
 
@@ -2519,15 +2524,27 @@ def _emit_match_progress(
     matches: int,
     started: float,
     computed_references: int,
+    status: str = "running",
+    workers: int = 0,
+    reused: int = 0,
+    submitted: int = 0,
 ) -> None:
     elapsed = max(time.perf_counter() - started, 1e-9)
     rate = references / elapsed
-    if computed_references > 0:
+    if computed_references > 0 and total_references >= references:
         remaining = max(total_references - references, 0)
         eta = remaining / (computed_references / elapsed)
     else:
         eta = None
     progress = {
+        "status": status,
+        "workers": int(workers),
+        "total_shards": int(total),
+        "completed_shards": int(done),
+        "reused_shards": int(reused),
+        "submitted_shards": int(submitted),
+        "references_processed": int(references),
+        "matches": int(matches),
         "elapsed_seconds": round(elapsed, 6),
         "eta_seconds": None if eta is None else round(eta, 6),
         "n_match_shards_completed": int(done),
@@ -2539,8 +2556,11 @@ def _emit_match_progress(
     }
     _write_match_progress(context, progress)
     print(
-        "Protected match: %d/%d shards\nreferences: %d/%d\nmatches: %d\nelapsed: %.1fs\nrate: %.1f refs/s\nETA: %s"
-        % (done, total, references, total_references, matches, elapsed, rate, _format_match_eta(eta)),
+        "Protected match: %d/%d shards\nstatus: %s\nworkers: %d\nsubmitted: %d\nreused: %d\nreferences: %d/%d\nmatches: %d\nelapsed: %.1fs\nrate: %.1f refs/s\nETA: %s"
+        % (
+            done, total, status, workers, submitted, reused,
+            references, total_references, matches, elapsed, rate, _format_match_eta(eta),
+        ),
         flush=True,
     )
 
@@ -2610,51 +2630,9 @@ def _shutdown_match_executor(executor, inflight, *, wait_for_running: bool) -> N
     executor.shutdown(wait=wait_for_running, cancel_futures=True)
 
 
-def _parallel_protected_match_jobs(jobs, index, overlap, eligible, workers: int):
-    """Run at most workers*2 shards at once. Completion order is not scientific order."""
-    global _LAST_MATCH_MAX_INFLIGHT
-    _LAST_MATCH_MAX_INFLIGHT = 0
-    max_inflight = _protected_match_max_inflight(workers)
-    executor = ProcessPoolExecutor(
-        max_workers=workers,
-        initializer=_init_protected_match_worker,
-        initargs=(index, overlap, eligible, _match_ready_barrier(workers)),
-    )
-    pending = iter(jobs)
-    inflight = {}
-    closed = False
-
-    def close(wait_for_running: bool) -> None:
-        nonlocal closed
-        if closed:
-            return
-        closed = True
-        _shutdown_match_executor(executor, inflight, wait_for_running=wait_for_running)
-
-    def submit_available() -> None:
-        global _LAST_MATCH_MAX_INFLIGHT
-        while len(inflight) < max_inflight:
-            try:
-                job = next(pending)
-            except StopIteration:
-                return
-            future = executor.submit(_run_protected_match_worker, job)
-            inflight[future] = job
-            if len(inflight) > _LAST_MATCH_MAX_INFLIGHT:
-                _LAST_MATCH_MAX_INFLIGHT = len(inflight)
-
-    try:
-        submit_available()
-        while inflight:
-            for future in _completed_match_futures(inflight):
-                inflight.pop(future)
-                yield future.result()
-            submit_available()
-    except BaseException:
-        close(True)
-        raise
-    else:
-        close(True)
+def _note_match_pull(pulled: int) -> None:
+    global _LAST_MATCH_PULLED
+    _LAST_MATCH_PULLED = int(pulled)
 
 
 def _protected_match_document(base: dict, payload: dict) -> dict:
@@ -2699,6 +2677,49 @@ def _commit_protected_match_shard(context: UCleanContext, document: dict, batch_
     return loaded
 
 
+def _accept_reused_match(stats: dict, ordinal: int, document: dict, batch_length: int) -> None:
+    stats["results"][int(ordinal)] = document
+    stats["reused"] += 1
+    stats["references"] += int(batch_length)
+    stats["matches"] += int(document["n_matches"])
+    stats["comparisons"] += int(document["n_candidate_comparisons"])
+
+
+def _accept_computed_match(stats: dict, payload: dict, batch_length: int, context, base) -> None:
+    stats["worker_pids"].append(int(payload.pop("worker_pid")))
+    ordinal = int(payload["ordinal"])
+    document = _protected_match_document(base, payload)
+    committed = _commit_protected_match_shard(context, document, batch_length)
+    stats["results"][ordinal] = committed
+    stats["computed"] += 1
+    stats["references"] += int(batch_length)
+    stats["matches"] += int(committed["n_matches"])
+    stats["comparisons"] += int(committed["n_candidate_comparisons"])
+    stats["computed_references"] += int(batch_length)
+
+
+def _protected_metadata_reference_total(state: dict) -> int:
+    """Reference count from checkpoint UID lists. Parquet files are not opened."""
+    return sum(len(shard.get("uids") or []) for shard in state.get("protected_fingerprint_shards") or [])
+
+
+def _stream_match_progress(context, stats, *, started, total_meta, total_references, workers, status) -> None:
+    _emit_match_progress(
+        context,
+        done=len(stats["results"]),
+        total=total_meta,
+        references=stats["references"],
+        total_references=total_references,
+        matches=stats["matches"],
+        started=started,
+        computed_references=stats["computed_references"],
+        status=status,
+        workers=workers,
+        reused=stats["reused"],
+        submitted=stats["submitted"],
+    )
+
+
 def match_protected_references_resumable(
     segments: List[dict],
     index: SegmentCandidateIndex,
@@ -2706,13 +2727,17 @@ def match_protected_references_resumable(
     *,
     workers: Optional[int] = None,
 ) -> dict:
-    """Match protected fingerprint shards, resume completed shards, then apply.
+    """Stream protected shards into a bounded worker window, then merge by ordinal.
 
-    Workers only compute evidence. Flags and exclusions are applied in the
-    parent after results are ordered by shard ordinal. Worker count cannot
-    change the scientific result. Match files, not state.json, decide reuse.
+    The process pool is opened before the protected-shard iterator is consumed.
+    Workers only compute evidence. Flags and exclusions are applied after the
+    results are ordered by shard ordinal. Worker count cannot change the result.
     """
     global _LAST_MATCH_WORKER_PIDS
+    global _LAST_MATCH_MAX_INFLIGHT
+    global _LAST_MATCH_PULLED
+    global _LAST_MATCH_PULLED_AT_POOL_START
+    global _LAST_MATCH_PULLED_AT_FIRST_SUBMIT
     if not context.config.overlap_config_frozen:
         raise RuntimeError("overlap protection requires a frozen OverlapConfig")
     started = time.perf_counter()
@@ -2720,100 +2745,141 @@ def match_protected_references_resumable(
     by_uid = {str(row["segment_uid"]): row for row in segments}
     eligible = _eligible_protected_match_uids(by_uid)
     base = _base_match_compatibility(context, index)
-    jobs = []
-    for job in _iter_protected_fingerprint_jobs(context):
-        job["input_batch_sha256"] = _protected_input_batch_sha256(job["batch"])
-        jobs.append(job)
-    job_by_ordinal = {int(job["ordinal"]): job for job in jobs}
-    results: Dict[int, dict] = {}
-    reused = 0
-    references = 0
-    matches = 0
-    comparisons = 0
-    for job in jobs:
-        expected = _shard_match_compatibility(
-            base, job["input_shard_sha256"], job["input_batch_sha256"],
-        )
-        loaded = _read_protected_match_shard(
-            context, job["ordinal"], expected, len(job["batch"]),
-        )
-        if loaded is None:
-            continue
-        results[int(job["ordinal"])] = loaded
-        reused += 1
-        references += len(job["batch"])
-        matches += int(loaded["n_matches"])
-        comparisons += int(loaded["n_candidate_comparisons"])
-    total = len(jobs)
-    total_references = sum(len(job["batch"]) for job in jobs)
-    computed_references = 0
-    _emit_match_progress(
-        context,
-        done=len(results),
-        total=total,
-        references=references,
-        total_references=total_references,
-        matches=matches,
-        started=started,
-        computed_references=computed_references,
+    shard_state = _read_checkpoint_state(context)
+    total_meta = len(shard_state["protected_fingerprint_shards"])
+    total_references = _protected_metadata_reference_total(shard_state)
+    stats = {
+        "results": {},
+        "reused": 0,
+        "computed": 0,
+        "submitted": 0,
+        "references": 0,
+        "matches": 0,
+        "comparisons": 0,
+        "computed_references": 0,
+        "worker_pids": [],
+        "jobs": 0,
+    }
+    _LAST_MATCH_PULLED = 0
+    _LAST_MATCH_PULLED_AT_POOL_START = 0
+    _LAST_MATCH_PULLED_AT_FIRST_SUBMIT = 0
+    _LAST_MATCH_MAX_INFLIGHT = 0
+    _stream_match_progress(
+        context, stats, started=started, total_meta=total_meta, total_references=total_references,
+        workers=worker_count, status="running",
     )
-    todo = [job for job in jobs if int(job["ordinal"]) not in results]
+    units = _iter_protected_match_units(context, base)
     overlap = context.config.overlap
-    computed = 0
-    worker_pids: List[int] = []
-    if todo:
-        if worker_count <= 1:
-            produced = (
-                _compute_protected_match_job(job, index, overlap, eligible)
-                for job in todo
-            )
+
+    def consume_reuse(unit) -> None:
+        _accept_reused_match(stats, unit["ordinal"], unit["document"], unit["batch_length"])
+        _stream_match_progress(
+            context, stats, started=started, total_meta=total_meta, total_references=total_references,
+            workers=worker_count, status="running",
+        )
+
+    def consume_payload(payload, batch_length) -> None:
+        _accept_computed_match(stats, payload, batch_length, context, base)
+        _stream_match_progress(
+            context, stats, started=started, total_meta=total_meta, total_references=total_references,
+            workers=worker_count, status="running",
+        )
+
+    if worker_count <= 1:
+        for unit in units:
+            _note_match_pull(stats["jobs"] + 1)
+            stats["jobs"] += 1
+            if unit["action"] == "reuse":
+                consume_reuse(unit)
+                continue
+            stats["submitted"] += 1
+            payload = _compute_protected_match_job(unit["job"], index, overlap, eligible)
+            consume_payload(payload, len(unit["job"]["batch"]))
+    else:
+        max_inflight = _protected_match_max_inflight(worker_count)
+        _LAST_MATCH_PULLED_AT_POOL_START = int(stats["jobs"])
+        executor = ProcessPoolExecutor(
+            max_workers=worker_count,
+            initializer=_init_protected_match_worker,
+            initargs=(index, overlap, eligible, _match_ready_barrier(worker_count)),
+        )
+        inflight = {}
+        source = iter(units)
+        exhausted = False
+        closed = False
+
+        def close_pool(wait_for_running: bool) -> None:
+            nonlocal closed
+            if closed:
+                return
+            closed = True
+            _shutdown_match_executor(executor, inflight, wait_for_running=wait_for_running)
+
+        def submit_job(job) -> None:
+            global _LAST_MATCH_MAX_INFLIGHT
+            global _LAST_MATCH_PULLED_AT_FIRST_SUBMIT
+            if stats["submitted"] == 0:
+                _LAST_MATCH_PULLED_AT_FIRST_SUBMIT = int(stats["jobs"])
+            future = executor.submit(_run_protected_match_worker, job)
+            inflight[future] = job
+            stats["submitted"] += 1
+            if len(inflight) > _LAST_MATCH_MAX_INFLIGHT:
+                _LAST_MATCH_MAX_INFLIGHT = len(inflight)
+
+        def pull_available() -> None:
+            nonlocal exhausted
+            while len(inflight) < max_inflight and not exhausted:
+                try:
+                    unit = next(source)
+                except StopIteration:
+                    exhausted = True
+                    return
+                stats["jobs"] += 1
+                _note_match_pull(stats["jobs"])
+                if unit["action"] == "reuse":
+                    consume_reuse(unit)
+                    continue
+                submit_job(unit["job"])
+
+        try:
+            pull_available()
+            while inflight:
+                for future in _completed_match_futures(inflight):
+                    job = inflight.pop(future)
+                    consume_payload(future.result(), len(job["batch"]))
+                pull_available()
+        except BaseException:
+            close_pool(True)
+            raise
         else:
-            produced = _parallel_protected_match_jobs(todo, index, overlap, eligible, worker_count)
-        for payload in produced:
-            worker_pids.append(int(payload.pop("worker_pid")))
-            ordinal = int(payload["ordinal"])
-            batch_length = len(job_by_ordinal[ordinal]["batch"])
-            document = _protected_match_document(base, payload)
-            committed = _commit_protected_match_shard(context, document, batch_length)
-            results[ordinal] = committed
-            computed += 1
-            references += batch_length
-            matches += int(committed["n_matches"])
-            comparisons += int(committed["n_candidate_comparisons"])
-            computed_references += batch_length
-            _emit_match_progress(
-                context,
-                done=len(results),
-                total=total,
-                references=references,
-                total_references=total_references,
-                matches=matches,
-                started=started,
-                computed_references=computed_references,
-            )
+            close_pool(True)
     evidence: List[MatchEvidence] = []
-    for ordinal in sorted(results):
-        for row in results[ordinal]["evidence"]:
+    for ordinal in sorted(stats["results"]):
+        for row in stats["results"][ordinal]["evidence"]:
             evidence.append(_match_evidence_from_row(row))
     apply_protected_match_evidence(evidence, by_uid)
-    _snapshot_protected_match_checkpoint(context, results)
-    _LAST_MATCH_WORKER_PIDS = worker_pids
+    _snapshot_protected_match_checkpoint(context, stats["results"])
+    _LAST_MATCH_WORKER_PIDS = list(stats["worker_pids"])
+    _stream_match_progress(
+        context, stats, started=started, total_meta=total_meta, total_references=total_references,
+        workers=worker_count, status="complete",
+    )
     elapsed = max(time.perf_counter() - started, 1e-9)
     benchmark = {
         "workers": worker_count,
-        "n_match_shards_total": total,
-        "n_match_shards_reused": reused,
-        "n_match_shards_computed": computed,
-        "n_references_processed": references,
-        "n_candidate_comparisons": comparisons,
+        "n_match_shards_total": int(stats["jobs"]),
+        "n_match_shards_reused": int(stats["reused"]),
+        "n_match_shards_computed": int(stats["computed"]),
+        "n_references_processed": int(stats["references"]),
+        "n_candidate_comparisons": int(stats["comparisons"]),
         "n_matches": len(evidence),
         "elapsed_seconds": round(elapsed, 6),
-        "refs_per_second": round(references / elapsed, 6),
+        "refs_per_second": round(stats["references"] / elapsed, 6),
     }
     return {
         "evidence": evidence,
         "benchmark": benchmark,
-        "n_references_processed": references,
+        "n_references_processed": stats["references"],
     }
 
 
@@ -3894,7 +3960,14 @@ def _load_fingerprint_shard(path: Path, kind: str) -> List[dict]:
 
 
 def load_resumable_checkpoint(context: UCleanContext, path=None, load_protected_fingerprints: bool = True) -> dict:
-    """Load sharded resume state. A bad shard is dropped; a stale contract fails closed."""
+    """Load sharded resume state. A bad shard is dropped; a stale contract fails closed.
+
+    ``load_protected_fingerprints=False`` is the NB11 production resume mode.
+    It loads segments, segment fingerprints, and source status, and leaves
+    protected fingerprint parquet files unread. Those shards are verified
+    later, one at a time, inside protected matching. The default remains an
+    eager protected verification for callers that require it.
+    """
     state = _read_checkpoint_state(context)
     root = checkpoint_root(context)
     loaded = {
@@ -3931,18 +4004,29 @@ def load_resumable_checkpoint(context: UCleanContext, path=None, load_protected_
                 ]
                 state["sources"].pop(sid, None)
     kept_fp = []
-    for kind, key, discard_names, discard_count in (
+    fingerprint_kinds = [
         ("segment_fingerprints", "segment_fingerprint_shards", "discarded_segment_shards", "discarded_segment_fingerprints"),
-        ("protected_fingerprints", "protected_fingerprint_shards", "discarded_reference_shards", "discarded_reference_fingerprints"),
-    ):
+    ]
+    if load_protected_fingerprints:
+        fingerprint_kinds.append(
+            ("protected_fingerprints", "protected_fingerprint_shards", "discarded_reference_shards", "discarded_reference_fingerprints"),
+        )
+    for kind, key, discard_names, discard_count in fingerprint_kinds:
         kept = kept_fp if kind == "segment_fingerprints" else None
         bucket = []
         for shard in state[key]:
             file_path = root / kind / shard["name"]
             try:
-                if hashlib.sha256(file_path.read_bytes()).hexdigest() != shard["sha256"]:
-                    raise RuntimeError("hash")
-                rows = _load_fingerprint_shard(file_path, kind)
+                if kind == "protected_fingerprints":
+                    rows = _load_verified_protected_rows(
+                        context, shard, file_path, keep_arrays=load_protected_fingerprints,
+                    )
+                    if rows is None:
+                        raise RuntimeError("hash")
+                else:
+                    if hashlib.sha256(file_path.read_bytes()).hexdigest() != shard["sha256"]:
+                        raise RuntimeError("hash")
+                    rows = _load_fingerprint_shard(file_path, kind)
                 if kind == "segment_fingerprints":
                     allowed = {str(uid) for uid in (shard.get("uids") or [])}
                     for row in rows:
@@ -3960,7 +4044,10 @@ def load_resumable_checkpoint(context: UCleanContext, path=None, load_protected_
                     min_items = int(context.config.overlap.min_overlap_items)
                     for row in rows:
                         fingerprint = row.get("fingerprint")
-                        n_items = len(fingerprint) if is_valid_fingerprint(fingerprint) else 0
+                        if is_valid_fingerprint(fingerprint):
+                            n_items = len(fingerprint)
+                        else:
+                            n_items = int(row.get("n_items") or 0)
                         if n_items < min_items:
                             loaded["discarded_reference_fingerprints"] += 1
                             continue
@@ -4160,58 +4247,67 @@ def _protected_identity_key(split, uid) -> Tuple[str, str]:
 
 
 def _bind_protected_identity(expected: Dict[Tuple[str, str], str], kind: str, split, uid) -> Tuple[str, str]:
-    """Fail closed unless (split, uid) is exactly one current protected entry."""
+    """Fail closed unless (split, uid) is a current protected entry.
+
+    A valid key is a direct mapping lookup. The full expected set is scanned
+    only to explain an unknown UID or a split mismatch.
+    """
     key = _protected_identity_key(split, uid)
     if not key[1]:
         raise RuntimeError(f"unknown protected {kind} uid")
+    if key in expected:
+        return key
     owners = [item for item in expected if item[1] == key[1]]
     if not owners:
         raise RuntimeError(f"unknown protected {kind} uid {key[1]}")
-    if key not in expected:
-        raise RuntimeError(
-            f"protected {kind} split mismatch for {key[1]}: "
-            f"stored {key[0]} != entry {owners[0][0]}"
-        )
-    return key
+    raise RuntimeError(
+        f"protected {kind} split mismatch for {key[1]}: "
+        f"stored {key[0]} != entry {owners[0][0]}"
+    )
 
 
-def _indexed_protected_pcm(context: UCleanContext) -> dict:
-    """PCM hashes keyed by (split, reference_uid). Wrong or duplicate identities fail closed."""
+def _protected_uid_owner_index(expected: Dict[Tuple[str, str], ProtectedReferenceEntry]) -> Dict[str, List[Tuple[str, str]]]:
+    """Map each UID to its (split, uid) keys. Built once per identity pass."""
+    owners: Dict[str, List[Tuple[str, str]]] = {}
+    for key in expected:
+        owners.setdefault(key[1], []).append(key)
+    return owners
+
+
+def _expected_protected_index(context: UCleanContext) -> Dict[Tuple[str, str], ProtectedReferenceEntry]:
     expected: Dict[Tuple[str, str], ProtectedReferenceEntry] = {}
     for entry in context.protected_entries:
         key = _protected_identity_key(entry.split, entry.reference_uid)
         if not key[1] or key in expected:
             raise RuntimeError(f"duplicate protected identity {key[0]}:{key[1]}")
         expected[key] = entry
-    min_items = int(context.config.overlap.min_overlap_items)
-    fingerprinted: Dict[Tuple[str, str], str] = {}
-    for batch in iter_protected_fingerprint_shards(context):
-        for row in batch:
-            uid = str(row.get("uid") or "")
-            fingerprint = row.get("fingerprint")
-            if not is_valid_fingerprint(fingerprint):
-                raise RuntimeError(f"invalid protected fingerprint uid: {uid}")
-            if len(fingerprint) < min_items:
-                raise RuntimeError(
-                    f"protected fingerprint shorter than min_overlap_items for {uid}: "
-                    f"items={len(fingerprint)} required={min_items}"
-                )
-            key = _bind_protected_identity(expected, "fingerprint", row.get("split"), uid)
-            if key in fingerprinted:
-                raise RuntimeError(f"duplicate protected fingerprint identity {key[0]}:{key[1]}")
-            digest = str(row.get("source_sha256") or "").strip().lower()
-            if not _is_valid_sha256(digest):
-                raise RuntimeError(f"protected fingerprint {uid} has no materialized sha256_pcm")
-            fingerprinted[key] = digest
+    return expected
+
+
+def _protected_short_hashes(context: UCleanContext, expected: Dict[Tuple[str, str], ProtectedReferenceEntry]) -> Dict[Tuple[str, str], str]:
     shorts: Dict[Tuple[str, str], str] = {}
     for row in _load_short_eligibility_records(context):
         key = _bind_protected_identity(expected, "short-eligibility", row.get("split"), row.get("reference_uid"))
-        if key in shorts or key in fingerprinted:
+        if key in shorts:
             raise RuntimeError(f"duplicate protected accounting for {key[0]}:{key[1]}")
         digest = str(row.get("sha256_pcm") or "").strip().lower()
         if not _is_valid_sha256(digest):
             raise RuntimeError(f"short protected reference {key[1]} has no materialized sha256_pcm")
         shorts[key] = digest
+    return shorts
+
+
+def _protected_pcm_index(
+    context: UCleanContext,
+    fingerprinted: Dict[Tuple[str, str], str],
+    shorts: Dict[Tuple[str, str], str],
+    expected: Dict[Tuple[str, str], ProtectedReferenceEntry],
+) -> dict:
+    overlap = [key for key in fingerprinted if key in shorts]
+    if overlap:
+        key = overlap[0]
+        raise RuntimeError(f"duplicate protected accounting for {key[0]}:{key[1]}")
+    min_items = int(context.config.overlap.min_overlap_items)
     unaccounted = [key for key in expected if key not in fingerprinted and key not in shorts]
     return {
         "expected": expected,
@@ -4222,9 +4318,64 @@ def _indexed_protected_pcm(context: UCleanContext) -> dict:
     }
 
 
-def protected_reference_accounting(context: UCleanContext) -> dict:
-    """Count fingerprints and audited shorts by (split, reference_uid)."""
-    indexed = _indexed_protected_pcm(context)
+def _indexed_protected_pcm(context: UCleanContext) -> dict:
+    """PCM hashes from verified fingerprint rows. Wrong identities fail closed."""
+    expected = _expected_protected_index(context)
+    min_items = int(context.config.overlap.min_overlap_items)
+    fingerprinted: Dict[Tuple[str, str], str] = {}
+    for row in _iter_protected_accounting_rows(context):
+        uid = str(row.get("uid") or "")
+        n_items = int(row.get("n_items") or 0)
+        if n_items <= 0:
+            raise RuntimeError(f"invalid protected fingerprint uid: {uid}")
+        if n_items < min_items:
+            raise RuntimeError(
+                f"protected fingerprint shorter than min_overlap_items for {uid}: "
+                f"items={n_items} required={min_items}"
+            )
+        key = _bind_protected_identity(expected, "fingerprint", row.get("split"), uid)
+        if key in fingerprinted:
+            raise RuntimeError(f"duplicate protected fingerprint identity {key[0]}:{key[1]}")
+        digest = str(row.get("source_sha256") or "").strip().lower()
+        if not _is_valid_sha256(digest):
+            raise RuntimeError(f"protected fingerprint {uid} has no materialized sha256_pcm")
+        fingerprinted[key] = digest
+    shorts = _protected_short_hashes(context, expected)
+    return _protected_pcm_index(context, fingerprinted, shorts, expected)
+
+
+def _pinned_protected_pcm(context: UCleanContext) -> dict:
+    """Exact-PCM hashes from pinned identity and the short ledger.
+
+    Membership of a fingerprinted reference comes from the checkpoint UID list.
+    Protected fingerprint parquet files are not opened. On a valid checkpoint
+    the hash set matches ``_indexed_protected_pcm``.
+    """
+    expected = _expected_protected_index(context)
+    owners_by_uid = _protected_uid_owner_index(expected)
+    state = _read_checkpoint_state(context)
+    fingerprinted: Dict[Tuple[str, str], str] = {}
+    for shard in list(state["protected_fingerprint_shards"]):
+        for raw_uid in shard.get("uids") or []:
+            uid = str(raw_uid or "")
+            owners = owners_by_uid.get(uid, [])
+            if not owners:
+                raise RuntimeError(f"unknown protected fingerprint uid {uid}")
+            if len(owners) != 1:
+                raise RuntimeError(f"ambiguous protected fingerprint uid {uid}")
+            entry = expected[owners[0]]
+            key = _protected_identity_key(entry.split, entry.reference_uid)
+            if key in fingerprinted:
+                raise RuntimeError(f"duplicate protected fingerprint identity {key[0]}:{key[1]}")
+            digest = str(entry.sha256_pcm or entry.source_sha256 or "").strip().lower()
+            if not _is_valid_sha256(digest):
+                raise RuntimeError(f"protected fingerprint {uid} has no materialized sha256_pcm")
+            fingerprinted[key] = digest
+    shorts = _protected_short_hashes(context, expected)
+    return _protected_pcm_index(context, fingerprinted, shorts, expected)
+
+
+def _protected_accounting_stats(indexed: dict) -> dict:
     total = len(indexed["expected"])
     fingerprinted = indexed["fingerprinted"]
     shorts = indexed["shorts"]
@@ -4242,6 +4393,11 @@ def protected_reference_accounting(context: UCleanContext) -> dict:
         "n_protected_short_not_perceptually_eligible": len(shorts),
         "n_protected_unaccounted": len(unaccounted),
     }
+
+
+def protected_reference_accounting(context: UCleanContext) -> dict:
+    """Count fingerprints and audited shorts by (split, reference_uid)."""
+    return _protected_accounting_stats(_indexed_protected_pcm(context))
 
 
 def protected_fingerprint_coverage_complete(context: UCleanContext) -> bool:
@@ -4271,7 +4427,8 @@ def protected_reference_uids(context: UCleanContext) -> set:
 
 
 def _remember_protected_eligibility(context: UCleanContext) -> dict:
-    stats = protected_reference_accounting(context)
+    """Record eligibility from checkpoint metadata. Fingerprint parquet stays closed."""
+    stats = _protected_accounting_stats(_pinned_protected_pcm(context))
     provenance = dict(context.reference_provenance)
     provenance["protected_perceptual_eligibility"] = stats
     context.reference_provenance = provenance
@@ -4477,7 +4634,7 @@ def apply_protected_exact_identity(segments: List[dict], context: UCleanContext)
     in memory, so a resume cannot keep a matching segment just because a ledger
     file already exists. No fingerprint is invented for a short reference.
     """
-    indexed = _indexed_protected_pcm(context)
+    indexed = _pinned_protected_pcm(context)
     if indexed["unaccounted"]:
         sample = [f"{split}:{uid}" for split, uid in indexed["unaccounted"][:5]]
         raise RuntimeError(
@@ -4486,6 +4643,15 @@ def apply_protected_exact_identity(segments: List[dict], context: UCleanContext)
         )
     hashes = dict(indexed["fingerprinted"])
     hashes.update(indexed["shorts"])
+    return _commit_exact_protected_identity(segments, context, hashes)
+
+
+def _commit_exact_protected_identity(
+    segments: List[dict],
+    context: UCleanContext,
+    hashes: Dict[Tuple[str, str], str],
+) -> List[MatchEvidence]:
+    """Apply one exact-PCM hash set. The set decides which segments are excluded."""
     by_pcm: Dict[str, List[dict]] = {}
     for row in segments:
         if row.get("u_clean_status") != RETAINED_STATUS:
@@ -4531,43 +4697,244 @@ def apply_protected_exact_identity(segments: List[dict], context: UCleanContext)
     return evidence
 
 
-def _iter_protected_fingerprint_jobs(context: UCleanContext):
-    """Verified protected shards in checkpoint order. Hash mismatches are skipped."""
-    state = _read_checkpoint_state(context)
-    expected = {
+_PROTECTED_SHARD_CACHE: Dict[int, Dict[str, dict]] = {}
+
+
+def _protected_shard_cache(context: UCleanContext) -> Dict[str, dict]:
+    """Process-local verified shard metadata. It is not checkpoint trust."""
+    return _PROTECTED_SHARD_CACHE.setdefault(id(context), {})
+
+
+def _read_expected_file_bytes(path: Path, expected_sha: str) -> Optional[bytes]:
+    """Read a shard once and accept it only when the bytes match the checkpoint sha."""
+    if not path.is_file():
+        return None
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != str(expected_sha or ""):
+        return None
+    return data
+
+
+def _protected_rows_from_bytes(data: bytes, *, strict_fingerprint_hash: bool = False) -> List[dict]:
+    import io
+    import pandas as pd
+
+    frame = pd.read_parquet(io.BytesIO(data))
+    rows = []
+    for _, row in frame.iterrows():
+        fingerprint = [int(item) for item in list(row["fingerprint"])]
+        if fingerprint_sha256(fingerprint) != str(row["fingerprint_sha256"]):
+            if strict_fingerprint_hash:
+                raise RuntimeError("invalid fingerprint_sha256")
+            continue
+        rows.append({
+            "uid": str(row["reference_uid"]),
+            "split": str(row["split"]),
+            "source_sha256": str(row["source_audio_sha256"]),
+            "fingerprint_sha256": str(row["fingerprint_sha256"]),
+            "n_items": len(fingerprint),
+            "fingerprint": fingerprint,
+        })
+    return rows
+
+
+def _light_protected_rows(rows: Sequence[dict]) -> List[dict]:
+    return [
+        {
+            "uid": row["uid"],
+            "split": row["split"],
+            "source_sha256": row["source_sha256"],
+            "fingerprint_sha256": row["fingerprint_sha256"],
+            "n_items": int(row["n_items"]),
+        }
+        for row in rows
+    ]
+
+
+def _load_verified_protected_rows(
+    context: UCleanContext,
+    shard: dict,
+    path: Path,
+    *,
+    keep_arrays: bool,
+) -> Optional[List[dict]]:
+    """Return verified protected rows. A warm cache does not reread the parquet."""
+    cache = _protected_shard_cache(context)
+    name = str(shard.get("name") or "")
+    expected = str(shard.get("sha256") or "")
+    cached = cache.get(name)
+    current = path.stat() if path.is_file() else None
+    if (
+        cached is not None
+        and current is not None
+        and cached.get("sha256") == expected
+        and cached.get("size") == current.st_size
+        and cached.get("mtime_ns") == current.st_mtime_ns
+        and not keep_arrays
+    ):
+        return list(cached["rows"])
+    data = _read_expected_file_bytes(path, expected)
+    if data is None or current is None:
+        cache.pop(name, None)
+        return None
+    rows = _protected_rows_from_bytes(data)
+    cache[name] = {
+        "sha256": expected,
+        "size": current.st_size,
+        "mtime_ns": current.st_mtime_ns,
+        "rows": _light_protected_rows(rows),
+    }
+    if keep_arrays:
+        return rows
+    return list(cache[name]["rows"])
+
+
+class _MatchShardRejected(RuntimeError):
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _load_protected_match_arrays(context: UCleanContext, shard: dict, path: Path) -> List[dict]:
+    """Load fingerprint arrays for a shard that must be compared, not reused."""
+    rows, reason = _match_shard_rows(context, shard, path, keep_arrays=True)
+    if reason or rows is None:
+        raise _MatchShardRejected(reason or "invalid logical batch")
+    return rows
+
+
+def _fail_protected_match_shard(ordinal: int, shard: dict, reason: str) -> None:
+    raise RuntimeError(
+        "protected fingerprint shard failed verification: ordinal=%s shard=%s reason=%s"
+        % (int(ordinal), shard.get("name"), reason)
+    )
+
+
+def _match_shard_rows(context: UCleanContext, shard: dict, path: Path, *, keep_arrays: bool):
+    """Verify one checkpoint-listed shard. A failure is a reason, not a skip."""
+    name = str(shard.get("name") or "")
+    expected_sha = str(shard.get("sha256") or "")
+    if not path.is_file():
+        return None, "missing file"
+    current = path.stat()
+    cache = _protected_shard_cache(context)
+    cached = cache.get(name)
+    fresh = (
+        cached is not None
+        and cached.get("sha256") == expected_sha
+        and cached.get("size") == current.st_size
+        and cached.get("mtime_ns") == current.st_mtime_ns
+        and cached.get("fingerprint_hashes_valid")
+    )
+    if fresh and not keep_arrays:
+        return list(cached["rows"]), None
+    data = _read_expected_file_bytes(path, expected_sha)
+    if data is None:
+        cache.pop(name, None)
+        return None, "file sha256 mismatch"
+    try:
+        rows = _protected_rows_from_bytes(data, strict_fingerprint_hash=True)
+    except RuntimeError as exc:
+        cache.pop(name, None)
+        if str(exc) == "invalid fingerprint_sha256":
+            return None, "invalid fingerprint_sha256"
+        raise
+    cache[name] = {
+        "sha256": expected_sha,
+        "size": current.st_size,
+        "mtime_ns": current.st_mtime_ns,
+        "rows": _light_protected_rows(rows),
+        "fingerprint_hashes_valid": True,
+    }
+    if keep_arrays:
+        return rows, None
+    return list(cache[name]["rows"]), None
+
+
+def _require_match_batch(
+    context: UCleanContext,
+    ordinal: int,
+    shard: dict,
+    path: Path,
+    allowed: set,
+    expected: Dict[str, str],
+    min_items: int,
+    *,
+    keep_arrays: bool,
+) -> List[dict]:
+    if keep_arrays:
+        try:
+            rows = _load_protected_match_arrays(context, shard, path)
+        except _MatchShardRejected as exc:
+            _fail_protected_match_shard(ordinal, shard, exc.reason)
+    else:
+        rows, reason = _match_shard_rows(context, shard, path, keep_arrays=False)
+        if reason or rows is None:
+            _fail_protected_match_shard(ordinal, shard, reason or "invalid logical batch")
+    batch = _filter_protected_batch(rows, allowed, expected, min_items, include_fingerprint=keep_arrays)
+    if not batch:
+        _fail_protected_match_shard(ordinal, shard, "invalid logical batch")
+    return batch
+
+
+def _protected_source_index(context: UCleanContext) -> Dict[str, str]:
+    return {
         entry.reference_uid: str(entry.sha256_pcm or entry.source_sha256 or "").strip().lower()
         for entry in context.protected_entries
     }
+
+
+def _filter_protected_batch(
+    rows: Sequence[dict],
+    allowed: set,
+    expected: Dict[str, str],
+    min_items: int,
+    *,
+    include_fingerprint: bool,
+) -> List[dict]:
+    batch = []
+    for row in rows:
+        if allowed and row["uid"] not in allowed:
+            continue
+        stored = str(row.get("source_sha256") or "").strip().lower()
+        wanted = expected.get(row["uid"]) if expected else None
+        if not _is_valid_sha256(stored) or (wanted and wanted != stored):
+            continue
+        n_items = int(row.get("n_items") or 0)
+        if include_fingerprint:
+            fingerprint = row.get("fingerprint")
+            n_items = len(fingerprint) if is_valid_fingerprint(fingerprint) else 0
+        if n_items < min_items:
+            raise RuntimeError(
+                f"protected fingerprint below min_overlap_items for {row['uid']} "
+                f"split={row.get('split')} items={n_items} required={min_items}"
+            )
+        item = {
+            "uid": row["uid"],
+            "split": row["split"],
+            "source_sha256": row["source_sha256"],
+            "fingerprint_sha256": row["fingerprint_sha256"],
+            "n_items": n_items,
+        }
+        if include_fingerprint:
+            item["fingerprint"] = list(row["fingerprint"])
+        batch.append(item)
+    return batch
+
+
+def _iter_protected_fingerprint_jobs(context: UCleanContext):
+    """Verified protected shards in checkpoint order. Hash mismatches are skipped."""
+    state = _read_checkpoint_state(context)
+    expected = _protected_source_index(context)
     root = checkpoint_root(context) / "protected_fingerprints"
+    min_items = int(context.config.overlap.min_overlap_items)
     for ordinal, shard in enumerate(list(state["protected_fingerprint_shards"])):
         allowed = {str(uid) for uid in (shard.get("uids") or [])}
         file_path = root / shard["name"]
-        digest = hashlib.sha256(file_path.read_bytes()).hexdigest() if file_path.is_file() else ""
-        if digest != shard.get("sha256"):
+        rows = _load_verified_protected_rows(context, shard, file_path, keep_arrays=True)
+        if rows is None:
             continue
-        rows = _load_fingerprint_shard(file_path, "protected_fingerprints")
-        batch = []
-        for row in rows:
-            if allowed and row["uid"] not in allowed:
-                continue
-            stored = str(row.get("source_sha256") or "").strip().lower()
-            wanted = expected.get(row["uid"]) if expected else None
-            if not _is_valid_sha256(stored) or (wanted and wanted != stored):
-                continue
-            fingerprint = row["fingerprint"]
-            min_items = int(context.config.overlap.min_overlap_items)
-            n_items = len(fingerprint) if is_valid_fingerprint(fingerprint) else 0
-            if n_items < min_items:
-                raise RuntimeError(
-                    f"protected fingerprint below min_overlap_items for {row['uid']} "
-                    f"split={row.get('split')} items={n_items} required={min_items}"
-                )
-            batch.append({
-                "uid": row["uid"],
-                "split": row["split"],
-                "source_sha256": row["source_sha256"],
-                "fingerprint": row["fingerprint"],
-            })
+        batch = _filter_protected_batch(rows, allowed, expected, min_items, include_fingerprint=True)
         if batch:
             yield {
                 "ordinal": ordinal,
@@ -4575,6 +4942,70 @@ def _iter_protected_fingerprint_jobs(context: UCleanContext):
                 "input_shard_sha256": shard["sha256"],
                 "batch": batch,
             }
+
+
+def _match_compute_job(ordinal: int, shard: dict, batch: Sequence[dict], batch_sha: str) -> dict:
+    return {
+        "action": "compute",
+        "job": {
+            "ordinal": ordinal,
+            "input_shard_name": shard["name"],
+            "input_shard_sha256": shard["sha256"],
+            "input_batch_sha256": batch_sha,
+            "batch": list(batch),
+        },
+    }
+
+
+def _iter_protected_match_units(context: UCleanContext, base: dict):
+    """Yield one reuse-or-compute decision at a time. Reuse does not keep arrays."""
+    state = _read_checkpoint_state(context)
+    expected = _protected_source_index(context)
+    root = checkpoint_root(context) / "protected_fingerprints"
+    min_items = int(context.config.overlap.min_overlap_items)
+    for ordinal, shard in enumerate(list(state["protected_fingerprint_shards"])):
+        allowed = {str(uid) for uid in (shard.get("uids") or [])}
+        file_path = root / shard["name"]
+        if not _protected_match_path(context, ordinal).is_file():
+            batch = _require_match_batch(
+                context, ordinal, shard, file_path, allowed, expected, min_items, keep_arrays=True,
+            )
+            yield _match_compute_job(ordinal, shard, batch, _protected_input_batch_sha256(batch))
+            continue
+        meta = _require_match_batch(
+            context, ordinal, shard, file_path, allowed, expected, min_items, keep_arrays=False,
+        )
+        batch_sha = _protected_input_batch_sha256(meta)
+        compatibility = _shard_match_compatibility(base, shard["sha256"], batch_sha)
+        loaded = _read_protected_match_shard(context, ordinal, compatibility, len(meta))
+        if loaded is not None:
+            yield {
+                "action": "reuse",
+                "ordinal": ordinal,
+                "document": loaded,
+                "batch_length": len(meta),
+            }
+            continue
+        batch = _require_match_batch(
+            context, ordinal, shard, file_path, allowed, expected, min_items, keep_arrays=True,
+        )
+        yield _match_compute_job(ordinal, shard, batch, _protected_input_batch_sha256(batch))
+
+
+def _iter_protected_accounting_rows(context: UCleanContext):
+    """Verified protected identity rows. Fingerprint arrays are not retained."""
+    state = _read_checkpoint_state(context)
+    expected = _protected_source_index(context)
+    root = checkpoint_root(context) / "protected_fingerprints"
+    min_items = int(context.config.overlap.min_overlap_items)
+    for shard in list(state["protected_fingerprint_shards"]):
+        file_path = root / shard["name"]
+        light = _load_verified_protected_rows(context, shard, file_path, keep_arrays=False)
+        if light is None:
+            continue
+        allowed = {str(uid) for uid in (shard.get("uids") or [])}
+        for row in _filter_protected_batch(light, allowed, expected, min_items, include_fingerprint=False):
+            yield row
 
 
 def iter_protected_fingerprint_shards(context: UCleanContext):
