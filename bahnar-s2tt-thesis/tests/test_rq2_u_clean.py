@@ -1013,20 +1013,150 @@ def test_failed_fingerprint_publish_does_not_leave_success(tmp_path, monkeypatch
     assert not (tmp_path / "u_clean" / ".staging").exists()
 
 
+def _plant_source_wavs(tmp_path, segs):
+    for row in retained_segments(segs):
+        freq = 200.0 if row["source_id"] == "VOV4_A" else 440.0
+        write_wav_pcm16_atomic(tmp_path / row["source_wav_local_path"], _sine_pcm(6.0, freq=freq), 16000)
+
+
+def _written_retained_segments(tmp_path):
+    cfg, segs = _distinct_segments()
+    cfg.project_root = tmp_path
+    cfg.out_dir = tmp_path / "out"
+    ctx = UCleanContext(config=cfg)
+    _plant_source_wavs(tmp_path, segs)
+    write_and_verify_segments(segs, ctx)
+    return cfg, segs, ctx
+
+
 def test_corrupt_cached_segment_is_recomputed(tmp_path):
     cfg, segs = _distinct_segments()
     cfg.project_root = tmp_path
     cfg.out_dir = tmp_path / "out"
     ctx = UCleanContext(config=cfg)
-    for row in retained_segments(segs):
-        freq = 200.0 if row["source_id"] == "VOV4_A" else 440.0
-        write_wav_pcm16_atomic(tmp_path / row["source_wav_local_path"], _sine_pcm(6.0, freq=freq), 16000)
+    _plant_source_wavs(tmp_path, segs)
     row = [item for item in retained_segments(segs) if item["source_id"] == "VOV4_A"][0]
     row["segment_local_path"] = "missing/cached.wav"
     write_and_verify_segments(segs, ctx)
     assert row["u_clean_status"] == RETAINED_STATUS
     assert row["segment_local_path"] != "missing/cached.wav"
     assert (tmp_path / row["segment_local_path"]).is_file()
+    assert row["segment_wav_sha256"]
+    assert row["segment_pcm16_sha256"]
+    info = read_wav_pcm16(tmp_path / row["segment_local_path"])
+    assert info["wav_sha256"] == row["segment_wav_sha256"]
+    assert info["pcm16_sha256"] == row["segment_pcm16_sha256"]
+    assert ctx.completion.segments_written_verified is True
+
+
+def test_resume_cached_segment_with_missing_wav_sha_is_rehydrated(tmp_path, monkeypatch):
+    cfg, segs, ctx = _written_retained_segments(tmp_path)
+    row = [item for item in retained_segments(segs) if item["source_id"] == "VOV4_A"][0]
+    cached_path = row["segment_local_path"]
+    cached_bytes = (tmp_path / cached_path).read_bytes()
+    pcm_sha = row["segment_pcm16_sha256"]
+    expected_wav = hashlib.sha256(cached_bytes).hexdigest()
+    row["segment_wav_sha256"] = ""
+    writes = {"n": 0}
+    real_write = write_wav_pcm16_atomic
+
+    def spy_write(path, pcm, sample_rate=16000):
+        writes["n"] += 1
+        return real_write(path, pcm, sample_rate)
+
+    monkeypatch.setattr("src.rq2_u_clean.write_wav_pcm16_atomic", spy_write)
+    write_and_verify_segments(segs, ctx)
+    assert row["u_clean_status"] == RETAINED_STATUS
+    assert row["segment_local_path"] == cached_path
+    assert row["segment_wav_sha256"] == expected_wav
+    assert row["segment_pcm16_sha256"] == pcm_sha
+    info = read_wav_pcm16(tmp_path / cached_path)
+    assert info["wav_sha256"] == expected_wav
+    assert info["pcm16_sha256"] == pcm_sha
+    assert (tmp_path / cached_path).read_bytes() == cached_bytes
+    assert writes["n"] == 0
+    assert ctx.completion.segments_written_verified is True
+
+
+def test_cached_segment_wrong_pcm_is_not_accepted(tmp_path, monkeypatch):
+    cfg, segs, ctx = _written_retained_segments(tmp_path)
+    row = [item for item in retained_segments(segs) if item["source_id"] == "VOV4_A"][0]
+    cached_path = tmp_path / row["segment_local_path"]
+    original_pcm = row["segment_pcm16_sha256"]
+    original_wav = row["segment_wav_sha256"]
+    write_wav_pcm16_atomic(cached_path, _sine_pcm(6.0, freq=880.0), 16000)
+    writes = {"n": 0}
+    real_write = write_wav_pcm16_atomic
+
+    def spy_write(path, pcm, sample_rate=16000):
+        writes["n"] += 1
+        return real_write(path, pcm, sample_rate)
+
+    monkeypatch.setattr("src.rq2_u_clean.write_wav_pcm16_atomic", spy_write)
+    write_and_verify_segments(segs, ctx)
+    assert row["u_clean_status"] == RETAINED_STATUS
+    assert writes["n"] >= 1
+    info = read_wav_pcm16(tmp_path / row["segment_local_path"])
+    assert info["pcm16_sha256"] == original_pcm
+    assert info["pcm16_sha256"] == row["segment_pcm16_sha256"]
+    assert info["wav_sha256"] == row["segment_wav_sha256"]
+    assert info["wav_sha256"] == original_wav
+    assert ctx.completion.segments_written_verified is True
+
+
+def test_cached_segment_wav_sha_mismatch_does_not_accept(tmp_path, monkeypatch):
+    cfg, segs, ctx = _written_retained_segments(tmp_path)
+    row = [item for item in retained_segments(segs) if item["source_id"] == "VOV4_A"][0]
+    cached_path = row["segment_local_path"]
+    pcm_sha = row["segment_pcm16_sha256"]
+    wrong_wav = "00" * 32
+    row["segment_wav_sha256"] = wrong_wav
+    writes = {"n": 0}
+    real_write = write_wav_pcm16_atomic
+
+    def spy_write(path, pcm, sample_rate=16000):
+        writes["n"] += 1
+        return real_write(path, pcm, sample_rate)
+
+    monkeypatch.setattr("src.rq2_u_clean.write_wav_pcm16_atomic", spy_write)
+    write_and_verify_segments(segs, ctx)
+    assert row["u_clean_status"] == RETAINED_STATUS
+    assert writes["n"] >= 1
+    assert row["segment_wav_sha256"] != wrong_wav
+    assert row["segment_pcm16_sha256"] == pcm_sha
+    info = read_wav_pcm16(tmp_path / row["segment_local_path"])
+    assert info["wav_sha256"] == row["segment_wav_sha256"]
+    assert info["pcm16_sha256"] == pcm_sha
+    assert ctx.completion.segments_written_verified is True
+
+
+def test_missing_cached_segment_and_source_fails_closed(tmp_path):
+    cfg, segs = _distinct_segments()
+    cfg.project_root = tmp_path
+    cfg.out_dir = tmp_path / "out"
+    ctx = UCleanContext(config=cfg)
+    row = [item for item in retained_segments(segs) if item["source_id"] == "VOV4_A"][0]
+    row["segment_local_path"] = "missing/cached.wav"
+    row["segment_wav_sha256"] = ""
+    with pytest.raises(RuntimeError, match="canonical source invalid"):
+        write_and_verify_segments(segs, ctx)
+    assert ctx.completion.segments_written_verified is False
+
+
+def test_segment_wav_sha_rehydration_does_not_change_compatibility_key(tmp_path):
+    cfg, segs, ctx = _written_retained_segments(tmp_path)
+    ctx.nb10_locks = {"summary.json": "a" * 64}
+    ctx.reference_summary = {"reference_set_sha256": "e" * 64}
+    before = compatibility_key(ctx)
+    seg_hash = segmentation_contract_sha256(cfg.segmentation)
+    ov_hash = overlap_contract_sha256(cfg.overlap)
+    for row in retained_segments(segs):
+        row["segment_wav_sha256"] = ""
+    write_and_verify_segments(segs, ctx)
+    assert compatibility_key(ctx) == before
+    assert segmentation_contract_sha256(cfg.segmentation) == seg_hash
+    assert overlap_contract_sha256(cfg.overlap) == ov_hash
+    assert ctx.completion.segments_written_verified is True
 
 
 def test_missing_source_provenance_fails_closed():
@@ -3371,6 +3501,46 @@ def test_resume_skips_array_materialization_for_completed_shards(tmp_path, monke
     assert computes["n"] == 0
     assert again["benchmark"]["n_match_shards_reused"] == 3
     assert again["benchmark"]["n_match_shards_computed"] == 0
+
+
+def test_completed_protected_match_shards_remain_reusable_after_wav_rehydration(tmp_path, monkeypatch):
+    import copy
+    import src.rq2_u_clean as clean
+
+    cfg, segs, write_ctx = _written_retained_segments(tmp_path / "wav")
+    write_ctx.nb10_locks = {"summary.json": "a" * 64}
+    write_ctx.reference_summary = {"reference_set_sha256": "e" * 64}
+    key_before_hydrate = compatibility_key(write_ctx)
+    for row in retained_segments(segs):
+        row["segment_wav_sha256"] = ""
+    write_and_verify_segments(segs, write_ctx)
+    assert compatibility_key(write_ctx) == key_before_hydrate
+    assert write_ctx.completion.segments_written_verified is True
+
+    ctx, rows, index, _fps = _plant_protected_match_case(tmp_path / "match")
+    key_before_match = compatibility_key(ctx)
+    first = clean.match_protected_references_resumable(copy.deepcopy(rows), index, ctx, workers=1)
+    bytes_before = _match_file_bytes(ctx)
+    evidence_before = _evidence_tuples(first["evidence"])
+    assert first["benchmark"]["n_match_shards_total"] == 3
+    assert first["benchmark"]["n_match_shards_computed"] == 3
+    assert len(bytes_before) == 3
+    computes = {"n": 0}
+    real_compute = clean.compute_protected_matches
+
+    def spy_compute(index_arg, batch, overlap, eligible):
+        computes["n"] += 1
+        return real_compute(index_arg, batch, overlap, eligible)
+
+    monkeypatch.setattr(clean, "compute_protected_matches", spy_compute)
+    second = clean.match_protected_references_resumable(copy.deepcopy(rows), index, ctx, workers=1)
+    assert computes["n"] == 0
+    assert second["benchmark"]["n_match_shards_computed"] == 0
+    assert second["benchmark"]["n_match_shards_reused"] == 3
+    assert second["benchmark"]["n_match_shards_total"] == 3
+    assert _match_file_bytes(ctx) == bytes_before
+    assert _evidence_tuples(second["evidence"]) == evidence_before
+    assert compatibility_key(ctx) == key_before_match
 
 
 def test_deferred_resume_does_not_read_protected_parquet(tmp_path, monkeypatch):

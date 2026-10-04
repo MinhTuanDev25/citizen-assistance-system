@@ -661,6 +661,7 @@ def _load_audio_index_jsonl(directory) -> Dict[str, dict]:
                 "parquet_revision": parquet_revision,
                 "dataset_revision": dataset_revision,
                 "pcm_pipeline_version": pipeline,
+                "local_cache_relpath": str(payload.get("local_cache_relpath") or "").strip(),
             }
     return found
 
@@ -3377,9 +3378,12 @@ def verify_retained_segment_files(segments: Sequence[dict], context: UCleanConte
 def write_and_verify_segments(segments: Sequence[dict], context: UCleanContext) -> None:
     """Write retained segment WAVs, or reuse a cached file whose hashes still match.
 
-    A single new write failure excludes that row. A cached path that is missing
-    or whose hash does not match fails the run closed. Completion is true when
-    every row that is still retained has a verified file.
+    A valid cached WAV is reused without rewrite. If the in-memory WAV SHA is
+    blank after resume, it is hydrated from the physical file only after PCM
+    identity (and duration) already match. A cached path whose PCM or existing
+    WAV SHA disagrees is not blessed; the canonical source is sliced again.
+    A single new write failure excludes that row. Completion is true only when
+    every row that is still retained has a verified path and WAV SHA.
     """
     cfg = context.config
     seg_cfg = cfg.segmentation
@@ -3399,8 +3403,16 @@ def write_and_verify_segments(segments: Sequence[dict], context: UCleanContext) 
             try:
                 info = read_wav_pcm16(resolve_project_path(existing, cfg.project_root))
                 pcm_ok = info["pcm16_sha256"] == row.get("segment_pcm16_sha256")
-                wav_ok = (not row.get("segment_wav_sha256")) or info["wav_sha256"] == row.get("segment_wav_sha256")
-                reused = pcm_ok and wav_ok
+                expected_wav = str(row.get("segment_wav_sha256") or "")
+                wav_ok = (info["wav_sha256"] == expected_wav) if expected_wav else True
+                expected_samples = int(row["end_sample"]) - int(row["start_sample"])
+                samples_ok = info["n_samples"] == expected_samples
+                duration_ok = abs(
+                    info["n_samples"] / float(info["sample_rate"]) - float(row["duration_seconds"])
+                ) <= 1e-6
+                reused = bool(pcm_ok and wav_ok and samples_ok and duration_ok)
+                if reused and not expected_wav:
+                    row["segment_wav_sha256"] = info["wav_sha256"]
             except Exception:
                 reused = False
             if reused:
@@ -3431,6 +3443,8 @@ def write_and_verify_segments(segments: Sequence[dict], context: UCleanContext) 
         if not row.get("segment_local_path") or not row.get("segment_wav_sha256")
     ]
     context.completion.segments_written_verified = not unverified
+    if cfg.run_full_pipeline and unverified:
+        raise RuntimeError("full run requires verified segment files")
 
 
 def require_full_run_dependencies() -> None:
