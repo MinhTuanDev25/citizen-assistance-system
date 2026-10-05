@@ -403,9 +403,9 @@ def resolve_frozen_u_prime(
     if not pinned_nb11_id:
         raise SelectionIntegrityError("NB12 contract has no nb11_generation_id")
     if generation_id is None:
-        nb11 = resolve_nb11_input(root)
+        nb11 = resolve_nb11_input(root, u_clean_dir=root / NB11_RELATIVE_DIR)
     else:
-        nb11 = resolve_nb11_generation(root, pinned_nb11_id)
+        nb11 = resolve_nb11_generation(root, pinned_nb11_id, u_clean_dir=root / NB11_RELATIVE_DIR)
     verify_nb12_contract_hash(contract)
     if summary.get("status") != STATUS_SUCCESS:
         raise SelectionIntegrityError(f"NB12 status is {summary.get('status')!r}, not {STATUS_SUCCESS}")

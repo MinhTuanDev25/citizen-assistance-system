@@ -54,6 +54,7 @@ from src.rq2_pseudo_contract import (
     SAMPLE_RATE,
     Nb11Input,
     atomic_write_text,
+    resolve_nb11_segment_path,
     write_json,
 )
 
@@ -137,7 +138,7 @@ def items_from_nb11(nb11: Nb11Input) -> List[AudioItem]:
     return [
         AudioItem(
             uid=str(row["segment_uid"]),
-            audio_path=nb11.project_root / str(row["segment_local_path"]),
+            audio_path=resolve_nb11_segment_path(str(row["segment_local_path"]), nb11.u_clean_dir),
             pcm16_sha256=str(row["segment_pcm16_sha256"]),
             n_samples=int(row["end_sample"]) - int(row["start_sample"]),
         )

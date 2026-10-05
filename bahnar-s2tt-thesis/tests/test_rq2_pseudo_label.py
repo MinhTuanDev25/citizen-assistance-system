@@ -25,6 +25,7 @@ from src.rq2_pseudo_contract import (
     decoding_config_from_rq1,
     resolve_fixed_teacher,
     resolve_nb11_input,
+    resolve_nb11_segment_path,
     verify_nb11_segment_audio,
 )
 from src.rq2_pseudo_label import (
@@ -91,7 +92,7 @@ def fake_d0(waves):
 
 def _pool(tmp_path, *, d0_enabled=False, shard_size=3, n_segments=7, n_samples=()):
     nb = build_nb11_generation(tmp_path, n_segments=n_segments, n_samples=n_samples)
-    nb11 = resolve_nb11_input(tmp_path)
+    nb11 = resolve_nb11_input(tmp_path, u_clean_dir=tmp_path / "artifacts" / "rq2" / "u_clean")
     teacher, d0, decoding, _, _ = fake_contracts(d0_enabled=d0_enabled)
     binding = inference_binding(
         pool="u_clean", input_identity_sha256=nb11.contract_sha256,
@@ -128,8 +129,8 @@ def _run(pool, ckpt_root, *, asr=fake_asr, mt=fake_mt, d0=fake_d0):
 # --------------------------------------------------------------------------- #
 def test_resolve_nb11_input_valid_and_stable(tmp_path):
     build_nb11_generation(tmp_path)
-    a = resolve_nb11_input(tmp_path)
-    b = resolve_nb11_input(tmp_path)
+    a = resolve_nb11_input(tmp_path, u_clean_dir=tmp_path / "artifacts" / "rq2" / "u_clean")
+    b = resolve_nb11_input(tmp_path, u_clean_dir=tmp_path / "artifacts" / "rq2" / "u_clean")
     assert a.contract_sha256 == b.contract_sha256
     assert a.contract["n_segments"] == 7
     assert verify_nb11_segment_audio(a)["n_verified"] == 7
@@ -137,43 +138,43 @@ def test_resolve_nb11_input_valid_and_stable(tmp_path):
 
 def test_nb11_absent_refuses(tmp_path):
     with pytest.raises(Nb11InputError, match="no published generation"):
-        resolve_nb11_input(tmp_path)
+        resolve_nb11_input(tmp_path, u_clean_dir=tmp_path / "artifacts" / "rq2" / "u_clean")
 
 
 def test_nb11_incomplete_generation_refuses(tmp_path):
     build_nb11_generation(tmp_path, write_complete=False)
     with pytest.raises(Nb11InputError, match="incomplete"):
-        resolve_nb11_input(tmp_path)
+        resolve_nb11_input(tmp_path, u_clean_dir=tmp_path / "artifacts" / "rq2" / "u_clean")
 
 
 def test_nb11_wrong_status_refuses(tmp_path):
     build_nb11_generation(tmp_path, status="FAIL_RQ2_U_CLEAN")
     with pytest.raises(Nb11InputError, match="status"):
-        resolve_nb11_input(tmp_path)
+        resolve_nb11_input(tmp_path, u_clean_dir=tmp_path / "artifacts" / "rq2" / "u_clean")
 
 
 def test_nb11_segmentation_pin_drift_refuses(tmp_path):
     build_nb11_generation(tmp_path, segmentation_sha="0" * 64)
     with pytest.raises(Nb11InputError, match="segmentation_contract_sha256"):
-        resolve_nb11_input(tmp_path)
+        resolve_nb11_input(tmp_path, u_clean_dir=tmp_path / "artifacts" / "rq2" / "u_clean")
 
 
 def test_nb11_duplicate_uid_refuses(tmp_path):
     build_nb11_generation(tmp_path, duplicate_uid=True)
     with pytest.raises(Nb11InputError, match="duplicate segment_uid"):
-        resolve_nb11_input(tmp_path)
+        resolve_nb11_input(tmp_path, u_clean_dir=tmp_path / "artifacts" / "rq2" / "u_clean")
 
 
 def test_nb11_schema_drift_refuses(tmp_path):
     build_nb11_generation(tmp_path, extra_column=True)
     with pytest.raises(Nb11InputError, match="schema drift"):
-        resolve_nb11_input(tmp_path)
+        resolve_nb11_input(tmp_path, u_clean_dir=tmp_path / "artifacts" / "rq2" / "u_clean")
 
 
 def test_nb11_audio_mismatch_is_fatal(tmp_path):
     nb = build_nb11_generation(tmp_path)
-    nb11 = resolve_nb11_input(tmp_path)
-    wav = tmp_path / nb["rows"][2]["segment_local_path"]
+    nb11 = resolve_nb11_input(tmp_path, u_clean_dir=tmp_path / "artifacts" / "rq2" / "u_clean")
+    wav = nb["out_dir"] / nb["rows"][2]["segment_local_path"]
     data = bytearray(wav.read_bytes())
     data[-2:] = b"\x11\x22"
     wav.write_bytes(bytes(data))
@@ -185,13 +186,13 @@ def test_nb11_audio_mismatch_is_fatal(tmp_path):
 
 def test_nb11_change_after_lock_fails_closed(tmp_path):
     nb = build_nb11_generation(tmp_path)
-    locked = resolve_nb11_input(tmp_path).contract
+    locked = resolve_nb11_input(tmp_path, u_clean_dir=tmp_path / "artifacts" / "rq2" / "u_clean").contract
     summary = nb["gen_dir"] / "summary.json"
     payload = json.loads(summary.read_text())
     payload["note"] = "edited"
     summary.write_text(json.dumps(payload))
     with pytest.raises(Nb11InputError, match="changed since it was locked"):
-        assert_nb11_input_unchanged(locked, resolve_nb11_input(tmp_path))
+        assert_nb11_input_unchanged(locked, resolve_nb11_input(tmp_path, u_clean_dir=tmp_path / "artifacts" / "rq2" / "u_clean"))
 
 
 def test_nb11_checkpoint_dir_is_never_read(tmp_path):
@@ -199,7 +200,7 @@ def test_nb11_checkpoint_dir_is_never_read(tmp_path):
     ckpt = nb["out_dir"] / "checkpoint"
     ckpt.mkdir()
     (ckpt / "u_clean_manifest.jsonl").write_text("not json at all\n")
-    assert resolve_nb11_input(tmp_path).contract["n_segments"] == 7
+    assert resolve_nb11_input(tmp_path, u_clean_dir=tmp_path / "artifacts" / "rq2" / "u_clean").contract["n_segments"] == 7
 
 
 # --------------------------------------------------------------------------- #
@@ -1171,3 +1172,104 @@ def test_validation_materialisation_never_uses_g_test(tmp_path):
     with pytest.raises(RuntimeError, match="G_validation"):
         _materialize(tmp_path / "validation_audio", reader, frame=leaked)
     assert reader.calls == []
+
+
+def test_durable_nb11_root_wins_over_code_checkout(tmp_path):
+    project = tmp_path / "citizen-assistance-system" / "bahnar-s2tt-thesis"
+    durable = tmp_path / "bahnar-s2tt-thesis"
+    project.mkdir(parents=True)
+    code = build_nb11_generation(project, gen_id="code-gen-0001")
+    durable_nb = build_nb11_generation(durable, gen_id="durable-gen-0001")
+    assert project.resolve() != durable.resolve()
+    assert code["gen_id"] != durable_nb["gen_id"]
+    u_clean = durable / "artifacts" / "rq2" / "u_clean"
+    locked = resolve_nb11_input(project, u_clean_dir=u_clean)
+    assert locked.generation_id == "durable-gen-0001"
+    assert locked.u_clean_dir == u_clean.resolve()
+    assert locked.generation_dir == (u_clean / "generations" / "durable-gen-0001").resolve()
+    by_durable_root = resolve_nb11_input(project, durable_root=durable, env={})
+    assert by_durable_root.generation_id == "durable-gen-0001"
+    assert by_durable_root.contract_sha256 == locked.contract_sha256
+    empty = tmp_path / "empty-durable"
+    empty.mkdir()
+    with pytest.raises(Nb11InputError, match="no published generation"):
+        resolve_nb11_input(project, durable_root=empty, env={})
+
+
+def test_segment_path_round_trip_under_u_clean_dir(tmp_path):
+    project = tmp_path / "project"
+    durable = tmp_path / "durable"
+    project.mkdir()
+    nb = build_nb11_generation(durable)
+    u_clean = nb["out_dir"]
+    row = nb["rows"][0]
+    assert row["segment_local_path"] == "segments/src-a/%s.wav" % row["segment_uid"]
+    assert not Path(row["segment_local_path"]).is_absolute()
+    locked = resolve_nb11_input(project, u_clean_dir=u_clean)
+    resolved = resolve_nb11_segment_path(row["segment_local_path"], locked.u_clean_dir)
+    assert resolved.is_file()
+    assert resolved == (u_clean / row["segment_local_path"]).resolve()
+    assert not str(resolved).startswith(str(project.resolve()))
+
+
+def test_segment_path_rejects_absolute_and_traversal(tmp_path):
+    u_clean = tmp_path / "u_clean"
+    u_clean.mkdir()
+    with pytest.raises(Nb11InputError, match="must stay inside"):
+        resolve_nb11_segment_path("/workspace/foo.wav", u_clean)
+    with pytest.raises(Nb11InputError, match="must stay inside"):
+        resolve_nb11_segment_path("../../escape.wav", u_clean)
+    project = tmp_path / "project"
+    project.mkdir()
+    nb = build_nb11_generation(tmp_path / "durable")
+    text = (nb["gen_dir"] / "u_clean_manifest.jsonl").read_text(encoding="utf-8")
+    (nb["gen_dir"] / "u_clean_manifest.jsonl").write_text(
+        text.replace("segments/src-a/seg-0000.wav", "/workspace/foo.wav", 1),
+        encoding="utf-8",
+    )
+    with pytest.raises(Nb11InputError, match="must stay inside"):
+        resolve_nb11_input(project, u_clean_dir=nb["out_dir"])
+
+
+def test_verify_and_items_use_durable_segment_audio(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    nb = build_nb11_generation(tmp_path / "durable")
+    locked = resolve_nb11_input(project, u_clean_dir=nb["out_dir"])
+    assert verify_nb11_segment_audio(locked)["n_verified"] == len(nb["rows"])
+    items = items_from_nb11(locked)
+    assert len(items) == len(nb["rows"])
+    for item, row in zip(items, locked.rows):
+        assert item.audio_path == (nb["out_dir"] / row["segment_local_path"]).resolve()
+        assert item.audio_path.is_file()
+        assert not str(item.audio_path).startswith(str(project.resolve()))
+
+
+def test_nb12_output_dir_accepts_durable_pseudo_labels_and_rejects_u_clean(tmp_path):
+    project = tmp_path / "project"
+    durable = tmp_path / "durable"
+    project.mkdir()
+    pseudo = durable / "artifacts" / "rq2" / "pseudo_labels"
+    accepted = assert_nb12_output_dir(pseudo, project, durable_root=durable, env={})
+    assert accepted == pseudo.resolve()
+    with pytest.raises(RuntimeError, match="protected"):
+        assert_nb12_output_dir(durable / "artifacts" / "rq2" / "u_clean", project, durable_root=durable, env={})
+    with pytest.raises(RuntimeError, match="protected"):
+        assert_nb12_output_dir(durable / "bahnar_s2tt" / "rq1_final_state", project, durable_root=durable, env={})
+    with pytest.raises(GTestAccessError):
+        assert_nb12_output_dir(
+            pseudo / "g_test_bundle", project, durable_root=durable, env={},
+        )
+
+
+def test_notebook_uses_durable_nb11_and_absolute_output_paths():
+    text = NB12_NOTEBOOK.read_text(encoding="utf-8")
+    assert "NB11_U_CLEAN_DIR" in text
+    assert "resolve_nb11_input(PROJECT_ROOT)" not in text
+    assert "resolve_nb11_input(\n        PROJECT_ROOT,\n        u_clean_dir=NB11_U_CLEAN_DIR," in text or "u_clean_dir=NB11_U_CLEAN_DIR" in text
+    assert "OUT_DIR.relative_to(PROJECT_ROOT)" not in text
+    assert 'Path(REVIEW["review_dir"]).relative_to(PROJECT_ROOT)' not in text
+    assert "RUNTIME.durable_root" in text
+    assert "DURABLE_RQ2_ROOT" in text
+    assert "NB11 generation id" in text
+    assert "RUN_FULL_PIPELINE = False" in text

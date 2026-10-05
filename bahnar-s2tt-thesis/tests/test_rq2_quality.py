@@ -591,7 +591,7 @@ def test_end_to_end_synthetic_pipeline_leaves_nb11_untouched(tmp_path):
     build_nb11_generation(tmp_path, n_segments=9, n_samples=(1600, 800))
     u_clean = tmp_path / "artifacts" / "rq2" / "u_clean"
     before = tree_digest(u_clean)
-    nb11 = resolve_nb11_input(tmp_path)
+    nb11 = resolve_nb11_input(tmp_path, u_clean_dir=tmp_path / "artifacts" / "rq2" / "u_clean")
     contract, cal, teacher, d0 = _contract(frozen=True, nb11_sha=nb11.contract_sha256)
     binding = inference_binding(pool="u_clean", input_identity_sha256=nb11.contract_sha256,
                                 teacher_contract_sha256=teacher["teacher_contract_sha256"],

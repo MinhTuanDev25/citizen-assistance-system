@@ -62,8 +62,8 @@ def build_nb11_generation(
             uid = "seg-0000"
         ns = int(n_samples[i]) if i < len(n_samples) else 1600 + 160 * i
         pcm = segment_pcm(i, ns)
-        rel = f"artifacts/rq2/u_clean/segments/src-a/{uid}.wav"
-        wav_sha = write_wav_pcm16_atomic(root / rel, pcm)
+        rel = f"segments/src-a/{uid}.wav"
+        wav_sha = write_wav_pcm16_atomic(out / rel, pcm)
         dur = ns / 16000.0
         total += dur
         row = {c: "" for c in U_CLEAN_MANIFEST_COLUMNS}
@@ -100,7 +100,7 @@ def raw_record(uid: str, **overrides: Any) -> Dict[str, Any]:
     rec = {c: None for c in RAW_RECORD_COLUMNS}
     rec.update({
         "segment_uid": uid, "source_id": "src-a", "source_group_id": "grp-a",
-        "segment_local_path": f"artifacts/rq2/u_clean/segments/src-a/{uid}.wav",
+        "segment_local_path": f"segments/src-a/{uid}.wav",
         "segment_pcm16_sha256": "a" * 64, "segment_wav_sha256": "b" * 64, "duration_seconds": 6.0,
         "nb11_generation_id": "gen", "nb11_input_contract_sha256": "c" * 64,
         "teacher_contract_sha256": "d" * 64, "d0_agreement_contract_sha256": "e" * 64,

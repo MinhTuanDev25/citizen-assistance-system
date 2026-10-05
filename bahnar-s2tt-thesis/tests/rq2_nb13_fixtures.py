@@ -78,7 +78,7 @@ def seal_nb12_generation(project_root: Path, rows: List[Dict[str, Any]]) -> Dict
     from src.rq2_pseudo_contract import resolve_nb11_input
 
     build_nb11_generation(project_root, n_segments=max(4, len(rows)))
-    nb11 = resolve_nb11_input(project_root)
+    nb11 = resolve_nb11_input(project_root, u_clean_dir=project_root / "artifacts" / "rq2" / "u_clean")
     bound = []
     for index, row in enumerate(rows):
         source = nb11.rows[index]

@@ -1,9 +1,11 @@
 """RQ2 Notebook 12 contracts.
 
-* NB11 input lock: NB12 reads only the published NB11 generation that
-  ``artifacts/rq2/u_clean/CURRENT`` names, and only when that generation has
-  ``COMPLETE.json`` and status ``SUCCESS_RQ2_U_CLEAN_FROZEN``. Checkpoint state
-  under ``u_clean/checkpoint`` is never read.
+* NB11 input lock: NB12 reads only the published generation named by
+  ``CURRENT`` under the durable ``artifacts/rq2/u_clean`` root, and only when
+  that generation has ``COMPLETE.json`` and status
+  ``SUCCESS_RQ2_U_CLEAN_FROZEN``. Segment paths are relative to that U_clean
+  root. Checkpoint state under ``u_clean/checkpoint`` is never read. The
+  code-checkout copy of ``CURRENT`` is not a fallback.
 * Fixed C0 teacher: resolved from the RQ1 final contract chain that Notebook 06
   wrote (``rq1_final_contract.json`` + ``checkpoint_proof``). No checkpoint is
   chosen by mtime, filename order, "latest", or test score.
@@ -170,6 +172,7 @@ def nb11_manifest_columns() -> List[str]:
 @dataclass(frozen=True)
 class Nb11Input:
     project_root: Path
+    u_clean_dir: Path
     generation_id: str
     generation_dir: Path
     rows: tuple
@@ -206,11 +209,61 @@ def _parse_jsonl(path: Path) -> List[dict]:
     return rows
 
 
+def resolve_nb11_u_clean_dir(
+    project_root: Union[str, Path],
+    *,
+    durable_root: Optional[Union[str, Path]] = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> Path:
+    """Durable NB11 root. This never falls back to the code checkout."""
+    from src.rq1_runtime_paths import resolve_rq1_runtime_paths
+
+    runtime = resolve_rq1_runtime_paths(
+        project_root=project_root, durable_root=durable_root, env=env,
+    )
+    return (Path(runtime.durable_root).resolve() / NB11_RELATIVE_DIR)
+
+
+def resolve_nb12_output_dir(
+    project_root: Union[str, Path],
+    *,
+    durable_root: Optional[Union[str, Path]] = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> Path:
+    """Durable NB12 root. This never writes into the code checkout by default."""
+    from src.rq1_runtime_paths import resolve_rq1_runtime_paths
+
+    runtime = resolve_rq1_runtime_paths(
+        project_root=project_root, durable_root=durable_root, env=env,
+    )
+    return (Path(runtime.durable_root).resolve() / PSEUDO_RELATIVE_DIR)
+
+
+def resolve_nb11_segment_path(segment_local_path: str, u_clean_dir: Union[str, Path]) -> Path:
+    """Open ``segments/<source_id>/<segment_uid>.wav`` under the NB11 U_clean root."""
+    text = str(segment_local_path or "").strip()
+    root = Path(u_clean_dir).resolve()
+    if not portable_relative(text):
+        raise Nb11InputError(
+            f"segment_local_path must stay inside the NB11 U_clean directory: {text}"
+        )
+    resolved = (root / text).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise Nb11InputError(
+            f"segment_local_path must stay inside the NB11 U_clean directory: {text}"
+        ) from exc
+    return resolved
+
+
 def resolve_nb11_generation(
     project_root: Union[str, Path],
     generation_id: str,
     *,
     u_clean_dir: Optional[Union[str, Path]] = None,
+    durable_root: Optional[Union[str, Path]] = None,
+    env: Optional[Mapping[str, str]] = None,
     require_audio_files: bool = True,
 ) -> Nb11Input:
     """Verify one immutable NB11 generation. This does not read CURRENT."""
@@ -219,6 +272,8 @@ def resolve_nb11_generation(
     return resolve_nb11_input(
         project_root,
         u_clean_dir=u_clean_dir,
+        durable_root=durable_root,
+        env=env,
         require_audio_files=require_audio_files,
         generation_id=str(generation_id),
     )
@@ -228,14 +283,24 @@ def resolve_nb11_input(
     project_root: Union[str, Path],
     *,
     u_clean_dir: Optional[Union[str, Path]] = None,
+    durable_root: Optional[Union[str, Path]] = None,
+    env: Optional[Mapping[str, str]] = None,
     require_audio_files: bool = True,
     generation_id: Optional[str] = None,
 ) -> Nb11Input:
-    """Lock one NB11 generation. Omit ``generation_id`` to use CURRENT."""
+    """Lock one NB11 generation. Omit ``generation_id`` to use CURRENT.
+
+    ``u_clean_dir`` is the explicit durable U_clean root. When it is omitted,
+    the root is ``durable_root/artifacts/rq2/u_clean`` from the RQ1 runtime
+    resolver. The code-checkout tree is never selected by mtime or as a fallback.
+    """
     import pandas as pd
 
-    root = Path(project_root)
-    out_dir = Path(u_clean_dir) if u_clean_dir is not None else root / NB11_RELATIVE_DIR
+    root = Path(project_root).resolve()
+    if u_clean_dir is not None:
+        out_dir = Path(u_clean_dir).resolve()
+    else:
+        out_dir = resolve_nb11_u_clean_dir(root, durable_root=durable_root, env=env)
     if generation_id is None:
         gen_id = read_current_generation_id(out_dir, error=Nb11InputError)
         pinned = False
@@ -306,13 +371,12 @@ def resolve_nb11_input(
             raise Nb11InputError(f"NB11 manifest row is not retained: {uid}")
         if not _is_sha256(row["segment_pcm16_sha256"]) or not _is_sha256(row["segment_wav_sha256"]):
             raise Nb11InputError(f"NB11 manifest row has no valid audio hash: {uid}")
-        if not portable_relative(row["segment_local_path"]):
-            raise Nb11InputError(f"NB11 manifest row has a non-portable segment path: {uid}")
+        audio_path = resolve_nb11_segment_path(str(row["segment_local_path"]), out_dir)
         n_samples = int(row["end_sample"]) - int(row["start_sample"])
         if n_samples <= 0 or abs(n_samples / float(SAMPLE_RATE) - float(row["duration_seconds"])) > 1e-6:
             raise Nb11InputError(f"NB11 manifest duration is inconsistent: {uid}")
         total_seconds += float(row["duration_seconds"])
-        if require_audio_files and not (root / row["segment_local_path"]).is_file():
+        if require_audio_files and not audio_path.is_file():
             raise Nb11InputError(f"NB11 manifest row references missing audio: {uid}")
 
     csv = pd.read_csv(gen_dir / "u_clean_manifest.csv", dtype=str, keep_default_na=False)
@@ -330,7 +394,7 @@ def resolve_nb11_input(
         "contract_version": NB11_INPUT_CONTRACT_VERSION,
         "nb11_status": NB11_SUCCESS_STATUS,
         "nb11_schema_version": EXPECTED_NB11_SCHEMA_VERSION,
-        "u_clean_relative_dir": NB11_RELATIVE_DIR if u_clean_dir is None else "",
+        "u_clean_relative_dir": NB11_RELATIVE_DIR,
         "generation_id": gen_id,
         "complete_json_sha256": sha256_file(complete_path),
         "file_sha256": file_sha256,
@@ -350,6 +414,7 @@ def resolve_nb11_input(
     payload["nb11_input_contract_sha256"] = sha256_json(payload)
     return Nb11Input(
         project_root=root,
+        u_clean_dir=out_dir,
         generation_id=gen_id,
         generation_dir=gen_dir,
         rows=tuple(rows),
@@ -368,7 +433,7 @@ def verify_nb11_segment_audio(nb11: Nb11Input, *, progress_every: int = 0) -> Di
 
     for index, row in enumerate(nb11.rows, 1):
         uid = str(row["segment_uid"])
-        path = nb11.project_root / row["segment_local_path"]
+        path = resolve_nb11_segment_path(str(row["segment_local_path"]), nb11.u_clean_dir)
         if not path.is_file():
             raise Nb11InputError(f"U_clean audio missing: {uid}")
         info = read_wav_pcm16(path)
@@ -449,18 +514,47 @@ def decoding_config_from_rq1(
     )
 
 
-def assert_nb12_output_dir(out_dir: Union[str, Path], project_root: Union[str, Path]) -> Path:
-    """NB12 writes only under artifacts/rq2/pseudo_labels-like dirs, never into NB11 or RQ1 trees."""
+def _contains_pseudo_labels_dir(path: Path) -> bool:
+    parts = path.parts
+    for index in range(len(parts) - 2):
+        if parts[index:index + 3] == ("artifacts", "rq2", "pseudo_labels"):
+            return True
+    return False
+
+
+def assert_nb12_output_dir(
+    out_dir: Union[str, Path],
+    project_root: Union[str, Path],
+    *,
+    durable_root: Optional[Union[str, Path]] = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> Path:
+    """NB12 writes only under a pseudo_labels directory, never into NB11 or RQ1 trees."""
+    from src.rq1_runtime_paths import resolve_rq1_runtime_paths
+
     out = Path(out_dir).resolve()
     root = Path(project_root).resolve()
-    for protected in (root / NB11_RELATIVE_DIR, root / "artifacts" / "rq1", root / "data" / "manifests"):
+    runtime = resolve_rq1_runtime_paths(project_root=root, durable_root=durable_root, env=env)
+    durable = Path(runtime.durable_root).resolve()
+    protected = (
+        root / NB11_RELATIVE_DIR,
+        root / "artifacts" / "rq1",
+        root / "data" / "manifests",
+        durable / NB11_RELATIVE_DIR,
+        durable / "artifacts" / "rq1",
+        durable / "bahnar_s2tt",
+        durable / "data" / "manifests",
+    )
+    for protected_root in protected:
         try:
-            out.relative_to(protected.resolve())
+            out.relative_to(protected_root.resolve())
         except ValueError:
             continue
-        raise RuntimeError(f"NB12 output dir is inside a protected tree: {protected}")
+        raise RuntimeError(f"NB12 output dir is inside a protected tree: {protected_root}")
     if any(_names_g_test(part) for part in out.parts):
         raise GTestAccessError("NB12 output dir names frozen G_test data")
+    if not _contains_pseudo_labels_dir(out):
+        raise RuntimeError("NB12 output dir must be an artifacts/rq2/pseudo_labels directory")
     return out
 
 
@@ -708,8 +802,13 @@ def finalize_generation(
     staged: Mapping[str, Any],
     relative_files: Sequence[str],
     allow_empty: Sequence[str] = (),
+    *,
+    move_current: bool = True,
 ) -> Dict[str, Any]:
-    """Seal, rename, reverify, then move CURRENT. A failure leaves CURRENT unchanged."""
+    """Seal, rename, and reverify. CURRENT moves last, and only when requested.
+
+    A failure before CURRENT leaves the previous pointer unchanged.
+    """
     partial = Path(staged["staging_dir"])
     final = Path(staged["final_dir"])
     gen = str(staged["generation_id"])
@@ -728,7 +827,8 @@ def finalize_generation(
         raise RuntimeError(f"refuse to overwrite completed generation: {gen}")
     os.rename(partial, final)
     verified = verify_generation(out_dir, gen)
-    atomic_write_text(Path(out_dir) / "CURRENT", gen + "\n")
-    if read_current_generation_id(out_dir) != gen:
-        raise RuntimeError("CURRENT did not move to the verified generation")
+    if move_current:
+        atomic_write_text(Path(out_dir) / "CURRENT", gen + "\n")
+        if read_current_generation_id(out_dir) != gen:
+            raise RuntimeError("CURRENT did not move to the verified generation")
     return verified
