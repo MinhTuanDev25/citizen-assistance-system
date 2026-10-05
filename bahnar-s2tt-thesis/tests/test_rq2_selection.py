@@ -873,9 +873,10 @@ def _notebook_code_cells():
 def test_notebook_flags_budget_and_cells_compile():
     cells = _notebook_code_cells()
     joined = "\n".join(cells)
+    assert "RUN_SELECTION_PREVIEW = True" in joined
     assert "RUN_REAL_SELECTION = False" in joined
     assert "SELECTION_POLICY_FROZEN = False" in joined
-    assert "SELECTION_BUDGET_HOURS = None" in joined
+    assert "SELECTION_BUDGET_HOURS = 20.0" in joined
     assert "SELECTION_RANDOM_SEED = 42" in joined
     assert 'EXPECTED_NB12_GENERATION_ID = "20261005T095322062456Z-1863e3d9"' in joined
     assert "DURABLE_RQ2_ROOT" in joined
