@@ -216,6 +216,37 @@ def resolve_project_path(value: str, project_root: Path) -> Path:
     return p if p.is_absolute() else (Path(project_root) / p)
 
 
+def to_u_clean_relative(path, config) -> str:
+    """Store an NB11 segment path relative to ``config.out_dir``."""
+    root = Path(config.out_dir).resolve()
+    absolute = Path(path).resolve()
+    try:
+        relative = absolute.relative_to(root)
+    except ValueError as exc:
+        raise RuntimeError("segment path escapes U_clean out_dir: %s" % path) from exc
+    text = relative.as_posix()
+    if not text or Path(text).is_absolute() or ".." in Path(text).parts:
+        raise RuntimeError("segment path escapes U_clean out_dir: %s" % path)
+    return text
+
+
+def resolve_u_clean_path(value, config) -> Path:
+    """Open a stored segment path. Absolute paths and traversal fail closed."""
+    text = str(value or "").strip()
+    if not text:
+        raise RuntimeError("segment_local_path is empty")
+    path = Path(text)
+    if path.is_absolute() or ".." in path.parts:
+        raise RuntimeError("segment_local_path must stay inside U_clean out_dir: %s" % text)
+    root = Path(config.out_dir).resolve()
+    resolved = (root / path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise RuntimeError("segment_local_path must stay inside U_clean out_dir: %s" % text) from exc
+    return resolved
+
+
 def is_portable_path_value(value: str) -> bool:
     text = str(value or "")
     if not text:
@@ -341,6 +372,60 @@ class UCleanConfig:
         return overlap_contract_sha256(self.overlap)
 
 
+U_CLEAN_RELATIVE_DIR = Path("artifacts") / "rq2" / "u_clean"
+
+
+def resolve_u_clean_output(
+    project_root,
+    *,
+    durable_root=None,
+    env: Optional[dict] = None,
+) -> dict:
+    """Resolve NB11's artifact directory from the shared durable-runtime root.
+
+    The code checkout and the durable artifact root are different directories
+    on RunPod. When that durable tree already holds ``checkpoint/state.json``,
+    or when ``BAHNAR_DURABLE_ROOT`` / ``durable_root`` is set, U_clean writes
+    there. Otherwise the project-local artifacts directory is kept so offline
+    tests do not depend on the RunPod default.
+    """
+    from src.rq1_runtime_paths import resolve_rq1_runtime_paths
+
+    project = Path(project_root).resolve()
+    runtime = resolve_rq1_runtime_paths(
+        project_root=project, durable_root=durable_root, env=env,
+    )
+    durable = Path(runtime.durable_root).resolve()
+    project_out = project / U_CLEAN_RELATIVE_DIR
+    durable_out = durable / U_CLEAN_RELATIVE_DIR
+    durable_checkpoint = durable_out / "checkpoint"
+    explicit = durable_root is not None or bool((env if env is not None else os.environ).get("BAHNAR_DURABLE_ROOT"))
+    use_durable = explicit or (durable_checkpoint / "state.json").is_file()
+    selected = durable_out if use_durable else project_out
+    return {
+        "project_root": project,
+        "durable_root": durable,
+        "out_dir": selected,
+        "checkpoint_root": selected / "checkpoint",
+        "durable_checkpoint_state": durable_checkpoint / "state.json",
+    }
+
+
+def assert_nb11_out_dir_uses_durable_checkpoint(project_root, out_dir, *, durable_root=None, env: Optional[dict] = None) -> dict:
+    """Fail closed if a run would ignore an existing durable U_clean checkpoint."""
+    layout = resolve_u_clean_output(project_root, durable_root=durable_root, env=env)
+    selected = Path(out_dir).resolve()
+    required = Path(layout["out_dir"]).resolve()
+    durable_state = Path(layout["durable_checkpoint_state"])
+    if durable_state.is_file() and selected != required:
+        raise RuntimeError(
+            "NB11 out_dir ignores the existing durable checkpoint at %s; "
+            "resolved out_dir must be %s, got %s"
+            % (durable_state, required, selected)
+        )
+    return layout
+
+
 def build_config(
     *,
     project_root: Optional[Path] = None,
@@ -348,11 +433,18 @@ def build_config(
     segmentation: Optional[SegmentationConfig] = None,
     overlap: Optional[OverlapConfig] = None,
     protected_reference_resolver: "Optional[ProtectedReferenceResolver]" = None,
+    durable_root=None,
+    out_dir: Optional[Path] = None,
 ) -> UCleanConfig:
     root = Path(project_root) if project_root is not None else find_project_root()
     seg = segmentation or SegmentationConfig()
     ov = overlap or OverlapConfig()
-    out_dir = root / "artifacts" / "rq2" / "u_clean"
+    layout = resolve_u_clean_output(root, durable_root=durable_root)
+    if out_dir is None:
+        out_dir = layout["out_dir"]
+    else:
+        out_dir = Path(out_dir)
+    assert_nb11_out_dir_uses_durable_checkpoint(root, out_dir, durable_root=durable_root)
     nb10_dir = root / "artifacts" / "rq2" / "vov4_full"
     return UCleanConfig(
         project_root=root,
@@ -926,8 +1018,9 @@ def ensure_derived_protected_identity_index(
 ) -> dict:
     """Build the NB11 identity index from read-only RQ1 manifests and sidecars.
 
-    The CSV is an NB11 artifact. RQ1 contracts, manifests, and the audio index
-    are opened for reading only. The returned path is project-relative.
+    The CSV and its ``.sha256`` sidecar are NB11 artifacts under the durable
+    U_clean root. RQ1 contracts, manifests, and the audio index are opened
+    for reading only.
     """
     from src.rq1_runtime_paths import resolve_rq1_runtime_paths
 
@@ -955,10 +1048,10 @@ def ensure_derived_protected_identity_index(
     )
     index_dir = Path(audio_index_dir) if audio_index_dir else discover_full_audio_index_dir(runtime.durable_root)
     integrity = Path(frozen_integrity_csv) if frozen_integrity_csv else state_dir / "rq1_audio_integrity.csv"
-    dest_path = Path(dest) if dest else Path(project_root) / "artifacts" / "rq2" / "u_clean" / "protected_audio_identity.csv"
-    relative = Path(os.path.relpath(dest_path, Path(project_root)))
-    if relative.is_absolute() or ".." in relative.parts:
-        raise RuntimeError("derived identity index must be stored at a project-relative path")
+    if dest:
+        dest_path = Path(dest)
+    else:
+        dest_path = resolve_u_clean_output(project_root, durable_root=durable_root)["out_dir"] / "protected_audio_identity.csv"
     rows = build_derived_protected_identity_rows(
         reference_index=reference_index,
         project_root=project_root,
@@ -970,7 +1063,14 @@ def ensure_derived_protected_identity_index(
         expected_counts=expected_counts,
     )
     digest = write_derived_protected_identity_index(rows, dest_path)
-    return {"relative_path": relative.as_posix(), "sha256": digest, "n_rows": len(rows)}
+    out_root = resolve_u_clean_output(project_root, durable_root=durable_root)["out_dir"].resolve()
+    try:
+        relative = dest_path.resolve().relative_to(out_root).as_posix()
+    except ValueError:
+        relative = dest_path.name
+    if Path(relative).is_absolute() or ".." in Path(relative).parts:
+        raise RuntimeError("derived identity index escaped the U_clean out_dir")
+    return {"relative_path": relative, "path": str(dest_path.resolve()), "sha256": digest, "n_rows": len(rows)}
 
 
 def assert_no_forbidden_reference_columns(columns: Sequence[str]) -> None:
@@ -2061,6 +2161,72 @@ def fingerprint_retained_u_segments(
     return out
 
 
+def _ordered_uu_rows(segments: Sequence[dict]) -> List[dict]:
+    """Retained rows in the exact sequential order U-U dedup scans."""
+    retained = [row for row in segments if row["u_clean_status"] == RETAINED_STATUS]
+    retained.sort(key=_owner_key)
+    return retained
+
+
+def _decide_perceptual_row(
+    row: dict,
+    index: FingerprintIndex,
+    uid_to_row: Dict[str, dict],
+    fingerprints_by_uid: Dict[str, Sequence[int]],
+    overlap_config,
+) -> dict:
+    """One sequential U-U step. Candidate universe is the owner index so far."""
+    uid = str(row["segment_uid"])
+    fp = fingerprints_by_uid.get(uid)
+    if not _u_fingerprint_indexable(fp, overlap_config):
+        return {
+            "segment_uid": uid,
+            "decision": "NOT_INDEXABLE",
+            "canonical_segment_uid": str(row.get("canonical_segment_uid") or ""),
+            "n_comparisons": 0,
+            "evidence": None,
+        }
+    best = None
+    n_comparisons = 0
+    for cand_uid in index.candidates(fp):
+        n_comparisons += 1
+        score, offset, overlap = compare_fingerprints_detailed(
+            fp, index.fingerprint_of(cand_uid), overlap_config,
+        )
+        if score >= overlap_config.similarity_threshold and (best is None or score > best[0]):
+            best = (score, offset, overlap, cand_uid)
+    if best is not None:
+        score, offset, overlap, owner_uid = best
+        row["perceptual_duplicate"] = True
+        row["canonical_segment_uid"] = uid_to_row[owner_uid]["canonical_segment_uid"]
+        _exclude(row, EXCLUDED_PERCEPTUAL_DUPLICATE)
+        evidence = {
+            "candidate_uid": uid,
+            "reference_uid": str(owner_uid),
+            "reference_split": "u_real",
+            "matched_duration_seconds": matched_duration_seconds(overlap, overlap_config),
+            "alignment_offset": int(offset),
+            "similarity": round(score, 6),
+            "match_type": "u_u",
+        }
+        return {
+            "segment_uid": uid,
+            "decision": "PERCEPTUAL_DUPLICATE",
+            "canonical_segment_uid": str(row["canonical_segment_uid"]),
+            "n_comparisons": n_comparisons,
+            "evidence": evidence,
+        }
+    index.add(uid, fp)
+    uid_to_row[uid] = row
+    return {
+        "segment_uid": uid,
+        "decision": "RETAINED_OWNER",
+        "canonical_segment_uid": str(row.get("canonical_segment_uid") or ""),
+        "n_comparisons": n_comparisons,
+        "evidence": None,
+    }
+
+
 def perceptual_deduplicate(
     segments: List[dict],
     fingerprints_by_uid: Dict[str, Sequence[int]],
@@ -2069,36 +2235,359 @@ def perceptual_deduplicate(
     """Scalable U-U perceptual dedup via shingle index (item 11)."""
     if not config.overlap_config_frozen:
         raise RuntimeError("perceptual dedup requires a frozen OverlapConfig")
-    ov = config.overlap
-    retained = [r for r in segments if r["u_clean_status"] == RETAINED_STATUS]
-    retained.sort(key=_owner_key)
-    index = FingerprintIndex(ov)
+    overlap_config = config.overlap
+    index = FingerprintIndex(overlap_config)
     uid_to_row: Dict[str, dict] = {}
     evidence: List[MatchEvidence] = []
-    for row in retained:
-        uid = row["segment_uid"]
-        fp = fingerprints_by_uid.get(uid)
-        if not _u_fingerprint_indexable(fp, ov):
-            continue
-        best = None
-        for cand_uid in index.candidates(fp):
-            score, offset, overlap = compare_fingerprints_detailed(fp, index.fingerprint_of(cand_uid), ov)
-            if score >= ov.similarity_threshold and (best is None or score > best[0]):
-                best = (score, offset, overlap, cand_uid)
-        if best is not None:
-            score, offset, overlap, owner_uid = best
-            row["perceptual_duplicate"] = True
-            row["canonical_segment_uid"] = uid_to_row[owner_uid]["canonical_segment_uid"]
-            _exclude(row, EXCLUDED_PERCEPTUAL_DUPLICATE)
-            evidence.append(MatchEvidence(
-                candidate_uid=uid, reference_uid=owner_uid, reference_split="u_real",
-                matched_duration_seconds=matched_duration_seconds(overlap, ov),
-                alignment_offset=offset, similarity=round(score, 6), match_type="u_u",
-            ))
-        else:
-            index.add(uid, fp)
-            uid_to_row[uid] = row
+    for row in _ordered_uu_rows(segments):
+        decision = _decide_perceptual_row(row, index, uid_to_row, fingerprints_by_uid, overlap_config)
+        if decision["evidence"] is not None:
+            evidence.append(MatchEvidence(**decision["evidence"]))
     return evidence
+
+
+UU_DEDUP_SCHEMA_VERSION = "rq2-uu-dedup-1"
+_UU_DECISIONS = ("RETAINED_OWNER", "PERCEPTUAL_DUPLICATE", "NOT_INDEXABLE")
+
+
+def uu_dedup_dir(context: UCleanContext) -> Path:
+    return checkpoint_root(context) / "u_u_dedup"
+
+
+def _uu_identity(context: UCleanContext, ordered_rows: Sequence[dict], fingerprints_by_uid: Dict[str, Sequence[int]]) -> dict:
+    """Binds a U-U checkpoint without touching the global checkpoint compatibility key."""
+    key = compatibility_key(context)
+    uids = [str(row["segment_uid"]) for row in ordered_rows]
+    fingerprint_pairs = []
+    for row in ordered_rows:
+        uid = str(row["segment_uid"])
+        fp = fingerprints_by_uid.get(uid)
+        fingerprint_pairs.append([
+            uid,
+            fingerprint_sha256(fp) if is_valid_fingerprint(fp) else "",
+        ])
+    return {
+        "schema_version": UU_DEDUP_SCHEMA_VERSION,
+        "compatibility_key": key,
+        "compatibility_sha256": hashlib.sha256(canonical_json_bytes(key)).hexdigest(),
+        "overlap_contract_sha256": context.config.overlap_contract_sha(),
+        "ordered_uid_sha256": hashlib.sha256(canonical_json_bytes(uids)).hexdigest(),
+        "fingerprint_identity_sha256": hashlib.sha256(canonical_json_bytes(fingerprint_pairs)).hexdigest(),
+    }
+
+
+def _uu_jsonl(rows: Sequence[dict]) -> str:
+    return "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows)
+
+
+def _uu_evidence_rows(decisions: Sequence[dict]) -> List[dict]:
+    return [dict(decision["evidence"]) for decision in decisions if decision.get("evidence")]
+
+
+def _uu_counts(decisions: Sequence[dict]) -> dict:
+    owners = 0
+    duplicates = 0
+    skipped = 0
+    comparisons = 0
+    for decision in decisions:
+        kind = decision.get("decision")
+        comparisons += int(decision.get("n_comparisons") or 0)
+        if kind == "RETAINED_OWNER":
+            owners += 1
+        elif kind == "PERCEPTUAL_DUPLICATE":
+            duplicates += 1
+        elif kind == "NOT_INDEXABLE":
+            skipped += 1
+    return {
+        "n_retained_owners": owners,
+        "n_perceptual_duplicates": duplicates,
+        "n_not_indexable": skipped,
+        "n_candidate_comparisons": comparisons,
+    }
+
+
+def _format_duration(seconds: float) -> str:
+    if seconds < 0 or math.isinf(seconds) or math.isnan(seconds):
+        return "unknown"
+    whole = int(round(seconds))
+    hours, rem = divmod(whole, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return "%d:%02d:%02d" % (hours, minutes, secs)
+    return "%d:%02d" % (minutes, secs)
+
+
+def _print_uu_progress(state: dict, *, resumed: bool = False) -> None:
+    processed = int(state["n_processed"])
+    total = int(state["n_total"])
+    elapsed = float(state["elapsed_seconds"])
+    rate = (processed / elapsed) if elapsed > 0 else 0.0
+    remaining = max(total - processed, 0)
+    eta = (remaining / rate) if rate > 0 else float("inf")
+    prefix = "U-U DEDUP resume" if resumed else "U-U DEDUP"
+    print(
+        "%s\nprocessed: %d / %d\nretained owners: %d\nperceptual duplicates: %d\n"
+        "candidate comparisons: %d\nelapsed: %s\nrate: %.3f rows/s\nETA: %s"
+        % (
+            prefix,
+            processed,
+            total,
+            int(state["n_retained_owners"]),
+            int(state["n_perceptual_duplicates"]),
+            int(state["n_candidate_comparisons"]),
+            _format_duration(elapsed),
+            rate,
+            _format_duration(eta),
+        ),
+        flush=True,
+    )
+
+
+def _commit_uu_checkpoint(directory: Path, state: dict, decisions: Sequence[dict]) -> None:
+    """Decisions and evidence become durable before state.json advances."""
+    directory.mkdir(parents=True, exist_ok=True)
+    decision_rows = [dict(row) for row in decisions]
+    evidence_rows = _uu_evidence_rows(decision_rows)
+    decisions_text = _uu_jsonl(decision_rows)
+    evidence_text = _uu_jsonl(evidence_rows)
+    atomic_write_text(directory / "decisions.jsonl", decisions_text)
+    atomic_write_text(directory / "evidence.jsonl", evidence_text)
+    counts = _uu_counts(decision_rows)
+    state.update(counts)
+    state["n_processed"] = len(decision_rows)
+    state["next_ordinal"] = len(decision_rows)
+    state["status"] = "COMPLETE" if len(decision_rows) == int(state["n_total"]) else "IN_PROGRESS"
+    state["decisions_sha256"] = hashlib.sha256(decisions_text.encode("utf-8")).hexdigest()
+    state["evidence_sha256"] = hashlib.sha256(evidence_text.encode("utf-8")).hexdigest()
+    atomic_write_text(directory / "state.json", json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def _parse_uu_jsonl(
+    path: Path,
+    expected_sha: str,
+    label: str,
+    *,
+    prefix_rows: Optional[int] = None,
+) -> List[dict]:
+    """Return the committed JSONL prefix. ``prefix_rows`` may be zero.
+
+    A zero-length prefix is the SHA256 of an empty file. Later lines in a
+    replaced file belong to an uncommitted checkpoint and are ignored.
+    """
+    if not path.is_file():
+        raise RuntimeError("U-U checkpoint is corrupt: missing %s" % label)
+    text = path.read_text(encoding="utf-8")
+    lines = [line for line in text.splitlines() if line.strip()]
+    if prefix_rows is None:
+        if hashlib.sha256(text.encode("utf-8")).hexdigest() != expected_sha:
+            raise RuntimeError("U-U checkpoint is corrupt: %s" % label)
+        prefix_rows = len(lines)
+    if prefix_rows < 0 or len(lines) < prefix_rows:
+        raise RuntimeError("U-U checkpoint state is ahead of %s" % label)
+    raw_prefix = "".join(line + "\n" for line in lines[:prefix_rows])
+    if hashlib.sha256(raw_prefix.encode("utf-8")).hexdigest() != expected_sha:
+        raise RuntimeError("U-U checkpoint is corrupt: %s" % label)
+    try:
+        return [json.loads(line) for line in lines[:prefix_rows]]
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("U-U checkpoint is corrupt: %s" % label) from exc
+
+
+def _assert_uu_state_counters(state: dict, decisions: Sequence[dict]) -> None:
+    """Committed counters must match the decision prefix. Do not repair them."""
+    counts = _uu_counts(decisions)
+    expected = {
+        "n_processed": len(decisions),
+        "next_ordinal": len(decisions),
+        "n_retained_owners": counts["n_retained_owners"],
+        "n_perceptual_duplicates": counts["n_perceptual_duplicates"],
+        "n_not_indexable": counts["n_not_indexable"],
+        "n_candidate_comparisons": counts["n_candidate_comparisons"],
+    }
+    for name, value in expected.items():
+        try:
+            actual = int(state[name])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("U-U checkpoint counters do not match decisions: %s" % name) from exc
+        if actual != value:
+            raise RuntimeError(
+                "U-U checkpoint counters do not match decisions: %s state=%s decisions=%s"
+                % (name, actual, value)
+            )
+
+
+def _load_uu_checkpoint(directory: Path, identity: dict, ordered_rows: Sequence[dict]) -> Optional[dict]:
+    state_path = directory / "state.json"
+    if not state_path.is_file():
+        return None
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("U-U checkpoint is corrupt: state.json") from exc
+    if not isinstance(state, dict):
+        raise RuntimeError("U-U checkpoint is corrupt: state.json")
+    if state.get("schema_version") != identity["schema_version"]:
+        raise RuntimeError("U-U checkpoint is stale/incompatible: schema_version")
+    for field_name in (
+        "compatibility_sha256",
+        "overlap_contract_sha256",
+        "ordered_uid_sha256",
+        "fingerprint_identity_sha256",
+    ):
+        if state.get(field_name) != identity[field_name]:
+            raise RuntimeError("U-U checkpoint is stale/incompatible: %s" % field_name)
+    if state.get("compatibility_key") != identity["compatibility_key"]:
+        raise RuntimeError("U-U checkpoint is stale/incompatible: compatibility_key")
+    status = state.get("status")
+    if status not in ("IN_PROGRESS", "COMPLETE"):
+        raise RuntimeError("U-U checkpoint is corrupt: status")
+    try:
+        n_processed = int(state["n_processed"])
+        n_total = int(state["n_total"])
+        next_ordinal = int(state["next_ordinal"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("U-U checkpoint is corrupt: counters") from exc
+    if n_total != len(ordered_rows) or n_processed < 0 or n_processed > n_total or next_ordinal != n_processed:
+        raise RuntimeError("U-U checkpoint is corrupt: ordinal prefix")
+    if status == "COMPLETE" and n_processed != n_total:
+        raise RuntimeError("U-U checkpoint is corrupt: COMPLETE prefix is short")
+    decisions = _parse_uu_jsonl(
+        directory / "decisions.jsonl", str(state.get("decisions_sha256") or ""), "decisions", prefix_rows=n_processed,
+    )
+    if len(decisions) != n_processed:
+        raise RuntimeError("U-U checkpoint is corrupt: decisions length")
+    for ordinal, decision in enumerate(decisions):
+        if not isinstance(decision, dict):
+            raise RuntimeError("U-U checkpoint is corrupt: decision")
+        if int(decision.get("ordinal", -1)) != ordinal:
+            raise RuntimeError("U-U checkpoint ordinals are not contiguous")
+        if str(decision.get("segment_uid") or "") != str(ordered_rows[ordinal]["segment_uid"]):
+            raise RuntimeError("U-U checkpoint UID prefix does not match the current retained order")
+        if decision.get("decision") not in _UU_DECISIONS:
+            raise RuntimeError("U-U checkpoint is corrupt: decision")
+    _assert_uu_state_counters(state, decisions)
+    expected_evidence = _uu_evidence_rows(decisions)
+    evidence = _parse_uu_jsonl(
+        directory / "evidence.jsonl",
+        str(state.get("evidence_sha256") or ""),
+        "evidence",
+        prefix_rows=len(expected_evidence),
+    )
+    if evidence != expected_evidence:
+        raise RuntimeError("U-U checkpoint is corrupt: evidence does not match decisions")
+    state["decisions"] = decisions
+    return state
+
+
+def _restore_uu_decision(row: dict, decision: dict, index: FingerprintIndex, uid_to_row: Dict[str, dict], fingerprints_by_uid, overlap_config) -> None:
+    kind = decision["decision"]
+    uid = str(row["segment_uid"])
+    if kind == "NOT_INDEXABLE":
+        return
+    if kind == "RETAINED_OWNER":
+        fp = fingerprints_by_uid.get(uid)
+        if not _u_fingerprint_indexable(fp, overlap_config):
+            raise RuntimeError("U-U checkpoint owner is no longer indexable: %s" % uid)
+        if str(row.get("canonical_segment_uid") or "") != str(decision.get("canonical_segment_uid") or ""):
+            raise RuntimeError("U-U checkpoint owner canonical_segment_uid drifted: %s" % uid)
+        index.add(uid, fp)
+        uid_to_row[uid] = row
+        return
+    if kind == "PERCEPTUAL_DUPLICATE":
+        row["perceptual_duplicate"] = True
+        row["canonical_segment_uid"] = decision["canonical_segment_uid"]
+        _exclude(row, EXCLUDED_PERCEPTUAL_DUPLICATE)
+        return
+    raise RuntimeError("U-U checkpoint is corrupt: decision")
+
+
+def _uu_match_evidence(decisions: Sequence[dict]) -> List[MatchEvidence]:
+    return [MatchEvidence(**dict(decision["evidence"])) for decision in decisions if decision.get("evidence")]
+
+
+def perceptual_deduplicate_resumable(
+    segments: List[dict],
+    fingerprints_by_uid: Dict[str, Sequence[int]],
+    context: UCleanContext,
+    *,
+    checkpoint_every: int = 250,
+    progress_interval_seconds: float = 45.0,
+) -> List[MatchEvidence]:
+    """Sequential U-U dedup with a durable prefix checkpoint.
+
+    A resumed run restores decisions in order, rebuilds the owner index only
+    from the retained-owner prefix, then continues at the next ordinal. A
+    COMPLETE checkpoint is reapplied with no new fingerprint comparisons.
+    """
+    config = context.config
+    if not config.overlap_config_frozen:
+        raise RuntimeError("perceptual dedup requires a frozen OverlapConfig")
+    overlap_config = config.overlap
+    ordered = _ordered_uu_rows(segments)
+    identity = _uu_identity(context, ordered, fingerprints_by_uid)
+    directory = uu_dedup_dir(context)
+    loaded = _load_uu_checkpoint(directory, identity, ordered)
+    every = max(1, int(checkpoint_every))
+    interval = float(progress_interval_seconds)
+    index = FingerprintIndex(overlap_config)
+    uid_to_row: Dict[str, dict] = {}
+    if loaded is None:
+        decisions: List[dict] = []
+        base_elapsed = 0.0
+        resumed = False
+    else:
+        decisions = [dict(row) for row in loaded["decisions"]]
+        for decision in decisions:
+            _restore_uu_decision(
+                ordered[int(decision["ordinal"])], decision, index, uid_to_row, fingerprints_by_uid, overlap_config,
+            )
+        base_elapsed = float(loaded.get("elapsed_seconds") or 0.0)
+        resumed = True
+        if loaded.get("status") == "COMPLETE":
+            state = dict(loaded)
+            state.pop("decisions", None)
+            _print_uu_progress(state, resumed=True)
+            return _uu_match_evidence(decisions)
+    started = time.perf_counter()
+    last_commit = started
+    if resumed:
+        snapshot = _uu_progress_state(identity, decisions, len(ordered), base_elapsed, "IN_PROGRESS")
+        _print_uu_progress(snapshot, resumed=True)
+    for ordinal in range(len(decisions), len(ordered)):
+        decision = _decide_perceptual_row(
+            ordered[ordinal], index, uid_to_row, fingerprints_by_uid, overlap_config,
+        )
+        decision["ordinal"] = ordinal
+        decisions.append(decision)
+        now = time.perf_counter()
+        done = len(decisions) == len(ordered)
+        due = done or (len(decisions) % every == 0) or ((now - last_commit) >= interval)
+        if not due:
+            continue
+        elapsed = base_elapsed + (now - started)
+        state = _uu_progress_state(identity, decisions, len(ordered), elapsed, "IN_PROGRESS")
+        _commit_uu_checkpoint(directory, state, decisions)
+        last_commit = time.perf_counter()
+        _print_uu_progress(state, resumed=False)
+    return _uu_match_evidence(decisions)
+
+
+def _uu_progress_state(identity: dict, decisions: Sequence[dict], n_total: int, elapsed: float, status: str) -> dict:
+    counts = _uu_counts(decisions)
+    state = dict(identity)
+    state.update(counts)
+    state["status"] = status
+    state["n_total"] = int(n_total)
+    state["n_processed"] = len(decisions)
+    state["next_ordinal"] = len(decisions)
+    state["elapsed_seconds"] = round(float(elapsed), 6)
+    return state
+
+
+def require_verified_segment_files(context: UCleanContext) -> None:
+    """Stop a full run before fingerprinting or U-U dedup when segment files are unverified."""
+    if not context.completion.segments_written_verified:
+        raise RuntimeError("full run requires verified segment files")
 
 
 def protect_against_references(
@@ -3358,7 +3847,7 @@ def verify_retained_segment_files(segments: Sequence[dict], context: UCleanConte
         rel = str(row.get("segment_local_path") or "")
         if not rel:
             raise RuntimeError(f"retained segment has no file: {row.get('segment_uid')}")
-        path = resolve_project_path(rel, cfg.project_root)
+        path = resolve_u_clean_path(rel, cfg)
         if not path.is_file():
             raise RuntimeError(f"retained segment file missing: {rel}")
         info = read_wav_pcm16(path)
@@ -3398,10 +3887,16 @@ def write_and_verify_segments(segments: Sequence[dict], context: UCleanContext) 
         if row["u_clean_status"] != RETAINED_STATUS:
             continue
         existing = str(row.get("segment_local_path") or "")
+        if not existing:
+            candidate = "segments/%s/%s.wav" % (row["source_id"], row["segment_uid"])
+            if resolve_u_clean_path(candidate, cfg).is_file():
+                existing = candidate
+                row["segment_local_path"] = candidate
         if existing:
+            existing_path = resolve_u_clean_path(existing, cfg)
             reused = False
             try:
-                info = read_wav_pcm16(resolve_project_path(existing, cfg.project_root))
+                info = read_wav_pcm16(existing_path)
                 pcm_ok = info["pcm16_sha256"] == row.get("segment_pcm16_sha256")
                 expected_wav = str(row.get("segment_wav_sha256") or "")
                 wav_ok = (info["wav_sha256"] == expected_wav) if expected_wav else True
@@ -3434,7 +3929,7 @@ def write_and_verify_segments(segments: Sequence[dict], context: UCleanContext) 
             reopened = read_wav_pcm16(abs_path)
             if reopened["pcm16_sha256"] != row["segment_pcm16_sha256"]:
                 raise RuntimeError("reopen pcm16 mismatch")
-            row["segment_local_path"] = to_project_relative(abs_path, cfg.project_root)
+            row["segment_local_path"] = to_u_clean_relative(abs_path, cfg)
             row["segment_wav_sha256"] = wav_sha
         except Exception:
             _exclude(row, EXCLUDED_SEGMENT_WRITE_FAILED)

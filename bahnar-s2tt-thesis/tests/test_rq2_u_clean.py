@@ -1040,10 +1040,10 @@ def test_corrupt_cached_segment_is_recomputed(tmp_path):
     write_and_verify_segments(segs, ctx)
     assert row["u_clean_status"] == RETAINED_STATUS
     assert row["segment_local_path"] != "missing/cached.wav"
-    assert (tmp_path / row["segment_local_path"]).is_file()
+    assert (cfg.out_dir / row["segment_local_path"]).is_file()
     assert row["segment_wav_sha256"]
     assert row["segment_pcm16_sha256"]
-    info = read_wav_pcm16(tmp_path / row["segment_local_path"])
+    info = read_wav_pcm16(cfg.out_dir / row["segment_local_path"])
     assert info["wav_sha256"] == row["segment_wav_sha256"]
     assert info["pcm16_sha256"] == row["segment_pcm16_sha256"]
     assert ctx.completion.segments_written_verified is True
@@ -1053,7 +1053,7 @@ def test_resume_cached_segment_with_missing_wav_sha_is_rehydrated(tmp_path, monk
     cfg, segs, ctx = _written_retained_segments(tmp_path)
     row = [item for item in retained_segments(segs) if item["source_id"] == "VOV4_A"][0]
     cached_path = row["segment_local_path"]
-    cached_bytes = (tmp_path / cached_path).read_bytes()
+    cached_bytes = (cfg.out_dir / cached_path).read_bytes()
     pcm_sha = row["segment_pcm16_sha256"]
     expected_wav = hashlib.sha256(cached_bytes).hexdigest()
     row["segment_wav_sha256"] = ""
@@ -1070,10 +1070,10 @@ def test_resume_cached_segment_with_missing_wav_sha_is_rehydrated(tmp_path, monk
     assert row["segment_local_path"] == cached_path
     assert row["segment_wav_sha256"] == expected_wav
     assert row["segment_pcm16_sha256"] == pcm_sha
-    info = read_wav_pcm16(tmp_path / cached_path)
+    info = read_wav_pcm16(cfg.out_dir / cached_path)
     assert info["wav_sha256"] == expected_wav
     assert info["pcm16_sha256"] == pcm_sha
-    assert (tmp_path / cached_path).read_bytes() == cached_bytes
+    assert (cfg.out_dir / cached_path).read_bytes() == cached_bytes
     assert writes["n"] == 0
     assert ctx.completion.segments_written_verified is True
 
@@ -1081,7 +1081,7 @@ def test_resume_cached_segment_with_missing_wav_sha_is_rehydrated(tmp_path, monk
 def test_cached_segment_wrong_pcm_is_not_accepted(tmp_path, monkeypatch):
     cfg, segs, ctx = _written_retained_segments(tmp_path)
     row = [item for item in retained_segments(segs) if item["source_id"] == "VOV4_A"][0]
-    cached_path = tmp_path / row["segment_local_path"]
+    cached_path = cfg.out_dir / row["segment_local_path"]
     original_pcm = row["segment_pcm16_sha256"]
     original_wav = row["segment_wav_sha256"]
     write_wav_pcm16_atomic(cached_path, _sine_pcm(6.0, freq=880.0), 16000)
@@ -1096,7 +1096,7 @@ def test_cached_segment_wrong_pcm_is_not_accepted(tmp_path, monkeypatch):
     write_and_verify_segments(segs, ctx)
     assert row["u_clean_status"] == RETAINED_STATUS
     assert writes["n"] >= 1
-    info = read_wav_pcm16(tmp_path / row["segment_local_path"])
+    info = read_wav_pcm16(cfg.out_dir / row["segment_local_path"])
     assert info["pcm16_sha256"] == original_pcm
     assert info["pcm16_sha256"] == row["segment_pcm16_sha256"]
     assert info["wav_sha256"] == row["segment_wav_sha256"]
@@ -1124,7 +1124,7 @@ def test_cached_segment_wav_sha_mismatch_does_not_accept(tmp_path, monkeypatch):
     assert writes["n"] >= 1
     assert row["segment_wav_sha256"] != wrong_wav
     assert row["segment_pcm16_sha256"] == pcm_sha
-    info = read_wav_pcm16(tmp_path / row["segment_local_path"])
+    info = read_wav_pcm16(cfg.out_dir / row["segment_local_path"])
     assert info["wav_sha256"] == row["segment_wav_sha256"]
     assert info["pcm16_sha256"] == pcm_sha
     assert ctx.completion.segments_written_verified is True
@@ -4291,3 +4291,617 @@ def test_blank_pinned_recovery_does_not_scan_every_shard(tmp_path, monkeypatch):
     assert reads == [unresolved_name]
     assert pinned_names.isdisjoint(reads)
     assert len(pinned["fingerprinted"]) == 7
+
+
+def _pattern_fp(seed, size=40):
+    return [((seed + 1) * 0x01010101 + i * 997) & 0xFFFFFFFF for i in range(size)]
+
+
+def _uu_resume_case(tmp_path):
+    cfg = _config()
+    cfg.overlap = _frozen_overlap_config()
+    cfg.project_root = tmp_path
+    cfg.out_dir = tmp_path / "u_clean"
+    rows = []
+    fps = {}
+    for slot, seed, duplicate in (
+        (0, 1, False),
+        (1, 1, True),
+        (2, 2, False),
+        (3, 2, True),
+        (4, 3, False),
+        (5, 3, True),
+    ):
+        uid = "S%02d" % slot
+        row = _u_span_row(uid, 160000, ("%02x" % slot) * 32)
+        row["source_id"] = "VOV4"
+        row["start_sample"] = slot
+        row["end_sample"] = slot + 160000
+        row["canonical_segment_uid"] = uid
+        rows.append(row)
+        fps[uid] = _pattern_fp(seed)
+    short = _u_span_row("SHORT", 160000, "ab" * 32)
+    short["source_id"] = "VOV4"
+    short["start_sample"] = 100
+    short["end_sample"] = 160100
+    short["canonical_segment_uid"] = "SHORT"
+    rows.append(short)
+    fps["SHORT"] = [1, 2, 3]
+    ctx = UCleanContext(config=cfg)
+    ctx.nb10_locks = {"summary.json": "a" * 64}
+    ctx.reference_summary = {"reference_set_sha256": "e" * 64}
+    ctx.reference_provenance = {
+        "rq1_final_contract_hash": "a" * 64,
+        "rq1_test_contract_hash": "b" * 64,
+        "protected_audio_identity_sha256": "c" * 64,
+        "parquet_revision": "rev",
+        "pcm_pipeline_version": "pcm-v1",
+    }
+    return cfg, rows, fps, ctx
+
+
+def _uu_outcome(segments, evidence):
+    ordered = sorted(segments, key=lambda row: (str(row["source_id"]), int(row["start_sample"]), str(row["segment_uid"])))
+    body = [
+        (
+            row["segment_uid"],
+            row.get("u_clean_status"),
+            row.get("exclusion_reason"),
+            row.get("canonical_segment_uid"),
+            bool(row.get("perceptual_duplicate")),
+        )
+        for row in ordered
+    ]
+    return body, _evidence_tuples(evidence)
+
+
+def test_uu_resume_matches_uninterrupted_dedup(tmp_path, monkeypatch):
+    import copy
+    import src.rq2_u_clean as clean
+
+    cfg, rows, fps, ctx = _uu_resume_case(tmp_path)
+    key_before = compatibility_key(ctx)
+    baseline_rows = copy.deepcopy(rows)
+    baseline = clean.perceptual_deduplicate(baseline_rows, fps, cfg)
+    commits = {"n": 0}
+    real_commit = clean._commit_uu_checkpoint
+
+    def stop_after_first(directory, state, decisions):
+        real_commit(directory, state, decisions)
+        commits["n"] += 1
+        if commits["n"] == 1:
+            raise RuntimeError("simulated interrupt")
+
+    monkeypatch.setattr(clean, "_commit_uu_checkpoint", stop_after_first)
+    partial_rows = copy.deepcopy(rows)
+    with pytest.raises(RuntimeError, match="simulated interrupt"):
+        clean.perceptual_deduplicate_resumable(
+            partial_rows, fps, ctx, checkpoint_every=2, progress_interval_seconds=3600,
+        )
+    state = json.loads((ctx.config.out_dir / "checkpoint" / "u_u_dedup" / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "IN_PROGRESS"
+    assert state["n_processed"] == 2
+    assert state["next_ordinal"] == 2
+    monkeypatch.setattr(clean, "_commit_uu_checkpoint", real_commit)
+    resumed_rows = copy.deepcopy(rows)
+    resumed = clean.perceptual_deduplicate_resumable(
+        resumed_rows, fps, ctx, checkpoint_every=2, progress_interval_seconds=3600,
+    )
+    assert _uu_outcome(resumed_rows, resumed) == _uu_outcome(baseline_rows, baseline)
+    assert compatibility_key(ctx) == key_before
+    assert not (ctx.config.out_dir / "checkpoint" / "state.json").is_file()
+
+
+def test_uu_checkpoint_rejects_stale_overlap_contract(tmp_path):
+    import copy
+    import src.rq2_u_clean as clean
+
+    cfg, rows, fps, ctx = _uu_resume_case(tmp_path)
+    clean.perceptual_deduplicate_resumable(
+        copy.deepcopy(rows), fps, ctx, checkpoint_every=3, progress_interval_seconds=3600,
+    )
+    cfg.overlap = OverlapConfig(
+        frozen=True, shingle_k=4, min_shared_shingles=1, min_overlap_items=4, similarity_threshold=0.5,
+    )
+    with pytest.raises(RuntimeError, match="stale/incompatible"):
+        clean.perceptual_deduplicate_resumable(
+            copy.deepcopy(rows), fps, ctx, checkpoint_every=3, progress_interval_seconds=3600,
+        )
+
+
+def test_uu_checkpoint_rejects_changed_fingerprints(tmp_path):
+    import copy
+    import src.rq2_u_clean as clean
+
+    _cfg, rows, fps, ctx = _uu_resume_case(tmp_path)
+    clean.perceptual_deduplicate_resumable(
+        copy.deepcopy(rows), fps, ctx, checkpoint_every=3, progress_interval_seconds=3600,
+    )
+    changed = dict(fps)
+    changed["S00"] = _pattern_fp(9)
+    with pytest.raises(RuntimeError, match="fingerprint_identity_sha256"):
+        clean.perceptual_deduplicate_resumable(
+            copy.deepcopy(rows), changed, ctx, checkpoint_every=3, progress_interval_seconds=3600,
+        )
+
+
+def test_uu_checkpoint_rejects_corrupt_or_incomplete_prefix(tmp_path):
+    import copy
+    import src.rq2_u_clean as clean
+
+    _cfg, rows, fps, ctx = _uu_resume_case(tmp_path)
+    clean.perceptual_deduplicate_resumable(
+        copy.deepcopy(rows), fps, ctx, checkpoint_every=2, progress_interval_seconds=3600,
+    )
+    directory = ctx.config.out_dir / "checkpoint" / "u_u_dedup"
+    decisions = directory / "decisions.jsonl"
+    original = decisions.read_text(encoding="utf-8")
+    decisions.write_text("not-json\n" + original, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="corrupt|ahead|not contiguous"):
+        clean.perceptual_deduplicate_resumable(
+            copy.deepcopy(rows), fps, ctx, checkpoint_every=2, progress_interval_seconds=3600,
+        )
+    decisions.write_text(original, encoding="utf-8")
+    state_path = directory / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["n_processed"] = int(state["n_total"]) + 5
+    state["next_ordinal"] = state["n_processed"]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="corrupt|ahead|ordinal"):
+        clean.perceptual_deduplicate_resumable(
+            copy.deepcopy(rows), fps, ctx, checkpoint_every=2, progress_interval_seconds=3600,
+        )
+
+
+def test_complete_uu_checkpoint_reuses_without_new_comparisons(tmp_path, monkeypatch):
+    import copy
+    import src.rq2_u_clean as clean
+
+    cfg, rows, fps, ctx = _uu_resume_case(tmp_path)
+    baseline_rows = copy.deepcopy(rows)
+    baseline = clean.perceptual_deduplicate(baseline_rows, fps, cfg)
+    first_rows = copy.deepcopy(rows)
+    first = clean.perceptual_deduplicate_resumable(
+        first_rows, fps, ctx, checkpoint_every=2, progress_interval_seconds=3600,
+    )
+    assert _uu_outcome(first_rows, first) == _uu_outcome(baseline_rows, baseline)
+    calls = {"n": 0}
+    real_compare = clean.compare_fingerprints_detailed
+
+    def spy_compare(*args, **kwargs):
+        calls["n"] += 1
+        return real_compare(*args, **kwargs)
+
+    monkeypatch.setattr(clean, "compare_fingerprints_detailed", spy_compare)
+    second_rows = copy.deepcopy(rows)
+    second = clean.perceptual_deduplicate_resumable(
+        second_rows, fps, ctx, checkpoint_every=2, progress_interval_seconds=3600,
+    )
+    assert calls["n"] == 0
+    assert _uu_outcome(second_rows, second) == _uu_outcome(baseline_rows, baseline)
+    state = json.loads((ctx.config.out_dir / "checkpoint" / "u_u_dedup" / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "COMPLETE"
+    assert state["n_processed"] == state["n_total"]
+
+
+def test_uu_resume_preserves_exact_owner_rule(tmp_path, monkeypatch):
+    import copy
+    import src.rq2_u_clean as clean
+
+    _cfg, rows, fps, ctx = _uu_resume_case(tmp_path)
+    real_commit = clean._commit_uu_checkpoint
+
+    def stop_after_owner(directory, state, decisions):
+        real_commit(directory, state, decisions)
+        if int(state["n_processed"]) >= 1:
+            raise RuntimeError("stop after owner")
+
+    monkeypatch.setattr(clean, "_commit_uu_checkpoint", stop_after_owner)
+    with pytest.raises(RuntimeError, match="stop after owner"):
+        clean.perceptual_deduplicate_resumable(
+            copy.deepcopy(rows), fps, ctx, checkpoint_every=1, progress_interval_seconds=3600,
+        )
+    monkeypatch.setattr(clean, "_commit_uu_checkpoint", real_commit)
+    resumed = copy.deepcopy(rows)
+    clean.perceptual_deduplicate_resumable(
+        resumed, fps, ctx, checkpoint_every=1, progress_interval_seconds=3600,
+    )
+    by_uid = {row["segment_uid"]: row for row in resumed}
+    assert by_uid["S00"]["u_clean_status"] == RETAINED_STATUS
+    assert by_uid["S01"]["u_clean_status"] == EXCLUDED_PERCEPTUAL_DUPLICATE
+    assert by_uid["S01"]["canonical_segment_uid"] == "S00"
+    assert by_uid["S01"]["perceptual_duplicate"] is True
+    assert by_uid["SHORT"]["u_clean_status"] == RETAINED_STATUS
+    assert by_uid["SHORT"].get("perceptual_duplicate") is not True
+
+
+def test_uu_progress_state_fields_update(tmp_path, capsys):
+    import copy
+    import src.rq2_u_clean as clean
+
+    _cfg, rows, fps, ctx = _uu_resume_case(tmp_path)
+    clean.perceptual_deduplicate_resumable(
+        copy.deepcopy(rows), fps, ctx, checkpoint_every=2, progress_interval_seconds=3600,
+    )
+    state = json.loads((ctx.config.out_dir / "checkpoint" / "u_u_dedup" / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "COMPLETE"
+    assert state["n_total"] == 7
+    assert state["n_processed"] == 7
+    assert state["next_ordinal"] == 7
+    assert state["n_retained_owners"] == 3
+    assert state["n_perceptual_duplicates"] == 3
+    assert state["n_not_indexable"] == 1
+    assert state["n_candidate_comparisons"] >= 3
+    assert state["elapsed_seconds"] >= 0
+    captured = capsys.readouterr().out
+    assert "U-U DEDUP" in captured
+    assert "processed: 2 / 7" in captured
+    assert "processed: 7 / 7" in captured
+
+
+def test_unverified_segments_stop_before_uu_dedup(tmp_path, monkeypatch):
+    import src.rq2_u_clean as clean
+
+    _cfg, rows, fps, ctx = _uu_resume_case(tmp_path)
+    ctx.completion.segments_written_verified = False
+    calls = {"n": 0}
+    real_compare = clean.compare_fingerprints_detailed
+
+    def spy_compare(*args, **kwargs):
+        calls["n"] += 1
+        return real_compare(*args, **kwargs)
+
+    monkeypatch.setattr(clean, "compare_fingerprints_detailed", spy_compare)
+
+    def pipeline():
+        clean.require_verified_segment_files(ctx)
+        return clean.perceptual_deduplicate_resumable(
+            rows, fps, ctx, checkpoint_every=1, progress_interval_seconds=3600,
+        )
+
+    with pytest.raises(RuntimeError, match="verified segment files"):
+        pipeline()
+    assert calls["n"] == 0
+    notebook = Path(__file__).resolve().parents[1] / "notebooks" / "11_RQ2_UReal_Segmentation_Dedup_Freeze_UClean.ipynb"
+    text = notebook.read_text(encoding="utf-8")
+    assert text.index("require_verified_segment_files") < text.index("fingerprint_retained_u_segments")
+    assert text.index("fingerprint_retained_u_segments") < text.index("perceptual_deduplicate_resumable")
+
+
+def test_uu_resume_ignores_uncommitted_decision_tail(tmp_path):
+    import copy
+    import src.rq2_u_clean as clean
+
+    cfg, rows, fps, ctx = _uu_resume_case(tmp_path)
+    baseline_rows = copy.deepcopy(rows)
+    baseline = clean.perceptual_deduplicate(baseline_rows, fps, cfg)
+    first_rows = copy.deepcopy(rows)
+    clean.perceptual_deduplicate_resumable(
+        first_rows, fps, ctx, checkpoint_every=4, progress_interval_seconds=3600,
+    )
+    decisions = ctx.config.out_dir / "checkpoint" / "u_u_dedup" / "decisions.jsonl"
+    decisions.write_text(
+        decisions.read_text(encoding="utf-8")
+        + json.dumps({
+            "ordinal": 99,
+            "segment_uid": "S00",
+            "decision": "PERCEPTUAL_DUPLICATE",
+            "canonical_segment_uid": "FAKE",
+            "n_comparisons": 0,
+            "evidence": None,
+        })
+        + "\n",
+        encoding="utf-8",
+    )
+    resumed_rows = copy.deepcopy(rows)
+    resumed = clean.perceptual_deduplicate_resumable(
+        resumed_rows, fps, ctx, checkpoint_every=4, progress_interval_seconds=3600,
+    )
+    assert _uu_outcome(resumed_rows, resumed) == _uu_outcome(baseline_rows, baseline)
+    assert all(row.get("canonical_segment_uid") != "FAKE" for row in resumed_rows)
+
+
+def test_uu_empty_evidence_crash_window_resumes(tmp_path, monkeypatch):
+    import copy
+    import src.rq2_u_clean as clean
+
+    cfg, rows, fps, ctx = _uu_resume_case(tmp_path)
+    baseline_rows = copy.deepcopy(rows)
+    baseline = clean.perceptual_deduplicate(baseline_rows, fps, cfg)
+    state_writes = {"n": 0}
+    real_write = clean.atomic_write_text
+
+    def crash_before_next_state(path, text):
+        if Path(path).name == "state.json" and state_writes["n"] >= 1:
+            raise RuntimeError("crash before state")
+        real_write(path, text)
+        if Path(path).name == "state.json":
+            state_writes["n"] += 1
+
+    monkeypatch.setattr(clean, "atomic_write_text", crash_before_next_state)
+    with pytest.raises(RuntimeError, match="crash before state"):
+        clean.perceptual_deduplicate_resumable(
+            copy.deepcopy(rows), fps, ctx, checkpoint_every=1, progress_interval_seconds=3600,
+        )
+    directory = ctx.config.out_dir / "checkpoint" / "u_u_dedup"
+    state = json.loads((directory / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "IN_PROGRESS"
+    assert state["n_processed"] == 1
+    assert state["n_perceptual_duplicates"] == 0
+    assert state["evidence_sha256"] == hashlib.sha256(b"").hexdigest()
+    assert (directory / "evidence.jsonl").read_text(encoding="utf-8").strip()
+    monkeypatch.setattr(clean, "atomic_write_text", real_write)
+    resumed_rows = copy.deepcopy(rows)
+    resumed = clean.perceptual_deduplicate_resumable(
+        resumed_rows, fps, ctx, checkpoint_every=1, progress_interval_seconds=3600,
+    )
+    assert _uu_outcome(resumed_rows, resumed) == _uu_outcome(baseline_rows, baseline)
+
+
+def test_uu_nonempty_evidence_tail_is_ignored(tmp_path, monkeypatch):
+    import copy
+    import src.rq2_u_clean as clean
+
+    cfg, rows, fps, ctx = _uu_resume_case(tmp_path)
+    baseline_rows = copy.deepcopy(rows)
+    baseline = clean.perceptual_deduplicate(baseline_rows, fps, cfg)
+    first_rows = copy.deepcopy(rows)
+    clean.perceptual_deduplicate_resumable(
+        first_rows, fps, ctx, checkpoint_every=2, progress_interval_seconds=3600,
+    )
+    evidence = ctx.config.out_dir / "checkpoint" / "u_u_dedup" / "evidence.jsonl"
+    committed = evidence.read_text(encoding="utf-8")
+    assert committed.strip()
+    evidence.write_text(
+        committed + json.dumps({"candidate_uid": "TAIL", "reference_uid": "TAIL", "reference_split": "u_real", "matched_duration_seconds": 0.0, "alignment_offset": 0, "similarity": 1.0, "match_type": "u_u"}) + "\n",
+        encoding="utf-8",
+    )
+    calls = {"n": 0}
+    real_compare = clean.compare_fingerprints_detailed
+
+    def spy_compare(*args, **kwargs):
+        calls["n"] += 1
+        return real_compare(*args, **kwargs)
+
+    monkeypatch.setattr(clean, "compare_fingerprints_detailed", spy_compare)
+    resumed_rows = copy.deepcopy(rows)
+    resumed = clean.perceptual_deduplicate_resumable(
+        resumed_rows, fps, ctx, checkpoint_every=2, progress_interval_seconds=3600,
+    )
+    assert calls["n"] == 0
+    assert _uu_outcome(resumed_rows, resumed) == _uu_outcome(baseline_rows, baseline)
+    assert all(item.candidate_uid != "TAIL" for item in resumed)
+
+
+def test_uu_state_counter_tamper_fails_closed(tmp_path):
+    import copy
+    import src.rq2_u_clean as clean
+
+    _cfg, rows, fps, ctx = _uu_resume_case(tmp_path)
+    clean.perceptual_deduplicate_resumable(
+        copy.deepcopy(rows), fps, ctx, checkpoint_every=3, progress_interval_seconds=3600,
+    )
+    state_path = ctx.config.out_dir / "checkpoint" / "u_u_dedup" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["n_retained_owners"] = int(state["n_retained_owners"]) + 9
+    state["n_candidate_comparisons"] = 0
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="counters do not match decisions"):
+        clean.perceptual_deduplicate_resumable(
+            copy.deepcopy(rows), fps, ctx, checkpoint_every=3, progress_interval_seconds=3600,
+        )
+
+
+def test_durable_checkpoint_is_not_shadowed_by_code_checkout(tmp_path):
+    from src.rq2_u_clean import (
+        assert_nb11_out_dir_uses_durable_checkpoint,
+        resolve_u_clean_output,
+    )
+
+    code = tmp_path / "citizen-assistance-system" / "bahnar-s2tt-thesis"
+    durable = tmp_path / "bahnar-s2tt-thesis"
+    code.mkdir(parents=True)
+    state = durable / "artifacts" / "rq2" / "u_clean" / "checkpoint" / "state.json"
+    state.parent.mkdir(parents=True)
+    state.write_text("{}\n", encoding="utf-8")
+    layout = resolve_u_clean_output(code, durable_root=durable, env={})
+    assert layout["project_root"] == code.resolve()
+    assert layout["durable_root"] == durable.resolve()
+    assert layout["out_dir"] == (durable / "artifacts" / "rq2" / "u_clean").resolve()
+    assert layout["checkpoint_root"] == state.parent.resolve()
+    code_out = code / "artifacts" / "rq2" / "u_clean"
+    with pytest.raises(RuntimeError, match="durable checkpoint"):
+        assert_nb11_out_dir_uses_durable_checkpoint(code, code_out, durable_root=durable, env={})
+    cfg = build_config(project_root=code, durable_root=durable)
+    assert Path(cfg.out_dir).resolve() == layout["out_dir"]
+    local = resolve_u_clean_output(code, env={})
+    assert local["out_dir"] == (code.resolve() / "artifacts" / "rq2" / "u_clean")
+    durable_ctx = UCleanContext(config=cfg)
+    local_ctx = UCleanContext(config=build_config(project_root=code))
+    assert set(compatibility_key(durable_ctx)) == set(compatibility_key(local_ctx))
+    assert "out_dir" not in compatibility_key(durable_ctx)
+    notebook = Path(__file__).resolve().parents[1] / "notebooks" / "11_RQ2_UReal_Segmentation_Dedup_Freeze_UClean.ipynb"
+    text = notebook.read_text(encoding="utf-8")
+    assert text.index("resolve_u_clean_output") < text.index("def run_pipeline")
+    assert "assert_nb11_out_dir_uses_durable_checkpoint" in text
+    assert text.index("checkpoint_root") < text.index("require_full_run_dependencies")
+
+
+def _split_u_clean_roots(tmp_path):
+    project = tmp_path / "project"
+    out = tmp_path / "durable" / "artifacts" / "rq2" / "u_clean"
+    project.mkdir(parents=True)
+    cfg, segs = _distinct_segments()
+    cfg.project_root = project
+    cfg.out_dir = out
+    _plant_source_wavs(project, segs)
+    ctx = UCleanContext(config=cfg)
+    return cfg, segs, ctx
+
+
+def test_durable_segment_path_round_trip_across_trees(tmp_path):
+    from src.rq2_u_clean import resolve_u_clean_path, to_u_clean_relative
+
+    cfg, segs, ctx = _split_u_clean_roots(tmp_path)
+    assert Path(cfg.project_root).resolve() != Path(cfg.out_dir).resolve()
+    assert Path(cfg.out_dir).resolve() != Path(cfg.project_root).resolve()
+    write_and_verify_segments(segs, ctx)
+    row = [item for item in retained_segments(segs) if item["source_id"] == "VOV4_A"][0]
+    assert row["segment_local_path"] == "segments/%s/%s.wav" % (row["source_id"], row["segment_uid"])
+    assert not Path(row["segment_local_path"]).is_absolute()
+    assert row["source_wav_local_path"].startswith("artifacts/")
+    resolved = resolve_u_clean_path(row["segment_local_path"], cfg)
+    assert resolved.is_file()
+    assert resolved == (Path(cfg.out_dir) / row["segment_local_path"]).resolve()
+    assert to_u_clean_relative(resolved, cfg) == row["segment_local_path"]
+    assert not str(resolved).startswith(str(Path(cfg.project_root).resolve()))
+
+
+def test_cached_durable_segment_is_reused_without_rewrite(tmp_path, monkeypatch):
+    cfg, segs, ctx = _split_u_clean_roots(tmp_path)
+    write_and_verify_segments(segs, ctx)
+    row = [item for item in retained_segments(segs) if item["source_id"] == "VOV4_A"][0]
+    stored = row["segment_local_path"]
+    pcm_sha = row["segment_pcm16_sha256"]
+    wav_sha = row["segment_wav_sha256"]
+    fingerprint = row.get("fingerprint_sha256")
+    writes = {"n": 0}
+    real_write = write_wav_pcm16_atomic
+
+    def spy_write(path, pcm, sample_rate=16000):
+        writes["n"] += 1
+        return real_write(path, pcm, sample_rate)
+
+    monkeypatch.setattr("src.rq2_u_clean.write_wav_pcm16_atomic", spy_write)
+    write_and_verify_segments(segs, ctx)
+    assert writes["n"] == 0
+    assert row["segment_local_path"] == stored
+    assert row["segment_pcm16_sha256"] == pcm_sha
+    assert row["segment_wav_sha256"] == wav_sha
+    assert row.get("fingerprint_sha256") == fingerprint
+
+
+def test_corrupt_durable_cached_segment_is_recomputed(tmp_path, monkeypatch):
+    cfg, segs, ctx = _split_u_clean_roots(tmp_path)
+    write_and_verify_segments(segs, ctx)
+    row = [item for item in retained_segments(segs) if item["source_id"] == "VOV4_A"][0]
+    original_pcm = row["segment_pcm16_sha256"]
+    cached = Path(cfg.out_dir) / row["segment_local_path"]
+    write_wav_pcm16_atomic(cached, _sine_pcm(6.0, freq=880.0), 16000)
+    writes = {"n": 0}
+    real_write = write_wav_pcm16_atomic
+
+    def spy_write(path, pcm, sample_rate=16000):
+        writes["n"] += 1
+        return real_write(path, pcm, sample_rate)
+
+    monkeypatch.setattr("src.rq2_u_clean.write_wav_pcm16_atomic", spy_write)
+    write_and_verify_segments(segs, ctx)
+    assert writes["n"] >= 1
+    info = read_wav_pcm16(Path(cfg.out_dir) / row["segment_local_path"])
+    assert info["pcm16_sha256"] == original_pcm
+    assert row["segment_local_path"].startswith("segments/")
+    assert not Path(row["segment_local_path"]).is_absolute()
+
+
+def test_u_clean_path_rejects_absolute_and_traversal(tmp_path):
+    from src.rq2_u_clean import resolve_u_clean_path
+
+    cfg, _segs, _ctx = _split_u_clean_roots(tmp_path)
+    with pytest.raises(RuntimeError, match="inside U_clean out_dir"):
+        resolve_u_clean_path("/workspace/foo.wav", cfg)
+    with pytest.raises(RuntimeError, match="inside U_clean out_dir"):
+        resolve_u_clean_path("../../escape.wav", cfg)
+
+
+def test_final_manifest_segment_paths_stay_portable(tmp_path):
+    from src.rq2_u_clean import assert_portable_artifact_paths
+
+    project = tmp_path / "project"
+    out = tmp_path / "durable" / "artifacts" / "rq2" / "u_clean"
+    project.mkdir(parents=True)
+    cfg, segs = _distinct_segments()
+    cfg.run_full_pipeline = True
+    cfg.project_root = project
+    cfg.out_dir = out
+    for row in segs:
+        if row["u_clean_status"] != RETAINED_STATUS:
+            continue
+        freq = 200.0 if "VOV4_A" in row["source_id"] else 440.0
+        write_wav_pcm16_atomic(project / row["source_wav_local_path"], _sine_pcm(6.0, freq=freq), 16000)
+    ctx = UCleanContext(
+        config=cfg,
+        eligible_sources=[_source_row("VOV4_A"), _source_row("VOV4_B")],
+        nb10_status="SUCCESS_RQ2_VOV4_FULL_SOURCE_POOL",
+    )
+    ctx.nb10_locks = {"summary.json": "a" * 64}
+    ctx.protected_entries = _three_split_entries()
+    ctx.completion.nb10_locked = True
+    uids = [row["segment_uid"] for row in segs]
+    seg_fps = {uids[0]: _rand_fp(21), uids[1]: _rand_fp(22)}
+    ref_fps = [
+        {"uid": "REF_TR", "split": "g_train", "fingerprint": _rand_fp(23), "source_sha256": "a" * 64},
+        {"uid": "REF_VA", "split": "g_validation", "fingerprint": _rand_fp(24), "source_sha256": "b" * 64},
+        {"uid": "REF_TE", "split": "frozen_test", "fingerprint": _rand_fp(25), "source_sha256": "c" * 64},
+    ]
+    write_and_verify_segments(segs, ctx)
+    protect_and_deduplicate(segs, ctx, segment_fingerprints_by_uid=seg_fps, reference_fingerprints=ref_fps)
+    written = write_u_clean_artifacts(segs, ctx, segment_fingerprints_by_uid=seg_fps, reference_fingerprints=ref_fps)
+    assert written["written"] is True
+    manifest = (out / "u_clean_manifest.csv").read_text(encoding="utf-8")
+    assert "/workspace/" not in manifest
+    assert "segments/" in manifest
+    rows = u_clean_rows(segs)
+    assert_portable_artifact_paths(rows, ["source_wav_local_path", "segment_local_path"])
+    for row in rows:
+        assert row["segment_local_path"].startswith("segments/")
+        assert not Path(row["segment_local_path"]).is_absolute()
+        assert not Path(row["source_wav_local_path"]).is_absolute()
+
+
+def test_blank_checkpoint_segment_path_reuses_durable_wav(tmp_path, monkeypatch):
+    cfg, segs, ctx = _split_u_clean_roots(tmp_path)
+    write_and_verify_segments(segs, ctx)
+    row = [item for item in retained_segments(segs) if item["source_id"] == "VOV4_A"][0]
+    row["fingerprint_sha256"] = "ab" * 32
+    expected = "segments/%s/%s.wav" % (row["source_id"], row["segment_uid"])
+    assert row["segment_local_path"] == expected
+    row["segment_local_path"] = ""
+    row["segment_wav_sha256"] = ""
+    writes = {"n": 0}
+    real_write = write_wav_pcm16_atomic
+
+    def spy_write(path, pcm, sample_rate=16000):
+        writes["n"] += 1
+        return real_write(path, pcm, sample_rate)
+
+    monkeypatch.setattr("src.rq2_u_clean.write_wav_pcm16_atomic", spy_write)
+    write_and_verify_segments(segs, ctx)
+    assert writes["n"] == 0
+    assert row["segment_local_path"] == expected
+    assert row["segment_wav_sha256"]
+    assert row["fingerprint_sha256"] == "ab" * 32
+    assert row["u_clean_status"] == RETAINED_STATUS
+
+
+def test_protected_identity_destination_uses_durable_u_clean_root(tmp_path):
+    from src.rq2_u_clean import resolve_u_clean_output
+
+    code = tmp_path / "citizen-assistance-system" / "bahnar-s2tt-thesis"
+    durable = tmp_path / "bahnar-s2tt-thesis"
+    code.mkdir(parents=True)
+    state = durable / "artifacts" / "rq2" / "u_clean" / "checkpoint" / "state.json"
+    state.parent.mkdir(parents=True)
+    state.write_text("{}\n", encoding="utf-8")
+    layout = resolve_u_clean_output(code, durable_root=durable, env={})
+    dest = layout["out_dir"] / "protected_audio_identity.csv"
+    assert dest == (durable / "artifacts" / "rq2" / "u_clean" / "protected_audio_identity.csv").resolve()
+    assert dest.parent == layout["out_dir"]
+    project_dest = code / "artifacts" / "rq2" / "u_clean" / "protected_audio_identity.csv"
+    assert dest != project_dest
+    notebook = Path(__file__).resolve().parents[1] / "notebooks" / "11_RQ2_UReal_Segmentation_Dedup_Freeze_UClean.ipynb"
+    text = notebook.read_text(encoding="utf-8")
+    assert "protected_audio_identity.csv" in text
+    assert "PROJECT_ROOT / AUDIO_IDENTITY_INDEX" not in text
+    assert "resolve_u_clean_path" in text
+    assert "to_u_clean_relative" in text
