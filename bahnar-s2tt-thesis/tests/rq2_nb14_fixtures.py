@@ -295,7 +295,7 @@ def write_complete_checkpoint(
 
 def seal_nb13(project_root: Path, hours: float = 0.2 / 3600.0) -> Dict[str, Any]:
     sealed = seal_nb12_generation(project_root, pool_rows())
-    resolved = resolve_frozen_u_prime(project_root)
+    resolved = resolve_frozen_u_prime(project_root, durable_root=project_root)
     out = project_root / SELECTION_RELATIVE_DIR
     out.mkdir(parents=True, exist_ok=True)
     published = publish_same_budget_selection(
@@ -306,6 +306,7 @@ def seal_nb13(project_root: Path, hours: float = 0.2 / 3600.0) -> Dict[str, Any]
         random_seed=42,
         policy_frozen=True,
         project_root=project_root,
+        durable_root=project_root,
     )
     return {"nb12": sealed, "nb13": published, "resolved": resolved}
 

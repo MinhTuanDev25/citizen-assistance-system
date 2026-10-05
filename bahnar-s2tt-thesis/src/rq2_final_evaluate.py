@@ -930,7 +930,7 @@ def _verify_staged_final_generation(
     nb11 = resolve_nb11_generation(root, nb11_id, require_audio_files=False)
     if nb11.contract_sha256 != str(contract["nb11_input_contract_sha256"]):
         raise EvaluationError("NB11 contract hash does not match the pinned generation")
-    frozen = resolve_frozen_u_prime(root, generation_id=nb12_id)
+    frozen = resolve_frozen_u_prime(root, generation_id=nb12_id, durable_root=root)
     if str(frozen.identity["nb12_contract_sha256"]) != str(contract["nb12_contract_sha256"]):
         raise EvaluationError("NB12 contract hash does not match the pinned generation")
     selection = verify_pinned_nb13_selection(root, generation_id=nb13_id)

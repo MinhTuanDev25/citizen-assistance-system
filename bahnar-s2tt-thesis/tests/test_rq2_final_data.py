@@ -29,6 +29,7 @@ def _compose(tmp_path, arm):
     selection = verify_published_selection(
         tmp_path / SELECTION_RELATIVE_DIR,
         project_root=tmp_path,
+        durable_root=tmp_path,
         generation_id=upstream["nb13_generation_id"],
     )
     budget = verify_equal_budget_from_nb13(selection)

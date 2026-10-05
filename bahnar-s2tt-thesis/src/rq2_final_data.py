@@ -275,6 +275,7 @@ def verify_pinned_nb13_selection(
         root / SELECTION_RELATIVE_DIR,
         project_root=root,
         generation_id=str(generation_id),
+        durable_root=root,
     )
 
 

@@ -890,13 +890,14 @@ def verify_upstream_rq2(
         from src.rq2_pseudo_contract import read_current_generation_id
         from src.rq2_selection_contract import resolve_frozen_u_prime
 
-        frozen = resolve_frozen_u_prime(root)
+        frozen = resolve_frozen_u_prime(root, durable_root=root)
         nb13_dir = root / SELECTION_RELATIVE_DIR
         nb13_generation_id = read_current_generation_id(nb13_dir, UpstreamGateError)
         selection = verify_published_selection(
             nb13_dir,
             project_root=root,
             generation_id=nb13_generation_id,
+            durable_root=root,
         )
     except GTestFirewallError:
         raise

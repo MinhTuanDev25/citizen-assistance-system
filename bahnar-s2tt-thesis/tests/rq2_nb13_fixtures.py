@@ -50,14 +50,19 @@ def u_prime_row(uid: str, duration: float, quality: float, text: str = "xin chà
 
 
 def selection_identity(rows: Sequence[Dict[str, Any]], **overrides: Any) -> Dict[str, Any]:
+    from src.rq2_pseudo_contract import EXPECTED_SEGMENTATION_CONTRACT_SHA256
+
     identity = {
         "nb11_generation_id": "nb11-gen",
         "nb11_input_contract_sha256": "11" * 32,
         "nb12_generation_id": "nb12-gen",
+        "expected_nb12_generation_id": "nb12-gen",
+        "resolved_nb12_generation_id": "nb12-gen",
         "nb12_contract_sha256": "55" * 32,
         "u_prime_manifest_sha256": "66" * 32,
         "u_prime_ordered_uid_sha256": ordered_uid_sha256([row["segment_uid"] for row in rows]),
         "quality_score_contract_sha256": "44" * 32,
+        "segmentation_contract_sha256": EXPECTED_SEGMENTATION_CONTRACT_SHA256,
     }
     identity.update(overrides)
     return identity
@@ -73,11 +78,11 @@ def write_u_prime_parquet(path: Path, rows: Sequence[Dict[str, Any]]) -> str:
     return sha256_file(path)
 
 
-def seal_nb12_generation(project_root: Path, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+def seal_nb12_generation(project_root: Path, rows: List[Dict[str, Any]], n_samples=()) -> Dict[str, Any]:
     """Publish a hash-sealed NB12 generation bound to a synthetic frozen NB11 input."""
     from src.rq2_pseudo_contract import resolve_nb11_input
 
-    build_nb11_generation(project_root, n_segments=max(4, len(rows)))
+    build_nb11_generation(project_root, n_segments=max(4, len(rows)), n_samples=n_samples)
     nb11 = resolve_nb11_input(project_root, u_clean_dir=project_root / "artifacts" / "rq2" / "u_clean")
     bound = []
     for index, row in enumerate(rows):

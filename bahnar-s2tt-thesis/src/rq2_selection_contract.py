@@ -1,9 +1,9 @@
 """RQ2 Notebook 13 contracts.
 
-NB13 reads the immutable NB12 generation named by
-``artifacts/rq2/pseudo_labels/CURRENT`` and selects two subsets of that one
-frozen U′. It does not run the teacher, recalibrate quality, open G_test, or
-train.
+NB13 reads one immutable NB12 generation under the durable
+``artifacts/rq2/pseudo_labels`` root and selects two subsets of that frozen U′.
+A pinned generation id is not replaced by ``CURRENT``. It does not run the
+teacher, recalibrate quality, open G_test, or train.
 
 NB12 seals ``u_prime_manifest.parquet`` and ``nb12_contract_sha256``, but it
 does not seal a separate ordered-UID hash. NB13 recomputes
@@ -31,7 +31,6 @@ from src.rq2_pseudo_contract import (
     portable_relative,
     read_current_generation_id,
     resolve_nb11_generation,
-    resolve_nb11_input,
     verify_generation,
 )
 from src.rq2_quality import U_PRIME_COLUMNS
@@ -57,6 +56,13 @@ SELECTION_UNDERFILL_RULE = (
     "Unused budget must be strictly smaller than every segment that was not selected, "
     "unless the pool is exhausted. The bound is the next segment's own duration."
 )
+SAME_BUDGET_DEFINITION = (
+    "same budget means the same target audio-hour budget; the realized duration "
+    "difference between D-Random and D-Quality is allowed only within the pre-frozen "
+    "indivisible-segment tolerance, which is max_segment_seconds from the frozen "
+    "segmentation contract"
+)
+REALIZED_DURATION_TOLERANCE_SOURCE = "frozen_segmentation_contract.max_segment_seconds"
 
 ARM_RANDOM = "d_random"
 ARM_QUALITY = "d_quality"
@@ -143,24 +149,80 @@ def budget_seconds_from_hours(hours: Any) -> float:
     return seconds
 
 
-def assert_nb13_output_dir(out_dir: Union[str, Path], project_root: Union[str, Path]) -> Path:
-    """NB13 writes only ``artifacts/rq2/selection``, never into NB11, NB12, or RQ1."""
+def resolve_nb13_layout(
+    project_root: Union[str, Path],
+    *,
+    durable_root: Optional[Union[str, Path]] = None,
+    env: Optional[Mapping[str, str]] = None,
+    pseudo_dir: Optional[Union[str, Path]] = None,
+    u_clean_dir: Optional[Union[str, Path]] = None,
+) -> Dict[str, Path]:
+    """Durable NB11/NB12/NB13 roots. This never falls back to the code checkout."""
+    from src.rq1_runtime_paths import resolve_rq1_runtime_paths
+
     root = Path(project_root).resolve()
+    runtime = resolve_rq1_runtime_paths(project_root=root, durable_root=durable_root, env=env)
+    durable = Path(runtime.durable_root).resolve()
+    return {
+        "project_root": root,
+        "durable_root": durable,
+        "pseudo_dir": Path(pseudo_dir).resolve() if pseudo_dir is not None else durable / PSEUDO_RELATIVE_DIR,
+        "u_clean_dir": Path(u_clean_dir).resolve() if u_clean_dir is not None else durable / NB11_RELATIVE_DIR,
+        "selection_dir": durable / SELECTION_RELATIVE_DIR,
+    }
+
+
+def proven_segment_duration_tolerance(segmentation_contract_sha256: str) -> float:
+    """Return the frozen max segment length, or fail closed if it is not proven."""
+    from src.rq2_pseudo_contract import EXPECTED_SEGMENTATION_CONTRACT_SHA256
+    from src.rq2_segmentation import SegmentationConfig, segmentation_contract_sha256 as live_sha
+
+    config = SegmentationConfig()
+    live = live_sha(config)
+    stored = str(segmentation_contract_sha256 or "")
+    if stored != EXPECTED_SEGMENTATION_CONTRACT_SHA256 or live != EXPECTED_SEGMENTATION_CONTRACT_SHA256:
+        raise SelectionIntegrityError(
+            "frozen segmentation contract does not prove max_segment_seconds; "
+            "refusing to invent a realized-duration tolerance"
+        )
+    bound = float(config.max_segment_seconds)
+    if not math.isfinite(bound) or bound <= 0.0:
+        raise SelectionIntegrityError("frozen max_segment_seconds is not a positive finite bound")
+    return bound
+
+
+def assert_nb13_output_dir(
+    out_dir: Union[str, Path],
+    project_root: Union[str, Path],
+    *,
+    durable_root: Optional[Union[str, Path]] = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> Path:
+    """NB13 writes only the durable ``artifacts/rq2/selection`` directory."""
+    layout = resolve_nb13_layout(project_root, durable_root=durable_root, env=env)
     out = Path(out_dir).resolve()
-    expected = (root / SELECTION_RELATIVE_DIR).resolve()
+    expected = layout["selection_dir"]
     if out != expected:
-        raise SelectionPolicyError(f"NB13 output dir must be {SELECTION_RELATIVE_DIR}")
-    for protected in (
-        root / NB11_RELATIVE_DIR,
-        root / PSEUDO_RELATIVE_DIR,
-        root / "artifacts" / "rq1",
-        root / "data" / "manifests",
-    ):
+        raise SelectionPolicyError(
+            f"NB13 output dir must be {expected}, got {out}"
+        )
+    protected = (
+        layout["project_root"] / NB11_RELATIVE_DIR,
+        layout["project_root"] / PSEUDO_RELATIVE_DIR,
+        layout["project_root"] / "artifacts" / "rq1",
+        layout["project_root"] / "data" / "manifests",
+        layout["u_clean_dir"],
+        layout["pseudo_dir"],
+        layout["durable_root"] / "artifacts" / "rq1",
+        layout["durable_root"] / "bahnar_s2tt",
+        layout["durable_root"] / "data" / "manifests",
+    )
+    for protected_root in protected:
         try:
-            out.relative_to(protected.resolve())
+            out.relative_to(Path(protected_root).resolve())
         except ValueError:
             continue
-        raise SelectionPolicyError(f"NB13 output dir is inside a protected tree: {protected}")
+        raise SelectionPolicyError(f"NB13 output dir is inside a protected tree: {protected_root}")
     assert_not_g_test_path(out)
     return out
 
@@ -197,9 +259,19 @@ def build_selection_contract(
         "nb12_contract_sha256",
         "u_prime_manifest_sha256",
         "u_prime_ordered_uid_sha256",
+        "segmentation_contract_sha256",
     ):
         if len(str(identity.get(key) or "")) != 64:
             raise SelectionIntegrityError(f"selection contract is missing {key}")
+    expected_nb12 = str(identity.get("expected_nb12_generation_id") or "").strip()
+    resolved_nb12 = str(identity.get("resolved_nb12_generation_id") or identity.get("nb12_generation_id") or "").strip()
+    if not expected_nb12 or not resolved_nb12:
+        raise SelectionIntegrityError("selection contract is missing the pinned NB12 generation id")
+    if expected_nb12 != resolved_nb12 or resolved_nb12 != str(identity["nb12_generation_id"]):
+        raise RuntimeError(
+            f"pinned NB12 generation {expected_nb12} does not match resolved generation {resolved_nb12}"
+        )
+    tolerance = proven_segment_duration_tolerance(str(identity["segmentation_contract_sha256"]))
     proposal = {
         "contract_version": SELECTION_CONTRACT_VERSION,
         "schema_version": SELECTION_SCHEMA_VERSION,
@@ -207,6 +279,9 @@ def build_selection_contract(
         "nb11_generation_id": str(identity["nb11_generation_id"]),
         "nb11_input_contract_sha256": str(identity["nb11_input_contract_sha256"]),
         "nb12_generation_id": str(identity["nb12_generation_id"]),
+        "expected_nb12_generation_id": expected_nb12,
+        "resolved_nb12_generation_id": resolved_nb12,
+        "nb12_current_generation_id": str(identity.get("nb12_current_generation_id") or ""),
         "nb12_contract_sha256": str(identity["nb12_contract_sha256"]),
         "nb12_schema_version": PSEUDO_SCHEMA_VERSION,
         "u_prime_manifest_sha256": str(identity["u_prime_manifest_sha256"]),
@@ -225,6 +300,10 @@ def build_selection_contract(
         },
         "duration_rule": SELECTION_DURATION_RULE,
         "underfill_rule": SELECTION_UNDERFILL_RULE,
+        "same_budget_definition": SAME_BUDGET_DEFINITION,
+        "segmentation_contract_sha256": str(identity["segmentation_contract_sha256"]),
+        "realized_duration_tolerance_seconds": tolerance,
+        "realized_duration_tolerance_source": REALIZED_DURATION_TOLERANCE_SOURCE,
         "same_budget_both_arms": True,
         "quality_score_used_by_random": False,
         "audio_cut_allowed": False,
@@ -282,6 +361,33 @@ def verify_selection_contract(contract: Mapping[str, Any]) -> None:
         raise SelectionIntegrityError("selection contract duration_rule does not match the frozen policy")
     if contract.get("underfill_rule") != SELECTION_UNDERFILL_RULE:
         raise SelectionIntegrityError("selection contract underfill_rule does not match the frozen policy")
+    if contract.get("same_budget_definition") != SAME_BUDGET_DEFINITION:
+        raise SelectionIntegrityError("selection contract same_budget_definition does not match the frozen policy")
+    if contract.get("realized_duration_tolerance_source") != REALIZED_DURATION_TOLERANCE_SOURCE:
+        raise SelectionIntegrityError("selection contract realized-duration tolerance source is not frozen")
+    tolerance = proven_segment_duration_tolerance(str(contract.get("segmentation_contract_sha256") or ""))
+    if float(contract.get("realized_duration_tolerance_seconds") or -1) != tolerance:
+        raise SelectionIntegrityError("selection contract realized-duration tolerance is not the frozen max segment length")
+    if str(contract.get("expected_nb12_generation_id") or "") != str(contract.get("resolved_nb12_generation_id") or ""):
+        raise RuntimeError("pinned NB12 generation does not match the resolved generation")
+    if str(contract.get("resolved_nb12_generation_id") or "") != str(contract.get("nb12_generation_id") or ""):
+        raise RuntimeError("resolved NB12 generation does not match nb12_generation_id")
+    for key in (
+        "target_budget_seconds",
+        "random_selected_duration_seconds",
+        "quality_selected_duration_seconds",
+        "random_underfill_seconds",
+        "quality_underfill_seconds",
+        "realized_duration_gap_seconds",
+    ):
+        if _finite_float(contract.get(key)) is None:
+            raise SelectionIntegrityError(f"selection contract is missing {key}")
+    gap = abs(float(contract["random_selected_duration_seconds"]) - float(contract["quality_selected_duration_seconds"]))
+    if float(contract["realized_duration_gap_seconds"]) != gap:
+        raise SelectionIntegrityError("selection contract realized_duration_gap_seconds does not match the arm durations")
+    within = gap <= tolerance
+    if contract.get("same_realized_budget_within_tolerance") is not within:
+        raise SelectionIntegrityError("selection contract same_realized_budget_within_tolerance does not match the frozen tolerance")
     hours = contract.get("selection_budget_hours")
     seconds = contract.get("selection_budget_seconds")
     if isinstance(hours, bool) or _finite_float(hours) is None or _finite_float(hours) <= 0.0:
@@ -293,6 +399,8 @@ def verify_selection_contract(contract: Mapping[str, Any]) -> None:
         raise SelectionIntegrityError(
             "selection contract selection_budget_seconds does not match selection_budget_hours"
         )
+    if float(contract["target_budget_seconds"]) != float(seconds):
+        raise SelectionIntegrityError("target_budget_seconds does not match selection_budget_seconds")
 
 
 def _finite_float(value: Any) -> Optional[float]:
@@ -384,28 +492,46 @@ def resolve_frozen_u_prime(
     project_root: Union[str, Path],
     *,
     generation_id: Optional[str] = None,
+    expected_generation_id: Optional[str] = None,
+    pseudo_dir: Optional[Union[str, Path]] = None,
+    u_clean_dir: Optional[Union[str, Path]] = None,
+    durable_root: Optional[Union[str, Path]] = None,
+    env: Optional[Mapping[str, str]] = None,
 ) -> FrozenUPrime:
-    """Lock NB11 and one NB12 generation. Fail closed on any mismatch.
+    """Lock NB11 and one NB12 generation under the durable pseudo-label root.
 
-    ``generation_id`` omitted uses NB12 ``CURRENT`` and NB11 ``CURRENT``. A
-    caller that already has a selection contract passes the pinned NB12 id.
-    That path then opens the NB11 generation named by the NB12 contract, not
-    whichever generation NB11 ``CURRENT`` names now.
+    ``generation_id`` omitted uses the durable NB12 ``CURRENT``. A pinned id is
+    never replaced by a different ``CURRENT``. The code-checkout artifact tree
+    is not a fallback.
     """
-    root = Path(project_root)
-    pseudo_dir = assert_not_g_test_path(root / PSEUDO_RELATIVE_DIR)
+    layout = resolve_nb13_layout(
+        project_root,
+        durable_root=durable_root,
+        env=env,
+        pseudo_dir=pseudo_dir,
+        u_clean_dir=u_clean_dir,
+    )
+    root = layout["project_root"]
+    pseudo_dir = assert_not_g_test_path(layout["pseudo_dir"])
+    u_clean = layout["u_clean_dir"]
+    expected = str(expected_generation_id or "").strip()
+    if expected and generation_id is not None and str(generation_id).strip() != expected:
+        raise RuntimeError(
+            f"pinned NB12 generation {expected} does not match requested generation {generation_id}"
+        )
+    if expected and generation_id is None:
+        generation_id = expected
     verified = verify_generation(pseudo_dir, generation_id)
     gen_id = str(verified["generation_id"])
+    if expected and gen_id != expected:
+        raise RuntimeError(f"pinned NB12 generation {expected} does not match resolved generation {gen_id}")
     gen_dir = pseudo_dir / "generations" / gen_id
     contract = _read_json(gen_dir / "contract.json")
     summary = _read_json(gen_dir / "summary.json")
     pinned_nb11_id = str(contract.get("nb11_generation_id") or "").strip()
     if not pinned_nb11_id:
         raise SelectionIntegrityError("NB12 contract has no nb11_generation_id")
-    if generation_id is None:
-        nb11 = resolve_nb11_input(root, u_clean_dir=root / NB11_RELATIVE_DIR)
-    else:
-        nb11 = resolve_nb11_generation(root, pinned_nb11_id, u_clean_dir=root / NB11_RELATIVE_DIR)
+    nb11 = resolve_nb11_generation(root, pinned_nb11_id, u_clean_dir=u_clean)
     verify_nb12_contract_hash(contract)
     if summary.get("status") != STATUS_SUCCESS:
         raise SelectionIntegrityError(f"NB12 status is {summary.get('status')!r}, not {STATUS_SUCCESS}")
@@ -444,10 +570,20 @@ def resolve_frozen_u_prime(
             raise SelectionIntegrityError("duration differs from NB11", uid)
         if str(row.get("nb11_input_contract_sha256") or "") != nb11.contract_sha256:
             raise SelectionIntegrityError("row is not bound to the locked NB11 contract", uid)
+    current_id = ""
+    if (Path(pseudo_dir) / "CURRENT").is_file():
+        try:
+            current_id = read_current_generation_id(pseudo_dir, error=SelectionIntegrityError)
+        except SelectionIntegrityError:
+            current_id = ""
     identity = {
         "nb11_generation_id": nb11.generation_id,
         "nb11_input_contract_sha256": nb11.contract_sha256,
         "nb12_generation_id": gen_id,
+        "expected_nb12_generation_id": expected or gen_id,
+        "resolved_nb12_generation_id": gen_id,
+        "nb12_current_generation_id": current_id,
+        "segmentation_contract_sha256": str(nb11.contract.get("segmentation_contract_sha256") or ""),
         "nb12_contract_sha256": str(contract["nb12_contract_sha256"]),
         "u_prime_manifest_sha256": manifest_sha,
         "u_prime_ordered_uid_sha256": ordered_uid_sha256([row[UID_COLUMN] for row in rows]),

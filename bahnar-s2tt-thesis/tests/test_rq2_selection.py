@@ -26,6 +26,7 @@ from src.rq2_selection import (
     select_same_budget,
     verify_published_selection,
     write_manifest_csv,
+    realized_duration_audit,
 )
 from src.rq2_selection_contract import (
     ARM_QUALITY,
@@ -74,7 +75,7 @@ def _selection_dir(tmp_path):
 
 def _sealed(tmp_path):
     seal_nb12_generation(tmp_path, _pool())
-    return resolve_frozen_u_prime(tmp_path)
+    return resolve_frozen_u_prime(tmp_path, durable_root=tmp_path)
 
 
 def _publish(tmp_path, resolved, hours, **overrides):
@@ -86,6 +87,9 @@ def _publish(tmp_path, resolved, hours, **overrides):
         random_seed=overrides.pop("seed", 42),
         policy_frozen=overrides.pop("policy_frozen", True),
         project_root=overrides.pop("project_root", tmp_path),
+        durable_root=overrides.pop("durable_root", tmp_path),
+        pseudo_dir=overrides.pop("pseudo_dir", tmp_path / "artifacts" / "rq2" / "pseudo_labels"),
+        u_clean_dir=overrides.pop("u_clean_dir", tmp_path / "artifacts" / "rq2" / "u_clean"),
     )
 
 
@@ -204,14 +208,14 @@ def test_missing_column_fails_closed():
 
 def test_tampered_u_prime_hash_fails(tmp_path):
     sealed = seal_nb12_generation(tmp_path, _pool())
-    resolved = resolve_frozen_u_prime(tmp_path)
+    resolved = resolve_frozen_u_prime(tmp_path, durable_root=tmp_path)
     assert resolved.identity["nb12_contract_sha256"] == sealed["contract"]["nb12_contract_sha256"]
     assert resolved.identity["u_prime_ordered_uid_sha256"]
     parquet = sealed["pseudo_dir"] / "generations" / "nb12-fixture-gen" / "u_prime_manifest.parquet"
     before = parquet.read_bytes()
     parquet.write_bytes(before[:-1] + bytes([before[-1] ^ 0x01]))
     with pytest.raises((SelectionIntegrityError, RuntimeError)):
-        resolve_frozen_u_prime(tmp_path)
+        resolve_frozen_u_prime(tmp_path, durable_root=tmp_path)
 
 
 def test_loaded_columns_match_nb12_schema(tmp_path):
@@ -307,7 +311,7 @@ def test_target_equal_to_pool_publishes_the_full_pool(tmp_path):
     resolved = _sealed(tmp_path)
     total = sum(float(row["duration_seconds"]) for row in resolved.rows)
     published = _publish(tmp_path, resolved, total / 3600.0)
-    verified = verify_published_selection(_selection_dir(tmp_path), project_root=tmp_path)
+    verified = verify_published_selection(_selection_dir(tmp_path), project_root=tmp_path, durable_root=tmp_path)
     assert verified["frozen_generation_id"] == resolved.generation_id
     for arm in (ARM_RANDOM, ARM_QUALITY):
         report = published["audit"]["arms"][arm]
@@ -319,7 +323,7 @@ def test_target_equal_to_pool_publishes_the_full_pool(tmp_path):
 def test_target_below_pool_publishes_and_self_verifies(tmp_path):
     resolved = _sealed(tmp_path)
     published = _publish(tmp_path, resolved, 0.00005)
-    verified = verify_published_selection(_selection_dir(tmp_path), project_root=tmp_path)
+    verified = verify_published_selection(_selection_dir(tmp_path), project_root=tmp_path, durable_root=tmp_path)
     assert verified["summary"]["status"] == STATUS_SELECTION_FROZEN
     assert verified["contract"]["selection_contract_sha256"] == published["contract"]["selection_contract_sha256"]
     assert verified["frozen_generation_id"] == resolved.generation_id
@@ -464,7 +468,7 @@ def test_historical_verification_keeps_pinned_nb11_after_current_moves(tmp_path)
     current = (tmp_path / "artifacts" / "rq2" / "u_clean" / "CURRENT").read_text(encoding="utf-8").strip()
     assert current == later["gen_id"]
     assert current != pinned_nb11
-    verified = verify_published_selection(out, project_root=tmp_path)
+    verified = verify_published_selection(out, project_root=tmp_path, durable_root=tmp_path)
     assert verified["frozen_generation_id"] == pinned_nb12
     assert verified["nb11_generation_id"] == pinned_nb11
     assert verified["generation"]["generation_id"] == published["generation"]["generation_id"]
@@ -472,7 +476,7 @@ def test_historical_verification_keeps_pinned_nb11_after_current_moves(tmp_path)
     manifest.unlink()
     assert (tmp_path / "artifacts" / "rq2" / "u_clean" / "CURRENT").read_text(encoding="utf-8").strip() == later["gen_id"]
     with pytest.raises(Nb11InputError, match="missing or empty"):
-        verify_published_selection(out, project_root=tmp_path)
+        verify_published_selection(out, project_root=tmp_path, durable_root=tmp_path)
 
 
 def _load(path):
@@ -539,7 +543,7 @@ def test_resealed_scientific_field_fails_verification(tmp_path, mutate, message)
         _dump(contract_path, contract)
     _reseal_generation(gen_dir)
     with pytest.raises(SelectionIntegrityError, match=message):
-        verify_published_selection(out, project_root=tmp_path)
+        verify_published_selection(out, project_root=tmp_path, durable_root=tmp_path)
 
 
 @pytest.mark.parametrize("mutate,message", [
@@ -580,14 +584,14 @@ def test_resealed_audit_metadata_fails_verification(tmp_path, mutate, message):
         _dump(gen_dir / "contract.json", contract)
     _reseal_generation(gen_dir)
     with pytest.raises(SelectionIntegrityError, match=message):
-        verify_published_selection(out, project_root=tmp_path)
+        verify_published_selection(out, project_root=tmp_path, durable_root=tmp_path)
 
 
 def test_resealed_oversize_budget_fails_capacity_gate(tmp_path):
     resolved = _sealed(tmp_path)
     out = _selection_dir(tmp_path)
     published = _publish(tmp_path, resolved, 0.00005, out=out)
-    verify_published_selection(out, project_root=tmp_path)
+    verify_published_selection(out, project_root=tmp_path, durable_root=tmp_path)
     gen_dir = out / "generations" / published["generation"]["generation_id"]
     hours = 10 / 3600
     seconds = budget_seconds_from_hours(hours)
@@ -595,9 +599,10 @@ def test_resealed_oversize_budget_fails_capacity_gate(tmp_path):
     contract.pop("selection_contract_sha256")
     contract["selection_budget_hours"] = hours
     contract["selection_budget_seconds"] = seconds
+    result = select_same_budget(resolved.rows, target_seconds=seconds, random_seed=42)
+    contract.update(realized_duration_audit(result, float(contract["realized_duration_tolerance_seconds"])))
     contract["selection_contract_sha256"] = sha256_json(contract)
     _dump(gen_dir / "contract.json", contract)
-    result = select_same_budget(resolved.rows, target_seconds=seconds, random_seed=42)
     write_manifest_csv(gen_dir / "d_random_manifest.csv", result[ARM_RANDOM]["rows"])
     write_manifest_csv(gen_dir / "d_quality_manifest.csv", result[ARM_QUALITY]["rows"])
     audit = _load(gen_dir / "selection_audit.json")
@@ -609,6 +614,19 @@ def test_resealed_oversize_budget_fails_capacity_gate(tmp_path):
     summary["selection_contract_sha256"] = contract["selection_contract_sha256"]
     summary["selection_budget_hours"] = hours
     summary["selection_budget_seconds"] = seconds
+    for key in (
+        "target_budget_seconds",
+        "random_selected_duration_seconds",
+        "quality_selected_duration_seconds",
+        "random_underfill_seconds",
+        "quality_underfill_seconds",
+        "realized_duration_gap_seconds",
+        "realized_duration_tolerance_seconds",
+        "same_realized_budget_within_tolerance",
+    ):
+        summary[key] = contract[key]
+        audit[key] = contract[key]
+    _dump(gen_dir / "selection_audit.json", audit)
     summary["d_random"] = audit["arms"][ARM_RANDOM]
     summary["d_quality"] = audit["arms"][ARM_QUALITY]
     summary["overlap"] = {
@@ -620,7 +638,7 @@ def test_resealed_oversize_budget_fails_capacity_gate(tmp_path):
     _dump(gen_dir / "summary.json", summary)
     _reseal_generation(gen_dir)
     with pytest.raises(SelectionIntegrityError, match="target_budget_within_u_prime_capacity"):
-        verify_published_selection(out, project_root=tmp_path)
+        verify_published_selection(out, project_root=tmp_path, durable_root=tmp_path)
 
 
 def test_resealed_budget_unit_disagreement_fails(tmp_path):
@@ -639,7 +657,7 @@ def test_resealed_budget_unit_disagreement_fails(tmp_path):
     _dump(gen_dir / "summary.json", summary)
     _reseal_generation(gen_dir)
     with pytest.raises(SelectionIntegrityError, match="selection_budget_seconds does not match selection_budget_hours"):
-        verify_published_selection(out, project_root=tmp_path)
+        verify_published_selection(out, project_root=tmp_path, durable_root=tmp_path)
 
 
 def test_verification_uses_pinned_nb12_and_rejects_resealed_drift(tmp_path):
@@ -648,7 +666,7 @@ def test_verification_uses_pinned_nb12_and_rejects_resealed_drift(tmp_path):
     published = _publish(tmp_path, resolved, 0.00005, out=out)
     pseudo_current = tmp_path / "artifacts" / "rq2" / "pseudo_labels" / "CURRENT"
     pseudo_current.write_text("newer-nb12\n", encoding="utf-8")
-    verified = verify_published_selection(out, project_root=tmp_path)
+    verified = verify_published_selection(out, project_root=tmp_path, durable_root=tmp_path)
     assert verified["frozen_generation_id"] == resolved.generation_id
     assert verified["frozen_generation_id"] != "newer-nb12"
     generation_id = published["generation"]["generation_id"]
@@ -658,14 +676,14 @@ def test_verification_uses_pinned_nb12_and_rejects_resealed_drift(tmp_path):
     manifest.write_text(text.replace(needle, "ff" * 32, 1), encoding="utf-8")
     _reseal_generation(manifest.parent)
     with pytest.raises(SelectionIntegrityError, match="segment_pcm16_sha256"):
-        verify_published_selection(out, project_root=tmp_path)
+        verify_published_selection(out, project_root=tmp_path, durable_root=tmp_path)
 
 
 def test_publication_self_verifies_and_tamper_fails(tmp_path):
     resolved = _sealed(tmp_path)
     out = _selection_dir(tmp_path)
     published = _publish(tmp_path, resolved, 0.00005, out=out)
-    verified = verify_published_selection(out, project_root=tmp_path)
+    verified = verify_published_selection(out, project_root=tmp_path, durable_root=tmp_path)
     assert verified["summary"]["status"] == STATUS_SELECTION_FROZEN
     assert verified["contract"]["selection_contract_sha256"] == published["contract"]["selection_contract_sha256"]
     assert set(GATE_NAMES) <= set(verified["summary"]["gates"])
@@ -675,7 +693,7 @@ def test_publication_self_verifies_and_tamper_fails(tmp_path):
     blob[-2] ^= 0x01
     manifest.write_bytes(blob)
     with pytest.raises(RuntimeError, match="hash mismatch"):
-        verify_published_selection(out, project_root=tmp_path)
+        verify_published_selection(out, project_root=tmp_path, durable_root=tmp_path)
 
 
 # --------------------------------------------------------------------------- #
@@ -727,6 +745,124 @@ def test_only_publish_same_budget_selection_can_seal():
 
 
 # --------------------------------------------------------------------------- #
+# Durable path, generation pin, realized budget                               #
+# --------------------------------------------------------------------------- #
+def test_durable_selection_root_does_not_use_code_checkout(tmp_path):
+    project = tmp_path / "code"
+    durable = tmp_path / "durable"
+    project.mkdir()
+    decoy = project / "artifacts" / "rq2" / "pseudo_labels"
+    decoy.mkdir(parents=True)
+    (decoy / "CURRENT").write_text("code-root-current\n", encoding="utf-8")
+    seal_nb12_generation(durable, _pool())
+    pseudo = durable / "artifacts" / "rq2" / "pseudo_labels"
+    u_clean = durable / "artifacts" / "rq2" / "u_clean"
+    resolved = resolve_frozen_u_prime(
+        project,
+        durable_root=durable,
+        pseudo_dir=pseudo,
+        u_clean_dir=u_clean,
+        generation_id="nb12-fixture-gen",
+        expected_generation_id="nb12-fixture-gen",
+    )
+    assert resolved.generation_id == "nb12-fixture-gen"
+    assert resolved.identity["expected_nb12_generation_id"] == "nb12-fixture-gen"
+    out = assert_nb13_output_dir(durable / "artifacts" / "rq2" / "selection", project, durable_root=durable)
+    assert out == (durable / "artifacts" / "rq2" / "selection").resolve()
+    with pytest.raises(SelectionPolicyError, match="NB13 output dir must be"):
+        assert_nb13_output_dir(project / "artifacts" / "rq2" / "selection", project, durable_root=durable)
+
+
+def test_pinned_generation_ignores_a_different_current(tmp_path):
+    seal_nb12_generation(tmp_path, _pool())
+    pseudo = tmp_path / "artifacts" / "rq2" / "pseudo_labels"
+    (pseudo / "CURRENT").write_text("other-current-gen\n", encoding="utf-8")
+    resolved = resolve_frozen_u_prime(
+        tmp_path,
+        durable_root=tmp_path,
+        generation_id="nb12-fixture-gen",
+        expected_generation_id="nb12-fixture-gen",
+    )
+    assert resolved.generation_id == "nb12-fixture-gen"
+    assert resolved.identity["nb12_current_generation_id"] == "other-current-gen"
+    assert resolved.identity["resolved_nb12_generation_id"] == "nb12-fixture-gen"
+
+
+def test_missing_or_mismatched_pin_fails(tmp_path):
+    seal_nb12_generation(tmp_path, _pool())
+    with pytest.raises((SelectionIntegrityError, RuntimeError)):
+        resolve_frozen_u_prime(
+            tmp_path,
+            durable_root=tmp_path,
+            generation_id="missing-pinned-gen",
+            expected_generation_id="missing-pinned-gen",
+        )
+    with pytest.raises(RuntimeError, match="pinned NB12 generation"):
+        resolve_frozen_u_prime(
+            tmp_path,
+            durable_root=tmp_path,
+            generation_id="nb12-fixture-gen",
+            expected_generation_id="other-pinned-gen",
+        )
+
+
+def test_realized_gap_within_frozen_tolerance_is_published(tmp_path):
+    resolved = _sealed(tmp_path)
+    published = _publish(tmp_path, resolved, 0.00005)
+    contract = published["contract"]
+    gap = abs(contract["random_selected_duration_seconds"] - contract["quality_selected_duration_seconds"])
+    assert contract["target_budget_seconds"] == contract["selection_budget_seconds"]
+    assert contract["random_selected_duration_seconds"] <= contract["target_budget_seconds"]
+    assert contract["quality_selected_duration_seconds"] <= contract["target_budget_seconds"]
+    assert contract["realized_duration_gap_seconds"] == gap
+    assert contract["same_realized_budget_within_tolerance"] is True
+    assert contract["realized_duration_gap_seconds"] <= contract["realized_duration_tolerance_seconds"]
+    assert "indivisible-segment tolerance" in contract["same_budget_definition"]
+    verified = verify_published_selection(_selection_dir(tmp_path), project_root=tmp_path, durable_root=tmp_path)
+    assert verified["contract"]["resolved_nb12_generation_id"] == resolved.generation_id
+
+
+def test_realized_gap_above_tolerance_leaves_current(tmp_path, monkeypatch):
+    rows = [u_prime_row("a", 1, 0.9), u_prime_row("b", 1, 0.1), u_prime_row("c", 1, 0.5)]
+    seal_nb12_generation(tmp_path, rows, n_samples=[8 * 16000, 7 * 16000, 5 * 16000, 1600])
+    resolved = resolve_frozen_u_prime(tmp_path, durable_root=tmp_path)
+    hours = 11.0 / 3600.0
+    target = budget_seconds_from_hours(hours)
+    gap_seed = None
+    gap = 0.0
+    for seed in range(1, 30):
+        result = select_same_budget(resolved.rows, target_seconds=target, random_seed=seed)
+        audit = realized_duration_audit(result, 40.0)
+        if (
+            audit["realized_duration_gap_seconds"] > 0.0
+            and result[ARM_RANDOM]["selected_duration_seconds"] <= target
+            and result[ARM_QUALITY]["selected_duration_seconds"] <= target
+        ):
+            gap_seed = seed
+            gap = audit["realized_duration_gap_seconds"]
+            break
+    assert gap_seed is not None and gap > 0.0
+    monkeypatch.setattr(
+        "src.rq2_selection_contract.proven_segment_duration_tolerance",
+        lambda segmentation_contract_sha256: gap / 2.0,
+    )
+    out = _selection_dir(tmp_path)
+    _keep_current(out)
+    with pytest.raises(SelectionIntegrityError, match="same_realized_budget_within_tolerance"):
+        _publish(tmp_path, resolved, hours, seed=gap_seed, out=out)
+    _assert_current_untouched(out)
+
+
+def test_nb13_sources_do_not_train_or_open_g_test():
+    assert_nb13_sources_clean([*selection_source_paths(), NB13_NOTEBOOK])
+    for path in selection_source_paths():
+        text = Path(path).read_text(encoding="utf-8")
+        assert "Trainer.fit" not in text
+        assert ".fit(" not in text
+        assert "rq1_test" not in text
+
+
+# --------------------------------------------------------------------------- #
 # I. Notebook wiring                                                           #
 # --------------------------------------------------------------------------- #
 def _notebook_code_cells():
@@ -740,6 +876,10 @@ def test_notebook_flags_budget_and_cells_compile():
     assert "RUN_REAL_SELECTION = False" in joined
     assert "SELECTION_POLICY_FROZEN = False" in joined
     assert "SELECTION_BUDGET_HOURS = None" in joined
+    assert "SELECTION_RANDOM_SEED = 42" in joined
+    assert 'EXPECTED_NB12_GENERATION_ID = "20261005T095322062456Z-1863e3d9"' in joined
+    assert "DURABLE_RQ2_ROOT" in joined
+    assert "resolve_rq1_runtime_paths" in joined
     for index, source in enumerate(cells):
         compile(source, f"nb13_cell_{index}", "exec")
 
@@ -795,9 +935,9 @@ def test_notebook_calls_match_nb13_signatures():
 
 def test_output_dir_rejects_protected_and_g_test_paths(tmp_path):
     out = tmp_path / "artifacts" / "rq2" / "selection"
-    assert assert_nb13_output_dir(out, tmp_path) == out.resolve()
+    assert assert_nb13_output_dir(out, tmp_path, durable_root=tmp_path) == out.resolve()
     with pytest.raises(SelectionPolicyError):
-        assert_nb13_output_dir(tmp_path / "artifacts" / "rq2" / "pseudo_labels", tmp_path)
+        assert_nb13_output_dir(tmp_path / "artifacts" / "rq2" / "pseudo_labels", tmp_path, durable_root=tmp_path)
     with pytest.raises(GTestAccessError):
         publish_same_budget_selection(
             tmp_path / "g_test" / "out",
