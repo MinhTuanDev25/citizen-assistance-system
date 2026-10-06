@@ -15,6 +15,7 @@ from src.rq2_final_contract import (
     RUNTIME_ONLY_KEYS,
     STATUS_FAIL,
     STATUS_SUCCESS,
+    TrainingContractError,
     UpstreamGateError,
     assert_augmentation_fairness,
     assert_g_test_blocked,
@@ -49,7 +50,7 @@ def test_default_flags_are_safe():
 def test_missing_nb11_fails_preflight(tmp_path):
     flags = Nb14Flags(direct_state_dir=str(tmp_path / "missing"))
     with pytest.raises(UpstreamGateError):
-        verify_upstream_rq2(tmp_path, flags=flags)
+        verify_upstream_rq2(tmp_path, artifact_root=tmp_path, flags=flags)
 
 
 def test_stale_nb12_fails_preflight(tmp_path):
@@ -58,7 +59,7 @@ def test_stale_nb12_fails_preflight(tmp_path):
     build_nb11_generation(tmp_path)
     flags = Nb14Flags(direct_state_dir=str(tmp_path / "direct"))
     with pytest.raises(UpstreamGateError):
-        verify_upstream_rq2(tmp_path, flags=flags)
+        verify_upstream_rq2(tmp_path, artifact_root=tmp_path, flags=flags)
 
 
 def test_unfrozen_nb13_fails_preflight(tmp_path):
@@ -76,12 +77,12 @@ def test_unfrozen_nb13_fails_preflight(tmp_path):
     write_frozen_d0_state(d0)
     flags = Nb14Flags(direct_state_dir=str(d0))
     with pytest.raises(UpstreamGateError):
-        verify_upstream_rq2(tmp_path, flags=flags)
+        verify_upstream_rq2(tmp_path, artifact_root=tmp_path, flags=flags)
 
 
 def test_upstream_gate_succeeds_on_synthetic_world(tmp_path):
     env = world(tmp_path)
-    payload = verify_upstream_rq2(tmp_path, flags=env["flags"])
+    payload = verify_upstream_rq2(tmp_path, artifact_root=tmp_path, flags=env["flags"])
     assert payload["d0"]["d0_policy"] == D0_POLICY
     assert len(payload["nb11_input_contract_sha256"]) == 64
     assert len(payload["nb12_contract_sha256"]) == 64
@@ -90,7 +91,7 @@ def test_upstream_gate_succeeds_on_synthetic_world(tmp_path):
 
 def _base_fields(tmp_path, arm):
     env = world(tmp_path)
-    upstream = verify_upstream_rq2(tmp_path, flags=env["flags"])
+    upstream = verify_upstream_rq2(tmp_path, artifact_root=tmp_path, flags=env["flags"])
     from src.rq2_final_data import (
         compose_arm_training_rows,
         data_contract_payload,
@@ -248,9 +249,11 @@ def test_notebook_default_flags_and_cells_compile():
     assert "RUN_REAL_TRAINING = False" in source
     assert "ALLOW_G_TEST_EVALUATION = False" in source
     assert "RQ2_FINAL_FROZEN = False" in source
-    assert "GOLD_PSEUDO_MIX_POLICY" in source
-    assert "UNSET_REQUIRE_EXPLICIT_CONFIG" in source
-    assert "SEED_POLICY" in source
+    assert 'GOLD_PSEUDO_MIX_POLICY = "configured_gold_pseudo_slot_ratio"' in source
+    assert "GOLD_SLOTS = 5" in source
+    assert "PSEUDO_SLOTS = 1" in source
+    assert 'SEED_POLICY = "multi_seed"' in source
+    assert "SEED_POLICY_SEEDS = [13, 17, 23]" in source
     assert "public_pretrained_xlsr_mbart50_same_as_rq1_d0" not in source
     for i, cell in enumerate(nb["cells"]):
         if cell["cell_type"] != "code":
@@ -263,7 +266,7 @@ def test_output_dir_is_isolated(tmp_path):
         assert_nb14_output_dir(tmp_path / "artifacts" / "rq2" / "u_clean", tmp_path)
     out = tmp_path / "artifacts" / "rq2" / "final"
     out.mkdir(parents=True)
-    assert assert_nb14_output_dir(out, tmp_path) == out.resolve()
+    assert assert_nb14_output_dir(out, tmp_path, durable_root=tmp_path) == out.resolve()
 
 
 def test_both_arms_resolve_same_frozen_d0_and_reject_public_init(tmp_path):
@@ -276,7 +279,7 @@ def test_both_arms_resolve_same_frozen_d0_and_reject_public_init(tmp_path):
     random_fields = _base_fields(tmp_path, ARM_RANDOM)
     quality_fields = _base_fields(tmp_path, ARM_QUALITY)
     env = world(tmp_path)
-    upstream = verify_upstream_rq2(tmp_path, flags=env["flags"])
+    upstream = verify_upstream_rq2(tmp_path, artifact_root=tmp_path, flags=env["flags"])
     d0 = resolve_frozen_d0_init(env["flags"], project_root=tmp_path, identity=upstream["d0"])
     random_c = build_arm_training_contract(random_fields)
     quality_c = build_arm_training_contract(quality_fields)
@@ -313,7 +316,7 @@ def test_wrong_d0_checkpoint_fails_closed(tmp_path):
     from src.rq2_final_contract import resolve_frozen_d0_init
 
     env = world(tmp_path)
-    upstream = verify_upstream_rq2(tmp_path, flags=env["flags"])
+    upstream = verify_upstream_rq2(tmp_path, artifact_root=tmp_path, flags=env["flags"])
     d0 = resolve_frozen_d0_init(env["flags"], project_root=tmp_path, identity=upstream["d0"])
     (d0["checkpoint_dir"] / "model.safetensors").write_bytes(b"tampered-d0")
     with pytest.raises(Exception, match="fingerprint|model-state|identity|Direct checkpoint"):
@@ -325,6 +328,24 @@ def test_wrong_d0_checkpoint_fails_closed(tmp_path):
     contract_path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(Exception, match="training-contract|stale|self-consistent|hash"):
         resolve_frozen_d0_init(env2["flags"], project_root=tmp_path / "stale")
+
+
+def test_multi_seed_materializes_every_declared_seed(tmp_path):
+    from src.rq2_final_contract import SEED_POLICY_MULTI, materialize_seed_bound_contracts
+
+    fields = _base_fields(tmp_path, ARM_RANDOM)
+    fields["seed_policy"] = SEED_POLICY_MULTI
+    fields["seed_policy_seeds"] = [7, 11, 13]
+    fields.pop("seed", None)
+    fields.pop("dataloader_seed", None)
+    with pytest.raises(TrainingContractError, match="active_seed"):
+        build_arm_training_contract(fields)
+    built = materialize_seed_bound_contracts(fields)
+    assert [int(contract["seed"]) for contract in built] == [7, 11, 13]
+    assert len({contract["arm_training_contract_sha256"] for contract in built}) == 3
+    single = materialize_seed_bound_contracts(_base_fields(tmp_path, ARM_RANDOM))
+    assert len(single) == 1
+    assert int(single[0]["seed"]) == 42
 
 
 def test_seed_policy_mean_std_only_for_multi_seed():

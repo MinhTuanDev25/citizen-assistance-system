@@ -272,9 +272,11 @@ def write_complete_checkpoint(
     contract_hash: str,
     data_hash: str,
     step: int = 100,
+    fingerprint_extra: Optional[Mapping[str, Any]] = None,
+    weights: bytes = b"weights",
 ) -> Path:
     path.mkdir(parents=True, exist_ok=True)
-    (path / "model.safetensors").write_bytes(b"weights")
+    (path / "model.safetensors").write_bytes(weights)
     (path / "optimizer.pt").write_bytes(b"opt")
     (path / "scheduler.pt").write_bytes(b"sch")
     (path / "rng_state.pth").write_bytes(b"rng")
@@ -289,6 +291,7 @@ def write_complete_checkpoint(
         "data_manifest_sha256": data_hash,
         "experiment_fingerprint_sha256": "99" * 32,
     }
+    fingerprint.update(dict(fingerprint_extra or {}))
     (path / "full_experiment_fingerprint.json").write_text(json.dumps(fingerprint), encoding="utf-8")
     return path
 
@@ -521,7 +524,7 @@ def g_test_proof_bundle(tmp_path: Path) -> Dict[str, Any]:
     env = world(tmp_path, with_test=True)
     from src.rq2_final_contract import verify_upstream_rq2
 
-    upstream = verify_upstream_rq2(tmp_path, flags=env["flags"])
+    upstream = verify_upstream_rq2(tmp_path, artifact_root=tmp_path, flags=env["flags"])
     proofs = materialize_arm_proofs(env)
     contracts = {
         ARM_RANDOM: {

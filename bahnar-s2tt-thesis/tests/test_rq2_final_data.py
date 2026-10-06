@@ -25,7 +25,7 @@ def _compose(tmp_path, arm):
     env = world(tmp_path)
     from src.rq2_final_contract import verify_upstream_rq2
 
-    upstream = verify_upstream_rq2(tmp_path, flags=env["flags"])
+    upstream = verify_upstream_rq2(tmp_path, artifact_root=tmp_path, flags=env["flags"])
     selection = verify_published_selection(
         tmp_path / SELECTION_RELATIVE_DIR,
         project_root=tmp_path,
@@ -64,7 +64,7 @@ def test_random_manifest_cannot_be_used_as_quality(tmp_path):
     env = world(tmp_path)
     from src.rq2_final_contract import verify_upstream_rq2
 
-    upstream = verify_upstream_rq2(tmp_path, flags=env["flags"])
+    upstream = verify_upstream_rq2(tmp_path, artifact_root=tmp_path, flags=env["flags"])
     rows = load_pinned_nb13_arm_manifest(tmp_path, arm=ARM_RANDOM, upstream=upstream)
     with pytest.raises(ArmIsolationError):
         compose_arm_training_rows(
@@ -177,7 +177,7 @@ def test_nb13_pin_ignores_current_and_rejects_sha_mismatch(tmp_path):
     env = world(tmp_path)
     from src.rq2_final_contract import verify_upstream_rq2
 
-    upstream = verify_upstream_rq2(tmp_path, flags=env["flags"])
+    upstream = verify_upstream_rq2(tmp_path, artifact_root=tmp_path, flags=env["flags"])
     gen_a = upstream["nb13_generation_id"]
     rows = load_nb13_arm_manifest(
         tmp_path,
@@ -244,7 +244,7 @@ def test_nb13_current_change_does_not_affect_budget_or_manifest(tmp_path):
     from src.rq2_final_contract import verify_upstream_rq2
     from src.rq2_final_data import verify_pinned_nb13_selection
 
-    upstream = verify_upstream_rq2(tmp_path, flags=env["flags"])
+    upstream = verify_upstream_rq2(tmp_path, artifact_root=tmp_path, flags=env["flags"])
     gen_a = upstream["nb13_generation_id"]
     first = verify_pinned_nb13_selection(tmp_path, generation_id=gen_a)
     budget_a = verify_equal_budget_from_nb13(first)

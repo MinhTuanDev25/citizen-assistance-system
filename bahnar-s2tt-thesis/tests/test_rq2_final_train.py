@@ -50,7 +50,7 @@ from tests.rq2_nb14_fixtures import ARM_FINGERPRINTS, explicit_test_mix_policy, 
 
 def _arm_bundle(tmp_path, arm):
     env = world(tmp_path)
-    upstream = verify_upstream_rq2(tmp_path, flags=env["flags"])
+    upstream = verify_upstream_rq2(tmp_path, artifact_root=tmp_path, flags=env["flags"])
     selection = verify_published_selection(
         tmp_path / SELECTION_RELATIVE_DIR,
         project_root=tmp_path,

@@ -16,7 +16,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from src.direct_contract import (
     LOCKED_ACCELERATE_VERSION,
@@ -340,12 +340,44 @@ def default_nb14_flags() -> Nb14Flags:
     return Nb14Flags()
 
 
-def assert_nb14_output_dir(out_dir: Union[str, Path], project_root: Union[str, Path]) -> Path:
+def resolve_nb14_layout(
+    project_root: Union[str, Path],
+    *,
+    durable_root: Optional[Union[str, Path]] = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> Dict[str, Path]:
+    """Durable NB11/NB12/NB13/NB14 roots. The code checkout is not a fallback."""
+    from src.rq1_runtime_paths import resolve_rq1_runtime_paths
+
     root = Path(project_root).resolve()
+    runtime = resolve_rq1_runtime_paths(project_root=root, durable_root=durable_root, env=env)
+    durable = Path(runtime.durable_root).resolve()
+    rq2 = durable / "artifacts" / "rq2"
+    return {
+        "project_root": root,
+        "durable_root": durable,
+        "u_clean_dir": rq2 / "u_clean",
+        "pseudo_dir": rq2 / "pseudo_labels",
+        "selection_dir": rq2 / "selection",
+        "final_dir": rq2 / "final",
+    }
+
+
+def assert_nb14_output_dir(
+    out_dir: Union[str, Path],
+    project_root: Union[str, Path],
+    *,
+    durable_root: Optional[Union[str, Path]] = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> Path:
+    layout = resolve_nb14_layout(project_root, durable_root=durable_root, env=env)
+    root = layout["project_root"]
     out = Path(out_dir).resolve()
-    expected = (root / FINAL_RELATIVE_DIR).resolve()
+    expected = layout["final_dir"]
     if out != expected:
-        raise Rq2FinalError(f"NB14 output dir must be {FINAL_RELATIVE_DIR}")
+        raise Rq2FinalError(f"NB14 output dir must be {expected}, got {out}")
+    if layout["durable_root"] != root and out == (root / FINAL_RELATIVE_DIR).resolve():
+        raise Rq2FinalError("NB14 final output under PROJECT_ROOT is rejected")
     for protected in (
         root / NB11_RELATIVE_DIR,
         root / PSEUDO_RELATIVE_DIR,
@@ -451,14 +483,23 @@ def normalize_seed_policy(fields: Mapping[str, Any]) -> Dict[str, Any]:
         raise TrainingContractError("compute-constrained single-seed protocol requires exactly one declared seed")
     if mode == SEED_POLICY_MULTI and len(seeds) < 2:
         raise TrainingContractError("multi-seed protocol requires at least two declared seeds")
-    return {
+    result = {
         "seed_policy": mode,
         "seed_policy_seeds": seeds,
         "configured": True,
         "report_mean_std": mode == SEED_POLICY_MULTI and len(seeds) >= 2,
-        "seed": seeds[0],
-        "dataloader_seed": seeds[0],
+        "seed_runs": [{"seed": seed, "dataloader_seed": seed} for seed in seeds],
+        "seed_policy_record": {
+            "mode": "single" if mode == SEED_POLICY_SINGLE else "multi",
+            "seeds": list(seeds),
+        },
     }
+    if mode == SEED_POLICY_SINGLE:
+        only_seed, = seeds
+        result["seed"] = only_seed
+        result["active_seed"] = only_seed
+        result["dataloader_seed"] = only_seed
+    return result
 
 
 def require_configured_seed_policy(fields: Mapping[str, Any], *, for_real_training: bool) -> Dict[str, Any]:
@@ -472,15 +513,19 @@ def require_configured_seed_policy(fields: Mapping[str, Any], *, for_real_traini
 
 def summarize_seed_runs(runs: Sequence[Mapping[str, Any]], *, seed_policy: Mapping[str, Any]) -> Dict[str, Any]:
     valid = [dict(run) for run in runs if run]
+    mode = str(seed_policy.get("seed_policy") or seed_policy.get("mode") or SEED_POLICY_UNSET)
+    declared = list(seed_policy.get("seed_policy_seeds") or seed_policy.get("seeds") or [])
+    if mode in {SEED_POLICY_MULTI, "multi"} and not valid:
+        raise TrainingContractError("multi-seed summary cannot be computed from an empty run list")
     report_mean = bool(seed_policy.get("report_mean_std")) and len(valid) >= 2
     payload = {
-        "seed_policy": str(seed_policy.get("seed_policy") or SEED_POLICY_UNSET),
-        "declared_seeds": list(seed_policy.get("seed_policy_seeds") or []),
+        "seed_policy": mode,
+        "declared_seeds": declared,
         "n_valid_runs": len(valid),
         "mean_std_reported": report_mean,
         "protocol": (
             "multi-seed protocol"
-            if str(seed_policy.get("seed_policy") or "") == SEED_POLICY_MULTI
+            if mode in {SEED_POLICY_MULTI, "multi"}
             else "explicitly declared compute-constrained single-seed protocol"
         ),
     }
@@ -493,6 +538,90 @@ def summarize_seed_runs(runs: Sequence[Mapping[str, Any]], *, seed_policy: Mappi
                 payload[f"{metric}_mean"] = float(statistics.fmean(values))
                 payload[f"{metric}_std"] = float(statistics.pstdev(values))
     return payload
+
+
+def aggregate_paired_seed_metrics(
+    per_seed: Sequence[Mapping[str, Any]],
+    *,
+    seed_policy: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Mean and population std from real per-seed Random/Quality metrics.
+
+    ``std_convention`` is ``population_pstdev`` for every metric. One declared
+    seed reports ``std=None``; two or more use ``statistics.pstdev``. An empty
+    multi-seed list is rejected. Missing seeds are not dropped.
+    """
+    import statistics
+
+    policy = normalize_seed_policy(seed_policy)
+    declared = [int(seed) for seed in policy.get("seed_policy_seeds") or []]
+    if policy.get("seed_policy") == SEED_POLICY_MULTI and not per_seed:
+        raise TrainingContractError("multi-seed summary cannot be computed from an empty run list")
+    by_seed: Dict[int, Mapping[str, Any]] = {}
+    for row in per_seed:
+        seed = int(row["active_seed"])
+        if seed in by_seed:
+            raise TrainingContractError(f"duplicate per-seed result for seed {seed}")
+        by_seed[seed] = row
+    if set(by_seed) != set(declared):
+        missing = sorted(set(declared) - set(by_seed))
+        extra = sorted(set(by_seed) - set(declared))
+        raise TrainingContractError(
+            f"per-seed results do not match declared seeds; missing={missing} extra={extra}"
+        )
+    ordered = [by_seed[seed] for seed in declared]
+
+    def _mean_std(values: Sequence[float]) -> Dict[str, Any]:
+        if len(values) == 1:
+            return {"n_valid_runs": 1, "mean": float(values[0]), "std": None}
+        return {
+            "n_valid_runs": len(values),
+            "mean": float(statistics.fmean(values)),
+            "std": float(statistics.pstdev(values)),
+        }
+
+    def _arm_metric(arm_key: str, metric: str) -> List[float]:
+        return [float(row[arm_key][metric]) for row in ordered]
+
+    per_seed_rows = []
+    bleu_deltas = []
+    chrf_deltas = []
+    for row in ordered:
+        bleu_delta = float(row[ARM_QUALITY]["sacrebleu"]) - float(row[ARM_RANDOM]["sacrebleu"])
+        chrf_delta = float(row[ARM_QUALITY]["chrfpp"]) - float(row[ARM_RANDOM]["chrfpp"])
+        bleu_deltas.append(bleu_delta)
+        chrf_deltas.append(chrf_delta)
+        per_seed_rows.append({
+            "active_seed": int(row["active_seed"]),
+            "pairing": f"{ARM_RANDOM}:{int(row['active_seed'])}|{ARM_QUALITY}:{int(row['active_seed'])}",
+            ARM_RANDOM: dict(row[ARM_RANDOM]),
+            ARM_QUALITY: dict(row[ARM_QUALITY]),
+            "delta_sacrebleu": bleu_delta,
+            "delta_chrfpp": chrf_delta,
+        })
+    multi = policy.get("seed_policy") == SEED_POLICY_MULTI
+    return {
+        "seed_policy": policy["seed_policy_record"],
+        "declared_seeds": declared,
+        "n_valid_runs": len(ordered),
+        "mean_std_reported": bool(multi and len(ordered) >= 2),
+        "std_convention": "population_pstdev",
+        "per_seed": per_seed_rows,
+        ARM_RANDOM: {
+            "sacrebleu": _mean_std(_arm_metric(ARM_RANDOM, "sacrebleu")),
+            "chrfpp": _mean_std(_arm_metric(ARM_RANDOM, "chrfpp")),
+        },
+        ARM_QUALITY: {
+            "sacrebleu": _mean_std(_arm_metric(ARM_QUALITY, "sacrebleu")),
+            "chrfpp": _mean_std(_arm_metric(ARM_QUALITY, "chrfpp")),
+        },
+        "treatment": {
+            "per_seed_delta_sacrebleu": bleu_deltas,
+            "per_seed_delta_chrfpp": chrf_deltas,
+            "sacrebleu": _mean_std(bleu_deltas),
+            "chrfpp": _mean_std(chrf_deltas),
+        },
+    }
 
 
 def _is_sha256(value: object) -> bool:
@@ -877,35 +1006,73 @@ def verify_upstream_rq2(
     project_root: Union[str, Path],
     *,
     flags: Nb14Flags,
+    artifact_root: Optional[Union[str, Path]] = None,
+    expected_nb13_generation_id: Optional[str] = None,
+    expected_budget_hours: Optional[float] = None,
+    expected_random_seed: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Hash-verify NB11, NB12, NB13 and bind frozen RQ1 D0. Does not open G_test."""
+    """Hash-verify NB11, NB12, NB13 and bind frozen RQ1 D0. Does not open G_test.
+
+    ``artifact_root`` is the durable tree that holds ``artifacts/rq2``. When it
+    is omitted the runtime durable root is used. The code checkout is not a
+    fallback, and ``CURRENT`` does not replace an explicit NB13 pin.
+    """
     root = Path(project_root)
     if flags.allow_g_test_evaluation:
         raise GTestFirewallError("preflight must run with ALLOW_G_TEST_EVALUATION=False")
+    layout = resolve_nb14_layout(root, durable_root=artifact_root)
+    artifact = layout["durable_root"]
     try:
-        nb11 = resolve_nb11_input(root, u_clean_dir=root / NB11_RELATIVE_DIR)
+        nb11 = resolve_nb11_input(root, u_clean_dir=layout["u_clean_dir"])
         summary = _read_json(nb11.generation_dir / "summary.json")
         if summary.get("status") != NB11_SUCCESS_STATUS:
             raise UpstreamGateError(f"NB11 status is {summary.get('status')!r}, not {NB11_SUCCESS_STATUS}")
         from src.rq2_pseudo_contract import read_current_generation_id
         from src.rq2_selection_contract import resolve_frozen_u_prime
 
-        frozen = resolve_frozen_u_prime(root, durable_root=root)
-        nb13_dir = root / SELECTION_RELATIVE_DIR
-        nb13_generation_id = read_current_generation_id(nb13_dir, UpstreamGateError)
+        frozen = resolve_frozen_u_prime(
+            root,
+            durable_root=artifact,
+            pseudo_dir=layout["pseudo_dir"],
+            u_clean_dir=layout["u_clean_dir"],
+        )
+        nb13_dir = layout["selection_dir"]
+        current_id = ""
+        if (nb13_dir / "CURRENT").is_file():
+            try:
+                current_id = read_current_generation_id(nb13_dir, UpstreamGateError)
+            except UpstreamGateError:
+                current_id = ""
+        expected = str(expected_nb13_generation_id or "").strip()
+        nb13_generation_id = expected or current_id
+        if not nb13_generation_id:
+            raise UpstreamGateError("NB13 generation_id is required; CURRENT is missing")
         selection = verify_published_selection(
             nb13_dir,
             project_root=root,
             generation_id=nb13_generation_id,
-            durable_root=root,
+            durable_root=artifact,
+            pseudo_dir=layout["pseudo_dir"],
+            u_clean_dir=layout["u_clean_dir"],
         )
     except GTestFirewallError:
         raise
     except Exception as exc:
         raise UpstreamGateError(str(exc)) from exc
+    resolved_nb13 = str(selection["summary"].get("generation_id") or "")
+    if expected and resolved_nb13 != expected:
+        raise RuntimeError(f"pinned NB13 generation {expected} does not match resolved generation {resolved_nb13}")
     if selection["summary"].get("status") != STATUS_SELECTION_FROZEN:
         raise UpstreamGateError("NB13 is not frozen")
     verify_selection_contract(selection["contract"])
+    if expected_budget_hours is not None and float(selection["contract"]["selection_budget_hours"]) != float(expected_budget_hours):
+        raise RuntimeError(
+            f"NB13 selection_budget_hours is {selection['contract']['selection_budget_hours']}, not {expected_budget_hours}"
+        )
+    if expected_random_seed is not None and int(selection["contract"]["random_seed"]) != int(expected_random_seed):
+        raise RuntimeError(
+            f"NB13 random_seed is {selection['contract']['random_seed']}, not {expected_random_seed}"
+        )
     d0 = bind_frozen_d0_identity(resolve_d0_direct_state(flags), project_root=root)
     rq1_cfg = load_rq1_yaml_config(code_root() / RQ1_CONFIG_RELPATH)
     source = compute_nb14_source_fingerprint(code_root())
@@ -916,7 +1083,10 @@ def verify_upstream_rq2(
         "nb12_contract_sha256": frozen.identity["nb12_contract_sha256"],
         "u_prime_manifest_sha256": frozen.identity["u_prime_manifest_sha256"],
         "u_prime_ordered_uid_sha256": frozen.identity["u_prime_ordered_uid_sha256"],
-        "nb13_generation_id": selection["summary"]["generation_id"],
+        "nb13_generation_id": resolved_nb13,
+        "expected_nb13_generation_id": expected or resolved_nb13,
+        "resolved_nb13_generation_id": resolved_nb13,
+        "nb13_current_generation_id": current_id,
         "nb13_selection_contract_sha256": selection["contract"]["selection_contract_sha256"],
         "d_random_manifest_sha256": selection["summary"]["d_random_manifest_sha256"],
         "d_quality_manifest_sha256": selection["summary"]["d_quality_manifest_sha256"],
@@ -995,8 +1165,21 @@ def build_arm_training_contract(fields: Mapping[str, Any]) -> Dict[str, Any]:
         seed_policy = require_configured_seed_policy(payload, for_real_training=True)
         payload["seed_policy"] = seed_policy["seed_policy"]
         payload["seed_policy_seeds"] = list(seed_policy["seed_policy_seeds"])
-        payload["seed"] = int(seed_policy["seed"])
-        payload["dataloader_seed"] = int(seed_policy["dataloader_seed"])
+        payload["seed_runs"] = list(seed_policy["seed_runs"])
+        payload["seed_policy_record"] = dict(seed_policy["seed_policy_record"])
+        declared = [int(seed) for seed in seed_policy["seed_policy_seeds"]]
+        if payload.get("active_seed") is None:
+            raise TrainingContractError(
+                "seed-specific training contract is missing active_seed; it does not default to seeds[0]"
+            )
+        active = int(payload["active_seed"])
+        if active not in declared:
+            raise TrainingContractError(f"active_seed {active} is not in the declared seed list")
+        if seed_policy["seed_policy"] == SEED_POLICY_SINGLE and declared != [active]:
+            raise TrainingContractError("single-seed active_seed must be the only declared seed")
+        payload["active_seed"] = active
+        payload["seed"] = active
+        payload["dataloader_seed"] = active
     if payload["arm"] == ARM_D0:
         payload["init_policy"] = D0_POLICY
         payload.setdefault("gold_pseudo_mix_policy", GOLD_PSEUDO_MIX_POLICY_UNSET)
@@ -1013,6 +1196,68 @@ def build_arm_training_contract(fields: Mapping[str, Any]) -> Dict[str, Any]:
     )
     payload["arm_training_contract_sha256"] = sha256_json(_without(payload, "arm_training_contract_sha256"))
     return payload
+
+
+def materialize_seed_bound_contracts(fields: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """Build one contract per declared seed.
+
+    Single-seed mode returns exactly one contract. Multi-seed mode binds
+    ``active_seed`` for every declared seed and never keeps only ``seeds[0]``.
+    """
+    if fields.get("arm") == ARM_D0:
+        return [build_arm_training_contract(fields)]
+    policy = normalize_seed_policy(fields)
+    if not policy.get("configured"):
+        return [build_arm_training_contract(dict(fields))]
+    if policy.get("seed_policy") == SEED_POLICY_MULTI:
+        built = []
+        for run in policy["seed_runs"]:
+            payload = dict(fields)
+            payload["active_seed"] = int(run["seed"])
+            built.append(build_arm_training_contract(payload))
+        declared = [int(seed) for seed in policy["seed_policy_seeds"]]
+        produced = [int(contract["active_seed"]) for contract in built]
+        if produced != declared:
+            raise TrainingContractError("multi-seed materialization did not cover every declared seed")
+        return built
+    only_seed = int(policy["active_seed"])
+    payload = dict(fields)
+    payload["active_seed"] = only_seed
+    built = [build_arm_training_contract(payload)]
+    if policy.get("configured") and policy.get("seed_policy") == SEED_POLICY_SINGLE and len(built) != 1:
+        raise TrainingContractError("single-seed materialization must produce exactly one contract")
+    return built
+
+
+def index_seed_runs(runs: Sequence[Mapping[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    """Index seed runs by active_seed. Duplicate or missing seeds fail closed."""
+    indexed: Dict[int, Dict[str, Any]] = {}
+    for run in runs:
+        contract = run.get("contract") or run
+        if contract.get("active_seed") is None:
+            raise TrainingContractError("seed run is missing active_seed")
+        seed = int(contract["active_seed"])
+        if seed in indexed:
+            raise TrainingContractError(f"duplicate active_seed {seed}")
+        indexed[seed] = dict(run)
+    return indexed
+
+
+def iter_declared_seed_runs(seed_runs: Mapping[str, Any]) -> List[Tuple[str, Any, Dict[str, Any]]]:
+    """Yield ``(arm, active_seed, run)`` from an arm to seed-map.
+
+    ``seed_runs[arm]`` is always a mapping of active seed to run. Iterating the
+    mapping itself yields seeds, not run objects.
+    """
+    found: List[Tuple[str, Any, Dict[str, Any]]] = []
+    for arm, runs in seed_runs.items():
+        if not isinstance(runs, Mapping):
+            raise TrainingContractError(f"{arm} seed runs must be a mapping of active_seed to run")
+        for active_seed, run in runs.items():
+            if not isinstance(run, Mapping) or "layout" not in run:
+                raise TrainingContractError(f"{arm} seed {active_seed} run is missing layout")
+            found.append((str(arm), active_seed, dict(run)))
+    return found
 
 
 def verify_arm_training_contract(contract: Mapping[str, Any]) -> None:

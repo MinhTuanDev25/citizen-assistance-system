@@ -37,6 +37,8 @@ from src.rq2_final_contract import (
     REJECTED_PUBLIC_PRETRAINED_INIT_POLICY,
     GTestFirewallError,
     RUNTIME_ONLY_KEYS,
+    SEED_POLICY_MULTI,
+    SEED_POLICY_SINGLE,
     SEED_POLICY_UNSET,
     STATUS_FAILED_TRAINING,
     STATUS_NOT_STARTED,
@@ -183,9 +185,21 @@ def merge_training_fields(
             "gold_pseudo_mix_policy", "gold_slots", "pseudo_slots", "seed_policy", "seed_policy_seeds", "seed", "dataloader_seed",
         }},
     }
-    if seeds.get("configured"):
-        fields["seed"] = int(seeds["seed"])
-        fields["dataloader_seed"] = int(seeds["dataloader_seed"])
+    if seeds.get("configured") and seeds.get("seed_policy") == SEED_POLICY_SINGLE:
+        only_seed = int(seeds["active_seed"])
+        requested = (seed_policy or {}).get("active_seed")
+        fields["active_seed"] = int(requested) if requested is not None else only_seed
+        if int(fields["active_seed"]) != only_seed:
+            raise TrainingContractError("single-seed active_seed must be the only declared seed")
+        fields["seed"] = int(fields["active_seed"])
+        fields["dataloader_seed"] = int(fields["active_seed"])
+        fields["seed_runs"] = list(seeds.get("seed_runs") or [])
+        fields["seed_policy_record"] = dict(seeds["seed_policy_record"])
+    elif seeds.get("seed_policy") == SEED_POLICY_MULTI:
+        fields["seed_runs"] = list(seeds.get("seed_runs") or [])
+        fields["seed_policy_record"] = dict(seeds["seed_policy_record"])
+        if (seed_policy or {}).get("active_seed") is not None:
+            fields["active_seed"] = int(seed_policy["active_seed"])
     if runtime_workers is not None:
         # Accepted as a runtime argument, never copied into the scientific contract.
         fields["_runtime_dataloader_num_workers"] = int(runtime_workers)
@@ -199,6 +213,8 @@ def experiment_fingerprint(
     training_contract: Mapping[str, Any],
     data_manifest_sha256: str,
     model_revision: str,
+    selected_manifest_sha256: str = "",
+    nb13_generation_id: str = "",
 ) -> Dict[str, Any]:
     payload = {
         "arm": arm,
@@ -208,6 +224,11 @@ def experiment_fingerprint(
         "decoder_revision": training_contract["decoder_revision"],
         "model_revision": model_revision,
         "init_policy": training_contract["init_policy"],
+        "nb13_generation_id": str(nb13_generation_id or training_contract.get("nb13_generation_id") or ""),
+        "manifest_sha256": str(training_contract.get("data_manifest_sha256") or data_manifest_sha256),
+        "selected_manifest_sha256": str(selected_manifest_sha256 or ""),
+        "d0_init_model_state_sha256": str(training_contract.get("d0_init_model_state_sha256") or ""),
+        "training_seed": training_contract.get("seed"),
     }
     payload["experiment_fingerprint_sha256"] = sha256_json(
         {k: v for k, v in payload.items() if k != "experiment_fingerprint_sha256"}
@@ -249,6 +270,136 @@ def bind_d0_arm(
     atomic_write_text(layout["latest"], identity["best_checkpoint_name"] + "\n")
     write_progress(layout, {"status": "d0_bound", "arm": ARM_D0, "records_processed": 0})
     return {"identity": identity, "best": best, "trained": False}
+
+
+def discover_latest_valid_checkpoint(
+    layout: Mapping[str, Path],
+    *,
+    arm: str,
+    expected_contract_hash: str,
+    expected_data_hash: str,
+    expected_nb13_generation_id: Optional[str] = None,
+    expected_manifest_sha256: Optional[str] = None,
+    expected_selected_manifest_sha256: Optional[str] = None,
+    expected_d0_init_sha256: Optional[str] = None,
+    expected_active_seed: Optional[int] = None,
+) -> Optional[Path]:
+    """Return the newest valid checkpoint for this arm, or None when none exist.
+
+    A checkpoint that belongs to another arm, contract, NB13 generation, or
+    manifest is rejected. Corrupt files among existing checkpoints fail closed
+    instead of starting from D0.
+    """
+    root = Path(layout["checkpoints"])
+    if not root.is_dir():
+        return None
+    candidates = [path for path in root.iterdir() if path.is_dir() and (path / "trainer_state.json").is_file()]
+    if not candidates:
+        return None
+    valid: List[tuple] = []
+    for path in candidates:
+        fingerprint = assert_checkpoint_arm_isolation(
+            path,
+            arm=arm,
+            expected_contract_hash=expected_contract_hash,
+            expected_data_hash=expected_data_hash,
+        )
+        if expected_nb13_generation_id and str(fingerprint.get("nb13_generation_id") or "") != str(expected_nb13_generation_id):
+            raise TrainingContractError(f"{arm} checkpoint NB13 generation does not match the pinned selection")
+        if expected_manifest_sha256 and str(fingerprint.get("manifest_sha256") or "") != str(expected_manifest_sha256):
+            raise TrainingContractError(f"{arm} checkpoint manifest hash does not match the pinned selection")
+        if expected_selected_manifest_sha256 and str(fingerprint.get("selected_manifest_sha256") or "") != str(expected_selected_manifest_sha256):
+            raise TrainingContractError(f"{arm} checkpoint selected-manifest hash does not match the pinned NB13 arm")
+        if expected_d0_init_sha256 and str(fingerprint.get("d0_init_model_state_sha256") or "") != str(expected_d0_init_sha256):
+            raise TrainingContractError(f"{arm} checkpoint D0 initialization does not match the frozen D0")
+        if expected_active_seed is not None:
+            recorded_seed = fingerprint.get("training_seed")
+            if recorded_seed is None or int(recorded_seed) != int(expected_active_seed):
+                raise TrainingContractError(f"{arm} checkpoint active_seed does not match this seed run")
+        proof = prove_resume(
+            path,
+            arm=arm,
+            expected_contract_hash=expected_contract_hash,
+            expected_data_hash=expected_data_hash,
+        )
+        valid.append((int(proof["global_step"]), path.name, path))
+    valid.sort()
+    return valid[-1][2]
+
+
+def enforce_target_truncation_gate(
+    reports: Sequence[Mapping[str, Any]],
+    *,
+    max_truncation_rate: float,
+) -> Dict[str, Any]:
+    """Fail before training when any audited split exceeds the locked truncation rate."""
+    from src.rq1_contract import sha256_json
+
+    checked = []
+    for report in reports:
+        rate = float(report["truncation_rate"])
+        threshold = float(max_truncation_rate)
+        if rate > threshold:
+            raise TrainingContractError(
+                f"{report.get('split')} truncation_rate {rate} exceeds hard_max_truncation_rate {threshold}"
+            )
+        checked.append({
+            "split": str(report.get("split")),
+            "n_rows": int(report["n_rows"]),
+            "n_truncated": int(report["n_truncated"]),
+            "truncation_rate": rate,
+            "max_target_token_length": int(report["max_target_token_length"]),
+            "hard_max_truncation_rate": threshold,
+        })
+    return {"passed": True, "reports": checked, "audit_sha256": sha256_json(checked)}
+
+
+def audit_split_target_truncation(
+    tokenizer: Any,
+    texts: Sequence[str],
+    *,
+    split: str,
+    max_target_length: int,
+) -> Dict[str, Any]:
+    """Count target tokens with truncation disabled, using the training tokenizer."""
+    from src.direct_model import audit_target_tokenizer
+
+    report = audit_target_tokenizer(
+        tokenizer,
+        list(texts),
+        max_target_length=int(max_target_length),
+        max_unk_rate=1.0,
+        max_truncation_rate=1.0,
+        split=str(split),
+    )
+    target = report["target"]
+    return {
+        "split": str(split),
+        "n_rows": int(report["n"]),
+        "n_truncated": int(target["truncation_count"]),
+        "truncation_rate": float(target["truncation_rate"]),
+        "max_target_token_length": int(target["max"]),
+        "tokenizer_fingerprint": report.get("tokenizer_fingerprint"),
+    }
+
+
+def verify_pseudo_audio_rows(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    u_clean_dir: Union[str, Path],
+) -> Dict[str, Any]:
+    """Resolve every selected pseudo segment under the frozen NB11 root."""
+    from src.rq2_pseudo_contract import resolve_nb11_segment_path
+
+    resolved = []
+    for row in rows:
+        uid = str(row.get("segment_uid") or row.get("example_uid") or "")
+        rel = str(row.get("segment_local_path") or row.get("source_path") or "")
+        path = resolve_nb11_segment_path(rel, u_clean_dir)
+        if not path.is_file():
+            raise TrainingContractError(f"pseudo audio is missing for {uid or rel}")
+        resolved.append(str(path))
+    return {"n_rows": len(resolved), "u_clean_dir": str(Path(u_clean_dir).resolve())}
 
 
 def prove_resume(
@@ -393,6 +544,22 @@ def write_training_complete_proof(
         raise TrainingContractError(f"{arm} best checkpoint fingerprint is empty or invalid")
     if best_name and best_name == path.name and best_fp and best_fp != fingerprint:
         raise TrainingContractError("best checkpoint fingerprint collided with a different terminal checkpoint")
+    for key in (
+        "active_seed",
+        "g_test_used",
+        "nb13_generation_id",
+        "d0_init_model_state_sha256",
+        "selected_manifest_sha256",
+        "global_step",
+        "checkpoint_name",
+    ):
+        if key in best and best.get(key) not in (None, ""):
+            payload[key] = best[key]
+    if best.get("validation_metric") is not None:
+        payload["validation_metric"] = best.get("validation_metric")
+        payload["validation_metric_value"] = best.get("validation_metric")
+    if best.get("g_test_used") is not None:
+        payload["g_test_used"] = best.get("g_test_used")
     write_json(layout["training_complete"], payload)
     return payload
 
@@ -485,6 +652,25 @@ def freeze_best_checkpoint(
     payload["g_test_used"] = False
     write_json(layout["best_checkpoint"], payload)
     atomic_write_text(layout["latest"], str(payload["checkpoint_name"]) + "\n")
+    complete_path = Path(layout["training_complete"])
+    if complete_path.is_file():
+        complete = json.loads(complete_path.read_text(encoding="utf-8"))
+        complete["best_checkpoint"] = str(payload["checkpoint_name"])
+        complete["best_checkpoint_fingerprint"] = fingerprint
+        complete["g_test_used"] = False
+        complete["validation_metric"] = payload.get("validation_metric")
+        complete["validation_metric_value"] = payload.get("validation_metric")
+        if payload.get("global_step") is not None:
+            complete["global_step"] = payload.get("global_step")
+        for key in (
+            "active_seed",
+            "nb13_generation_id",
+            "d0_init_model_state_sha256",
+            "selected_manifest_sha256",
+        ):
+            if payload.get(key) not in (None, ""):
+                complete[key] = payload[key]
+        write_json(complete_path, complete)
     return payload
 
 
@@ -660,15 +846,38 @@ def build_gold_pseudo_sampler(
 ) -> GoldPseudoMixSampler:
     mix = require_configured_mix_policy(training_contract, for_real_training=True)
     seed_policy = require_configured_seed_policy(training_contract, for_real_training=True)
+    if training_contract.get("active_seed") is None:
+        raise TrainingContractError("training contract is missing active_seed; it does not default to seeds[0]")
+    active_seed = int(training_contract["active_seed"])
+    declared = [int(seed) for seed in seed_policy.get("seed_policy_seeds") or []]
+    if active_seed not in declared:
+        raise TrainingContractError(f"active_seed {active_seed} is not in the declared seed list")
     parts = mix_indices_from_frame(train_frame)
     return GoldPseudoMixSampler(
         parts["gold"],
         parts["pseudo"],
         gold_slots=int(mix["gold_slots"]),
         pseudo_slots=int(mix["pseudo_slots"]),
-        seed=int(seed_policy["seed"]),
+        seed=active_seed,
         start=int(start),
     )
+
+
+def freeze_speech_feature_encoder(model: Any) -> None:
+    """Re-apply the speech-encoder freeze after D0 load and after resume."""
+    enc = model.encoder
+    if hasattr(enc, "freeze_feature_encoder"):
+        enc.freeze_feature_encoder()
+    elif hasattr(enc, "feature_extractor") and hasattr(enc.feature_extractor, "_freeze_parameters"):
+        enc.feature_extractor._freeze_parameters()
+    else:
+        raise TrainingContractError("cannot locate the speech feature encoder freeze method")
+    feature = getattr(enc, "feature_extractor", None)
+    if feature is None:
+        raise TrainingContractError("speech feature encoder is missing after freeze")
+    trainable = [name for name, param in feature.named_parameters() if param.requires_grad]
+    if trainable:
+        raise TrainingContractError("feature encoder remains trainable: " + ", ".join(trainable[:5]))
 
 
 def build_arm_model(
@@ -705,6 +914,10 @@ def build_arm_model(
     from transformers import SpeechEncoderDecoderModel
 
     model = SpeechEncoderDecoderModel.from_pretrained(str(checkpoint))
+    if training_contract.get("freeze_feature_encoder") is True:
+        freeze_speech_feature_encoder(model)
+    elif training_contract.get("freeze_feature_encoder") is not True:
+        raise TrainingContractError("trainable arms require freeze_feature_encoder=True")
     return model, feature_extractor, tokenizer
 
 
@@ -928,6 +1141,8 @@ def build_trainer(
 
         def _load_from_checkpoint(self, resume_from_checkpoint, *args, **kwargs):
             result = super()._load_from_checkpoint(resume_from_checkpoint, *args, **kwargs)
+            if training_contract.get("freeze_feature_encoder") is True:
+                freeze_speech_feature_encoder(self.model)
             expected = getattr(self, "_rq2_expected_resume_step", None)
             if expected is None or not resume_from_checkpoint:
                 return result

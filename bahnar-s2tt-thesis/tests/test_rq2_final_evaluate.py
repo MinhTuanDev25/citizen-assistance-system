@@ -60,7 +60,7 @@ def _ready_publish_inputs(tmp_path, frames=None):
     env = world(tmp_path, with_test=True)
     from src.rq2_final_contract import verify_upstream_rq2
 
-    upstream = verify_upstream_rq2(tmp_path, flags=env["flags"])
+    upstream = verify_upstream_rq2(tmp_path, artifact_root=tmp_path, flags=env["flags"])
     proofs = materialize_arm_proofs(env)
     best = proofs["best"]
     best[ARM_D0]["checkpoint_fingerprint"] = upstream["d0"]["checkpoint_fingerprint_sha256"]
@@ -285,7 +285,7 @@ def test_complete_synthetic_pipeline_reaches_success(tmp_path):
     )
     assert result["status"] == STATUS_SUCCESS
     assert result["wrote_current"] is True
-    out = tmp_path / "artifacts" / "rq2" / "final"
+    out = env["durable_root"] / "artifacts" / "rq2" / "final"
     current = (out / "CURRENT").read_text(encoding="utf-8").strip()
     assert current
     from src.rq2_final_evaluate import _verify_staged_final_generation

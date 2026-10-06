@@ -30,6 +30,7 @@ from src.rq2_final_contract import (
     UpstreamGateError,
     assert_g_test_blocked,
     is_sha256,
+    resolve_nb14_layout,
 )
 from src.rq2_selection import read_manifest_csv
 from src.rq2_selection_contract import (
@@ -224,12 +225,13 @@ def load_nb13_arm_manifest(
     arm: str,
     generation_id: str,
     expected_sha256: Optional[str] = None,
+    artifact_root: Optional[Union[str, Path]] = None,
 ) -> List[Dict[str, Any]]:
     if arm not in (ARM_RANDOM, ARM_QUALITY):
         raise ArmIsolationError(f"{arm} has no NB13 selection manifest")
     if not str(generation_id or "").strip():
         raise UpstreamGateError("NB13 generation_id is required; CURRENT is not re-read")
-    root = Path(project_root)
+    root = Path(artifact_root or project_root)
     out = root / SELECTION_RELATIVE_DIR
     name = "d_random_manifest.csv" if arm == ARM_RANDOM else "d_quality_manifest.csv"
     path = assert_g_test_blocked(out / "generations" / str(generation_id) / name, allow=False)
@@ -250,6 +252,7 @@ def load_pinned_nb13_arm_manifest(
     *,
     arm: str,
     upstream: Mapping[str, Any],
+    artifact_root: Optional[Union[str, Path]] = None,
 ) -> List[Dict[str, Any]]:
     key = "d_random_manifest_sha256" if arm == ARM_RANDOM else "d_quality_manifest_sha256"
     return load_nb13_arm_manifest(
@@ -257,6 +260,7 @@ def load_pinned_nb13_arm_manifest(
         arm=arm,
         generation_id=str(upstream["nb13_generation_id"]),
         expected_sha256=str(upstream[key]),
+        artifact_root=artifact_root,
     )
 
 
@@ -264,6 +268,7 @@ def verify_pinned_nb13_selection(
     project_root: Union[str, Path],
     *,
     generation_id: str,
+    artifact_root: Optional[Union[str, Path]] = None,
 ) -> Dict[str, Any]:
     """Re-verify one frozen NB13 generation. Never re-reads CURRENT."""
     from src.rq2_selection import verify_published_selection
@@ -271,11 +276,14 @@ def verify_pinned_nb13_selection(
     if not str(generation_id or "").strip():
         raise UpstreamGateError("NB13 generation_id is required; CURRENT is not re-read")
     root = Path(project_root)
+    layout = resolve_nb14_layout(root, durable_root=artifact_root or project_root)
     return verify_published_selection(
-        root / SELECTION_RELATIVE_DIR,
+        layout["selection_dir"],
         project_root=root,
         generation_id=str(generation_id),
-        durable_root=root,
+        durable_root=layout["durable_root"],
+        pseudo_dir=layout["pseudo_dir"],
+        u_clean_dir=layout["u_clean_dir"],
     )
 
 
