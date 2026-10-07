@@ -27,6 +27,10 @@ class PostgresChunks:
             connect_timeout = min(2, int(left))
         try:
             with psycopg.connect(self.dsn, connect_timeout=connect_timeout) as conn:
+                close = getattr(conn, "close", None)
+                bind = getattr(clock, "bind", None) if clock is not None else None
+                if bind is not None and close is not None:
+                    bind(close)
                 try:
                     with conn.cursor() as cur:
                         self._exec(
@@ -123,8 +127,17 @@ class PostgresChunks:
                         clock.check()
                     conn.commit()
                 except Exception:
-                    conn.rollback()
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    if clock is not None and getattr(clock, "cancelled", False):
+                        raise IndexFailure("timeout")
                     raise
+                finally:
+                    unbind = getattr(clock, "unbind", None) if clock is not None else None
+                    if unbind is not None and close is not None:
+                        unbind(close)
         except IndexFailure:
             raise
         except Exception as exc:

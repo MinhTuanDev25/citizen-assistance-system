@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"math"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -41,20 +43,22 @@ type Config struct {
 	AISlotConfidenceMin float64
 
 	// Admin PDF intake (P3.1). Off by default: the API does not open object storage.
-	AdminIngestionEnabled      bool
-	AdminIndexingEnabled       bool
-	IndexMode                  string
-	IndexClaimTTL              time.Duration
-	IndexTimeout               time.Duration
-	IndexPipelineTimeout       time.Duration
-	IndexPublishTimeout        time.Duration
-	ObjectStorageEndpoint      string
-	ObjectStorageAccessKey     string
-	ObjectStorageSecretKey     string
-	ObjectStorageBucket        string
-	ObjectStorageUseSSL        bool
-	ObjectStorageSSLConfigured bool
-	DocumentMaxBytes           int64
+	AdminIngestionEnabled         bool
+	AdminIndexingEnabled          bool
+	IndexMode                     string
+	IndexClaimTTL                 time.Duration
+	IndexTimeout                  time.Duration
+	IndexPipelineTimeout          time.Duration
+	IndexPublishTimeout           time.Duration
+	ObjectStorageEndpoint         string
+	ObjectStorageAccessKey        string
+	ObjectStorageSecretKey        string
+	ObjectStorageBucket           string
+	ObjectStorageUseSSL           bool
+	ObjectStorageSSLConfigured    bool
+	ObjectStorageRegion           string
+	ObjectStorageAutoCreateBucket bool
+	DocumentMaxBytes              int64
 }
 
 // DocumentMaxHardBytes matches middleware.DocumentUploadHardMax.
@@ -127,17 +131,18 @@ func Load() (Config, error) {
 		JWTSecret:        strings.TrimSpace(fc.Auth.JWTSecret),
 		JWTExpireHours:   defaultInt(fc.Auth.JWTExpireHours, 24),
 
-		AIExtractEnabled:     false,
-		AIServiceURL:         "",
-		AIExtractTimeoutMS:   3000,
-		AIIntentSelectMin:    0.82,
-		AIIntentConfirmMin:   0.55,
-		AISlotConfidenceMin:  0.6,
-		IndexMode:            "mock",
-		IndexClaimTTL:        30 * time.Second,
-		IndexTimeout:         3 * time.Second,
-		IndexPipelineTimeout: 2 * time.Minute,
-		IndexPublishTimeout:  10 * time.Second,
+		AIExtractEnabled:              false,
+		AIServiceURL:                  "",
+		AIExtractTimeoutMS:            3000,
+		AIIntentSelectMin:             0.82,
+		AIIntentConfirmMin:            0.55,
+		AISlotConfidenceMin:           0.6,
+		IndexMode:                     "mock",
+		IndexClaimTTL:                 30 * time.Second,
+		IndexTimeout:                  3 * time.Second,
+		IndexPipelineTimeout:          2 * time.Minute,
+		IndexPublishTimeout:           10 * time.Second,
+		ObjectStorageAutoCreateBucket: true,
 	}
 
 	if err := applyEnvOverrides(&cfg); err != nil {
@@ -227,6 +232,28 @@ func validateIndexingConfig(cfg Config) error {
 	return nil
 }
 
+func isRunPodEndpoint(endpoint string) bool {
+	return strings.Contains(strings.ToLower(endpoint), "runpod")
+}
+
+func runPodPortError(endpoint string) error {
+	text := strings.TrimSpace(endpoint)
+	port := ""
+	if strings.Contains(text, "://") {
+		parsed, err := url.Parse(text)
+		if err != nil || parsed.Hostname() == "" {
+			return fmt.Errorf("object storage endpoint is invalid")
+		}
+		port = parsed.Port()
+	} else if _, parsedPort, err := net.SplitHostPort(text); err == nil {
+		port = parsedPort
+	}
+	if port != "" && port != "443" {
+		return fmt.Errorf("RunPod object storage requires port 443")
+	}
+	return nil
+}
+
 func validateIngestionConfig(cfg Config) error {
 	if !cfg.AdminIngestionEnabled {
 		return nil
@@ -237,6 +264,24 @@ func validateIngestionConfig(cfg Config) error {
 		strings.TrimSpace(cfg.ObjectStorageBucket) == "" ||
 		!cfg.ObjectStorageSSLConfigured {
 		return fmt.Errorf("object storage settings are required when ADMIN_INGESTION_ENABLED=true")
+	}
+	if isRunPodEndpoint(cfg.ObjectStorageEndpoint) {
+		lower := strings.ToLower(strings.TrimSpace(cfg.ObjectStorageEndpoint))
+		if strings.HasPrefix(lower, "http://") {
+			return fmt.Errorf("RunPod object storage requires TLS")
+		}
+		if !strings.HasPrefix(lower, "https://") && !cfg.ObjectStorageUseSSL {
+			return fmt.Errorf("OBJECT_STORAGE_USE_SSL must be true for RunPod object storage")
+		}
+		if err := runPodPortError(cfg.ObjectStorageEndpoint); err != nil {
+			return err
+		}
+		if strings.TrimSpace(cfg.ObjectStorageRegion) == "" {
+			return fmt.Errorf("OBJECT_STORAGE_REGION is required for RunPod object storage")
+		}
+		if cfg.ObjectStorageAutoCreateBucket {
+			return fmt.Errorf("OBJECT_STORAGE_AUTO_CREATE_BUCKET must be false for RunPod object storage")
+		}
 	}
 	if cfg.DocumentMaxBytes <= 0 || cfg.DocumentMaxBytes > DocumentMaxHardBytes {
 		return fmt.Errorf("DOCUMENT_MAX_BYTES must be in (0, %d]", DocumentMaxHardBytes)
@@ -402,6 +447,21 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if v := os.Getenv("OBJECT_STORAGE_BUCKET"); v != "" {
 		cfg.ObjectStorageBucket = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("OBJECT_STORAGE_REGION"); v != "" {
+		cfg.ObjectStorageRegion = strings.TrimSpace(v)
+	}
+	if v, ok := os.LookupEnv("OBJECT_STORAGE_AUTO_CREATE_BUCKET"); ok && strings.TrimSpace(v) != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			cfg.ObjectStorageAutoCreateBucket = true
+		case "0", "false", "no", "off":
+			cfg.ObjectStorageAutoCreateBucket = false
+		default:
+			return fmt.Errorf("OBJECT_STORAGE_AUTO_CREATE_BUCKET must be true or false")
+		}
+	} else if isRunPodEndpoint(cfg.ObjectStorageEndpoint) {
+		cfg.ObjectStorageAutoCreateBucket = false
 	}
 	if v, ok := os.LookupEnv("OBJECT_STORAGE_USE_SSL"); ok && strings.TrimSpace(v) != "" {
 		switch strings.ToLower(strings.TrimSpace(v)) {

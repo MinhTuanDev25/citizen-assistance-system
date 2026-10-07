@@ -4,82 +4,20 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeout
 
 from app.config import ConfigError
 from app.indexing.errors import IndexFailure
+from app.indexing.supervisor import IndexGate
 
 log = logging.getLogger("cas.index")
 
 
-class IndexGate:
-    def __init__(self, limit: int) -> None:
-        self._sem = threading.BoundedSemaphore(limit)
-        self._executor = ThreadPoolExecutor(max_workers=limit, thread_name_prefix="index-pipeline")
-        self._lock = threading.Lock()
-        self._pending = 0
-        self._idle = threading.Event()
-        self._idle.set()
-        self._closed = False
-
-    @property
-    def serving(self) -> bool:
-        return not self._closed
-
-    def submit(self, fn):
-        if self._closed:
-            raise IndexFailure("pipeline_busy")
-        if not self._sem.acquire(blocking=False):
-            raise IndexFailure("pipeline_busy")
-        with self._lock:
-            self._pending += 1
-            self._idle.clear()
-
-        def work():
-            try:
-                return fn()
-            finally:
-                with self._lock:
-                    self._pending -= 1
-                    pending = self._pending
-                self._sem.release()
-                if pending == 0:
-                    self._idle.set()
-
-        return self._executor.submit(work)
-
-    def pending(self) -> int:
-        with self._lock:
-            return self._pending
-
-    def run(self, fn, timeout_s: float):
-        future = self.submit(fn)
-        try:
-            return future.result(timeout=timeout_s)
-        except FuturesTimeout as exc:
-            raise IndexFailure("timeout") from exc
-
-    def shutdown(self, timeout_s: float = 5.0, models=None) -> int:
-        """Reject new work, stop model subprocesses, then wait until in-flight calls leave."""
-        self._closed = True
-        self._executor.shutdown(wait=False, cancel_futures=True)
-        for item in models or ():
-            if item is None:
-                continue
-            stop = getattr(item, "shutdown", None)
-            if callable(stop):
-                try:
-                    stop()
-                except Exception:
-                    log.warning("index_gate_shutdown_worker_failed")
-        self._idle.wait(timeout_s)
-        pending = self.pending()
-        if pending:
-            log.warning("index_gate_shutdown_pending count=%s", pending)
-        return pending
+def ocr_pool_size(_settings) -> int:
+    """One pipeline process serves one job, so it owns one OCR worker."""
+    return 1
 
 
 def build_models(settings):
@@ -105,7 +43,7 @@ def build_models(settings):
         from app.indexing.ocr_supervisor import OcrSupervisor
 
         ocr = OcrSupervisor(
-            settings.index_max_inflight,
+            ocr_pool_size(settings),
             {"kind": "paddle", "model_dir": settings.ocr_model_dir},
             replace_timeout_s=settings.pipeline_timeout_s,
         )
@@ -146,6 +84,8 @@ def _worker_problem(settings, models) -> str | None:
     if settings.ocr_provider == "paddle":
         if not loaded or ocr is None:
             return "ocr_model_missing"
+        if getattr(ocr, "status", "") == "recovering":
+            return "worker_recovering"
         if getattr(ocr, "status", "") != "ready":
             return "ocr_model_missing"
         expected = int(getattr(ocr, "slots", 0) or 0)
@@ -155,8 +95,11 @@ def _worker_problem(settings, models) -> str | None:
     return None
 
 
-def probe_pipeline(settings, models) -> tuple[bool, str | None]:
-    worker = _worker_problem(settings, models)
+def probe_pipeline(settings, models, gate=None) -> tuple[bool, str | None]:
+    if gate is not None and getattr(gate, "started", False):
+        worker = gate.health_problem(settings)
+    else:
+        worker = _worker_problem(settings, models)
     if worker is not None:
         return False, worker
     if not _postgres(settings.database_url):
@@ -232,23 +175,18 @@ def minio_http_client():
 def minio_client():
     global _MINIO_CLIENT
     if _MINIO_CLIENT is None:
-        from minio import Minio
+        from app.indexing.object_storage import open_client, storage_config
 
-        endpoint = os.getenv("OBJECT_STORAGE_ENDPOINT", "minio:9000")
-        secure = os.getenv("OBJECT_STORAGE_USE_SSL", "false").lower() in ("1", "true", "yes")
-        _MINIO_CLIENT = Minio(
-            endpoint,
-            access_key=os.getenv("OBJECT_STORAGE_ACCESS_KEY", ""),
-            secret_key=os.getenv("OBJECT_STORAGE_SECRET_KEY", ""),
-            secure=secure,
-            http_client=minio_http_client(),
-        )
+        _MINIO_CLIENT = open_client(minio_http_client(), storage_config())
     return _MINIO_CLIENT
 
 
 def _minio(settings) -> bool:
     try:
-        return bool(minio_client().bucket_exists(settings.object_bucket))
+        from app.indexing.object_storage import ensure_bucket, storage_config
+
+        cfg = storage_config()
+        return bool(ensure_bucket(minio_client(), settings.object_bucket, cfg["auto_create"]))
     except Exception:
         log.warning("ready_probe code=object_storage_unreachable")
         return False
@@ -257,25 +195,18 @@ def _minio(settings) -> bool:
 def data_minio_client(connect_s: float = 2.0, read_s: float = 5.0):
     """Shared data-path client. Connect and read deadlines stay bounded; retries do not multiply them."""
     import urllib3
-    from minio import Minio
+    from app.indexing.object_storage import open_client, storage_config
 
-    key = (round(max(0.2, connect_s), 1), round(max(0.2, read_s), 1))
+    cfg = storage_config()
+    key = (cfg["endpoint"], cfg["region"], cfg["secure"], round(max(0.2, connect_s), 1), round(max(0.2, read_s), 1))
     with _DATA_MINIO_LOCK:
         client = _DATA_MINIO.get(key)
         if client is None:
-            endpoint = os.getenv("OBJECT_STORAGE_ENDPOINT", "minio:9000")
-            secure = os.getenv("OBJECT_STORAGE_USE_SSL", "false").lower() in ("1", "true", "yes")
             http = urllib3.PoolManager(
-                timeout=urllib3.util.Timeout(connect=key[0], read=key[1]),
+                timeout=urllib3.util.Timeout(connect=key[3], read=key[4]),
                 retries=urllib3.util.Retry(total=1, connect=1, read=0, redirect=0, status=0),
             )
-            client = Minio(
-                endpoint,
-                access_key=os.getenv("OBJECT_STORAGE_ACCESS_KEY", ""),
-                secret_key=os.getenv("OBJECT_STORAGE_SECRET_KEY", ""),
-                secure=secure,
-                http_client=http,
-            )
+            client = open_client(http, cfg)
             _DATA_MINIO[key] = client
         return client
 
@@ -283,22 +214,14 @@ def data_minio_client(connect_s: float = 2.0, read_s: float = 5.0):
 def _bounded_object_client(connect_s: float, read_s: float, total_s: float | None):
     """A client whose total timeout covers the whole download, not each read block."""
     import urllib3
-    from minio import Minio
+    from app.indexing.object_storage import open_client, storage_config
 
     timeout = urllib3.util.Timeout(connect=connect_s, read=read_s, total=total_s)
     http = urllib3.PoolManager(
         timeout=timeout,
         retries=urllib3.util.Retry(total=0, connect=0, read=0, redirect=0, status=0),
     )
-    endpoint = os.getenv("OBJECT_STORAGE_ENDPOINT", "minio:9000")
-    secure = os.getenv("OBJECT_STORAGE_USE_SSL", "false").lower() in ("1", "true", "yes")
-    return Minio(
-        endpoint,
-        access_key=os.getenv("OBJECT_STORAGE_ACCESS_KEY", ""),
-        secret_key=os.getenv("OBJECT_STORAGE_SECRET_KEY", ""),
-        secure=secure,
-        http_client=http,
-    )
+    return open_client(http, storage_config())
 
 
 def _tighten_read_timeout(response, seconds: float) -> None:
@@ -329,8 +252,23 @@ def fetch_object(bucket: str, key: str, max_bytes: int | None = None, timeout_s:
     else:
         client = data_minio_client(2.0, 5.0)
     response = None
+    closer = None
     try:
         response = client.get_object(bucket, key)
+        if clock is not None:
+            def closer():
+                raw = getattr(getattr(response, "_fp", None), "raw", None)
+                sock = getattr(getattr(raw, "_fp", None), "raw", None)
+                sock = getattr(sock, "_sock", sock)
+                if sock is not None and hasattr(sock, "shutdown"):
+                    try:
+                        sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                response.close()
+                response.release_conn()
+
+            clock.bind(closer)
         chunks = []
         while True:
             if clock is not None:
@@ -348,6 +286,8 @@ def fetch_object(bucket: str, key: str, max_bytes: int | None = None, timeout_s:
     except IndexFailure:
         raise
     except Exception as exc:
+        if clock is not None and clock.cancelled:
+            raise IndexFailure("timeout") from exc
         marker = getattr(exc, "code", "") or ""
         if marker in ("NoSuchKey", "NoSuchBucket") or "NoSuchKey" in type(exc).__name__ or "NoSuchBucket" in type(exc).__name__:
             raise IndexFailure("source_not_found") from exc
@@ -356,18 +296,22 @@ def fetch_object(bucket: str, key: str, max_bytes: int | None = None, timeout_s:
             raise IndexFailure("source_not_found") from exc
         raise IndexFailure("source_timeout") from exc
     finally:
+        if clock is not None and closer is not None:
+            clock.unbind(closer)
         if response is not None:
             response.close()
             response.release_conn()
 
 
-def _health_view(settings, models) -> dict:
+def _health_view(settings, models, gate=None) -> dict:
     loaded, embedder, ocr = _split_models(models)
+    if gate is not None and getattr(gate, "started", False):
+        loaded = gate.status == "ready"
     if settings.index_mode != "pipeline":
         ok, reason = True, None
     else:
-        ok, reason = probe_pipeline(settings, models)
-    return {
+        ok, reason = probe_pipeline(settings, models, gate)
+    view = {
         "ready": bool(ok),
         "reason": reason,
         "initialized": bool(loaded),
@@ -378,7 +322,20 @@ def _health_view(settings, models) -> dict:
         "ocr_status": getattr(ocr, "status", None) if ocr is not None else None,
         "ocr_workers_expected": int(getattr(ocr, "slots", 0) or 0) if ocr is not None else 0,
         "ocr_workers_alive": int(ocr.alive_workers()) if ocr is not None and hasattr(ocr, "alive_workers") else 0,
+        "ocr_workers_recovering": 0,
+        "ocr_workers_failed": 0,
     }
+    if gate is not None and getattr(gate, "started", False) and settings.ocr_provider == "paddle":
+        census = gate.ocr_census()
+        view["ocr_workers_expected"] = census["expected"]
+        view["ocr_workers_alive"] = census["alive"]
+        view["ocr_workers_recovering"] = census["recovering"]
+        view["ocr_workers_failed"] = census["failed"]
+        if census["recovering"]:
+            view["ocr_status"] = "recovering"
+        elif census["failed"] or census["missing"] or census["alive"] < census["expected"]:
+            view["ocr_status"] = "failed"
+    return view
 
 
 def _worker_snapshot(models) -> dict:
@@ -391,17 +348,21 @@ def _worker_snapshot(models) -> dict:
     }
 
 
-def current_health(settings, models=None, force: bool = False) -> dict:
+def current_health(settings, models=None, force: bool = False, gate=None) -> dict:
     """One bounded health result shared by /ready and /v1/status.
 
     A fresh cache entry is discarded as soon as a worker status or live count changes.
     """
     now = time.monotonic()
     workers = _worker_snapshot(models)
+    if gate is not None:
+        workers["gate_status"] = getattr(gate, "status", None)
+        if hasattr(gate, "ocr_census"):
+            workers["ocr_census"] = tuple(sorted(gate.ocr_census().items()))
     cached = _HEALTH.get("ready") is not None and now - _HEALTH.get("monotonic", 0.0) < _HEALTH_TTL_S
     if not force and cached and all(_HEALTH.get(key) == value for key, value in workers.items()):
         return dict(_HEALTH)
-    live = _health_view(settings, models)
+    live = _health_view(settings, models, gate)
     live["checked_at"] = time.time()
     live["monotonic"] = now
     _HEALTH.clear()

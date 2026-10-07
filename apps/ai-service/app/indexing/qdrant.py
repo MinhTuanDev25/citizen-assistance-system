@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import socket
 import uuid
 
 import httpx
@@ -11,6 +12,29 @@ from app.indexing.errors import IndexFailure
 
 POINT_NAMESPACE = uuid.UUID("6ba7b811-9dad-11d1-80b4-00c04fd430c8")
 DEFAULT_BATCH = 32
+
+
+def _abort_httpx(client) -> None:
+    """Shut the live socket down so a blocked read returns on this thread."""
+    transport = getattr(client, "_transport", None)
+    pool = getattr(transport, "_pool", None)
+    for conn in list(getattr(pool, "_connections", []) or []):
+        streams = [
+            getattr(conn, "_network_stream", None),
+            getattr(getattr(conn, "_connection", None), "_network_stream", None),
+        ]
+        for stream in streams:
+            sock = getattr(stream, "_sock", None)
+            if sock is None:
+                continue
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
 
 
 def point_id(generation_id: uuid.UUID, chunk_index: int) -> str:
@@ -78,18 +102,37 @@ class QdrantWriter:
             raise IndexFailure("qdrant_failed")
 
     def _request(self, method: str, url: str, deadline, **kwargs):
+        if deadline is not None:
+            deadline.check()
         timeout = self.timeout_s if deadline is None else deadline.timeout_for_io()
+        client = httpx.Client()
         try:
-            with httpx.Client() as client:
-                response = client.request(method, url, timeout=timeout, **kwargs)
-        except IndexFailure:
-            raise
-        except httpx.TimeoutException as exc:
+            def closer() -> None:
+                _abort_httpx(client)
+
             if deadline is not None:
-                deadline.check()
-            raise IndexFailure("qdrant_failed") from exc
-        except httpx.HTTPError as exc:
-            raise IndexFailure("qdrant_failed") from exc
+                deadline.bind(closer)
+            try:
+                response = client.request(method, url, timeout=timeout, **kwargs)
+            except IndexFailure:
+                raise
+            except httpx.TimeoutException as exc:
+                if deadline is not None:
+                    raise IndexFailure("timeout") from exc
+                raise IndexFailure("qdrant_failed") from exc
+            except httpx.HTTPError as exc:
+                if deadline is not None and deadline.cancelled:
+                    raise IndexFailure("timeout") from exc
+                raise IndexFailure("qdrant_failed") from exc
+            except Exception as exc:
+                if deadline is not None and deadline.cancelled:
+                    raise IndexFailure("timeout") from exc
+                raise
+            finally:
+                if deadline is not None:
+                    deadline.unbind(closer)
+        finally:
+            client.close()
         if deadline is not None:
             deadline.check()
         return response
@@ -122,7 +165,9 @@ class QdrantWriter:
             deadline,
             json={"filter": _filter(payload_base, generation_id), "exact": True},
         )
-        count = _exact_count(counted) if counted.status_code == 200 else None
+        if counted.status_code != 200:
+            raise IndexFailure("qdrant_failed")
+        count = _exact_count(counted)
         if count != len(expected_ids):
             raise IndexFailure("qdrant_failed")
         fetched = self._request(
@@ -133,42 +178,63 @@ class QdrantWriter:
         )
         if fetched.status_code != 200:
             raise IndexFailure("qdrant_failed")
-        rows = fetched.json().get("result", [])
-        by_id = {row.get("id"): row for row in rows}
-        if set(by_id) != set(expected_ids):
+        rows = _point_rows(fetched)
+        ids = [row.get("id") for row in rows]
+        if len(ids) != len(set(ids)) or set(ids) != set(expected_ids):
             raise IndexFailure("qdrant_failed")
+        by_id = {row.get("id"): row for row in rows}
         expected_payload = {item["id"]: item["payload"] for item in points}
         dimension = payload_base["vector_dimension"]
+        required = ("xa_id", "document_id", "procedure_version_id", "generation_id", "chunk_id", "page_start", "page_end")
         for pid in expected_ids:
             row = by_id[pid]
-            vector = row.get("vector") or []
-            if len(vector) != dimension or any(not math.isfinite(float(item)) for item in vector):
-                raise IndexFailure("qdrant_failed")
-            if row.get("payload") != expected_payload[pid]:
+            _finite_vector(row.get("vector"), dimension)
+            payload = row.get("payload")
+            if not isinstance(payload, dict) or any(payload.get(key) != expected_payload[pid].get(key) for key in required):
                 raise IndexFailure("qdrant_failed")
         return count
 
 
-def _exact_count(response: httpx.Response):
+def _json_object(response: httpx.Response) -> dict:
     try:
         body = response.json()
     except ValueError as exc:
         raise IndexFailure("qdrant_failed") from exc
-    result = body.get("result")
+    if not isinstance(body, dict) or body.get("status") != "ok":
+        raise IndexFailure("qdrant_failed")
+    return body
+
+
+def _exact_count(response: httpx.Response) -> int:
+    result = _json_object(response).get("result")
     if not isinstance(result, dict) or "count" not in result:
         raise IndexFailure("qdrant_failed")
-    return result.get("count")
+    count = result.get("count")
+    if isinstance(count, bool) or not isinstance(count, int):
+        raise IndexFailure("qdrant_failed")
+    return count
 
 
 def _operation_status(response: httpx.Response) -> str:
-    try:
-        body = response.json()
-    except ValueError as exc:
-        raise IndexFailure("qdrant_failed") from exc
-    result = body.get("result")
-    if isinstance(result, dict):
-        return str(result.get("status") or "")
-    return ""
+    result = _json_object(response).get("result")
+    if not isinstance(result, dict) or result.get("status") != "completed":
+        raise IndexFailure("qdrant_failed")
+    return "completed"
+
+
+def _point_rows(response: httpx.Response) -> list:
+    result = _json_object(response).get("result")
+    if not isinstance(result, list) or any(not isinstance(row, dict) for row in result):
+        raise IndexFailure("qdrant_failed")
+    return result
+
+
+def _finite_vector(vector, dimension: int) -> None:
+    if not isinstance(vector, list) or len(vector) != dimension:
+        raise IndexFailure("qdrant_failed")
+    for item in vector:
+        if isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(float(item)):
+            raise IndexFailure("qdrant_failed")
 
 
 def _payload(payload_base: dict, generation_id: uuid.UUID, chunk) -> dict:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import socket
 import stat
 import subprocess
@@ -143,7 +144,8 @@ def test_ocr_replacement_timeout_crash_and_shutdown_reap_workers():
     hung.start(2)
     with pytest.raises(IndexFailure):
         hung.read_page(None, 1, timeout_s=0.2)
-    assert hung.status == "timed_out"
+    hung.wait_settled(2)
+    assert hung.status == "failed"
     assert hung.alive_workers() == 0
     assert hung.spawn_count == 2
     hung.shutdown()
@@ -186,6 +188,7 @@ def test_ocr_replacement_timeout_crash_and_shutdown_reap_workers():
         for _ in range(3):
             with pytest.raises(IndexFailure):
                 limited.read_page(None, 1, timeout_s=0.2)
+            limited.wait_settled(2)
         assert limited.spawn_count == 4
         assert limited.alive_workers() == 1
     finally:
@@ -554,41 +557,41 @@ def test_qdrant_timeout_and_pipeline_deadline_shrinks(monkeypatch):
 
 
 def test_index_gate_releases_the_slot_and_reports_shutdown():
-    from concurrent.futures import TimeoutError as FuturesTimeout
-
     from app.indexing.runtime import IndexGate
 
-    gate = IndexGate(1)
+    gate = IndexGate(1, grace_s=0.08, recovery_timeout_s=2)
+    gate.start()
+    try:
+        with pytest.raises(IndexFailure) as timed:
+            gate.call({"op": "hang", "stage": "parser", "seconds": 0.4}, 0.05)
+        assert timed.value.code == "timeout"
+        assert gate.pending() == 0
+        assert gate.call({"op": "ping"}, 2)["event"] == "pong"
+        started = "/tmp/cas-index-gate-started"
+        try:
+            os.remove(started)
+        except OSError:
+            pass
 
-    def slow():
-        time.sleep(0.4)
-        return "ok"
+        def block():
+            try:
+                gate.call({"op": "hang", "stage": "parser", "seconds": 5, "started_path": started}, 5)
+            except IndexFailure:
+                return
 
-    future = gate.submit(slow)
-    with pytest.raises(FuturesTimeout):
-        future.result(timeout=0.05)
-    with pytest.raises(IndexFailure) as busy:
-        gate.submit(lambda: "x")
-    assert busy.value.code == "pipeline_busy"
-    assert future.result(timeout=2) == "ok"
-    assert gate.submit(lambda: "y").result(timeout=1) == "y"
-
-    started = threading.Event()
-    release = threading.Event()
-
-    def block():
-        started.set()
-        release.wait(5)
-
-    gate.submit(block)
-    assert started.wait(1)
-    pending = gate.shutdown(timeout_s=0.2)
-    assert pending == 1
-    release.set()
-    deadline = time.time() + 2
-    while gate.pending() and time.time() < deadline:
-        time.sleep(0.05)
-    assert gate.pending() == 0
+        worker = threading.Thread(target=block)
+        worker.start()
+        end = time.monotonic() + 1
+        while time.monotonic() < end and not os.path.exists(started):
+            time.sleep(0.01)
+        assert os.path.exists(started)
+        pending = gate.shutdown(timeout_s=1)
+        worker.join(1)
+        assert pending == 0
+        assert worker.is_alive() is False
+        assert gate.pending() == 0
+    finally:
+        gate.shutdown()
 
 
 def test_check_zip_rejects_unsafe_archives(tmp_path):

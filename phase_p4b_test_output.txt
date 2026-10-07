@@ -1,58 +1,95 @@
-# P4B bundle (5) test output
-# Recorded 2026-10-02. Commands below were executed in this session.
+# P4B bundle (12) test output
+# Commands were run from the repository root unless a directory is shown.
+# Skipped tests are not counted as PASS.
 
-cd apps/api
-gofmt -w internal/index/migration_repair_test.go internal/index/pipeline_integration_test.go
-gofmt -l .
-# exit 0, no files listed
+## apps/ai-service
 
-go test ./...
-# exit 0
+command: cd apps/ai-service && .venv/bin/python -m pytest -q --tb=line
+exit: 0
+171 passed, 2 skipped, 2 warnings in 35.65s
 
-go vet ./...
-# exit 0
+command: PYTHONPYCACHEPREFIX=/tmp/cas-pyc .venv/bin/python -m compileall -q app tests
+exit: 0
 
-go test -race ./...
-# exit 0
+skipped, not PASS:
+SKIPPED apps/ai-service/tests/test_p4b_services.py:21: set CAS_P4B_INTEGRATION=1
+  test_pipeline_writes_postgres_and_qdrant_from_minio
+SKIPPED apps/ai-service/tests/test_p4b_services.py:155: set CAS_P4B_INTEGRATION=1
+  test_qdrant_faults_against_a_real_server
 
-CAS_INTEGRATION=1 DATABASE_URL=postgres://cas:cas@127.0.0.1:5432/citizen_assistance?sslmode=disable \
-  go test -tags integration -count=1 ./internal/index/
-# exit 0, 8.767s
-# includes TestMigration16RoundTripKeepsGenerationRows and TestTwoReapersClaimOneGeneration
-# database was not migrated down
+## container supervision
 
-cd apps/ai-service
-.venv/bin/python -m pytest
-# exit 0
-# 121 passed, 2 skipped, 2 warnings
-# SKIPPED tests/test_p4b_services.py:21: set CAS_P4B_INTEGRATION=1
-# SKIPPED tests/test_p4b_services.py:157: set CAS_P4B_INTEGRATION=1
+command: bash scripts/p4b-container-supervision-test.sh
+exit: 0
 
-PYTHONPYCACHEPREFIX=/tmp/cas-pyc .venv/bin/python -m compileall -q app tests
-# exit 0
+The script printed and executed these commands:
 
-cd apps/web
-npm ci
-npm run test:ci
-# exit 0
-# Test Files 4 passed, Tests 18 passed
-# production bundle hygiene: PASS (3 assets, indexing off)
-# production bundle hygiene: PASS (6 assets, indexing on)
+COMMAND: docker build -f /Users/minhtuan25/Desktop/MinhTuanCode/MasterAI/citizen-assistance-system/apps/ai-service/Dockerfile -t citizen-assistance-ai-service:supervision /Users/minhtuan25/Desktop/MinhTuanCode/MasterAI/citizen-assistance-system
+COMMAND: docker run --rm --entrypoint sh citizen-assistance-ai-service:supervision -c command\ -v\ ps
+ps=absent
+COMMAND: docker run --rm --entrypoint python citizen-assistance-ai-service:supervision -c import\ importlib.util\,\ os\,\ sys\;\ sys.exit\(0\ if\ importlib.util.find_spec\(\"pytest\"\)\ is\ None\ and\ not\ os.path.exists\(\"/app/tests\"\)\ else\ 1\)
+pytest=absent tests=absent
+COMMAND: docker run --rm --init -v /Users/minhtuan25/Desktop/MinhTuanCode/MasterAI/citizen-assistance-system/apps/ai-service/tests:/opt/cas-tests:ro -e AI_SERVICE_TOKEN=test-service-token -e LLM_PROVIDER=mock -e PYTHONPYCACHEPREFIX=/tmp/cas-pyc -e PYTHONDONTWRITEBYTECODE=1 --entrypoint python citizen-assistance-ai-service:supervision -c $'import shutil,sys,subprocess\nassert shutil.which("ps") is None, "ps leaked into the production image"\nsubprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pytest==8.3.4"])\nraise SystemExit(subprocess.call([sys.executable, "-m", "pytest", "-q", "--tb=short", "-p", "no:cacheprovider", "/opt/cas-tests/test_p4b_bundle10.py", "/opt/cas-tests/test_p4b_bundle8.py", "/opt/cas-tests/test_p4b_bundle7.py"]))'
+26 passed in 25.50s
 
-cd <repo>
-docker compose -f deploy/docker-compose.yml config
-# exit 0
+pytest==8.3.4 is installed only inside that ephemeral container. The production image is not committed with pytest, tests, procps, weights, or secrets.
 
-docker build -t cas-ai:p4b-review5 -f apps/ai-service/Dockerfile .
-# exit 0
+## apps/api
 
-python3 scripts/p4b-model-smoke.py
-# exit 2
+command: gofmt -l .
+exit: 0
+no files listed
+
+command: go test ./...
+exit: 0
+
+command: go vet ./...
+exit: 0
+
+command: go test -race ./...
+exit: 0
+
+command: CAS_INTEGRATION=1 DATABASE_URL=postgres://cas:cas@127.0.0.1:5432/citizen_assistance?sslmode=disable go test -tags=integration ./internal/index/ -count=1 -timeout 180s -run 'TestMigration16RoundTripKeepsGenerationRows|TestTwoReapersClaimOneGeneration|TestReaperFailsExpiredStagingAndKeepsActiveGeneration|TestReaperSkipsGenerationPublishedBeforeClaim|TestFinishAfterCleanupClaimDoesNotPublish|TestExpiredClaimDoesNotPublish'
+exit: 0
+ok  	github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/index	2.809s
+The shared database citizen_assistance was not dropped.
+
+## apps/web
+
+command: npm ci && npm run test:ci && npm run build
+exit: 0
+Test Files  4 passed (4)
+Tests  18 passed (18)
+production bundle hygiene: PASS (3 assets, indexing off)
+production bundle hygiene: PASS (6 assets, indexing on)
+vite build exit 0
+
+## compose
+
+command: docker compose --profile app --profile ai --profile storage --profile qdrant config
+exit: 0
+
+command: docker compose --profile app --profile ai --profile storage --profile qdrant build
+exit: 0
+Image citizen-assistance-api Built
+Image citizen-assistance-ai-service Built
+Image citizen-assistance-web Built
+
+## model and RunPod
+
+command: python3 scripts/p4b-model-smoke.py
+exit: 2
 manifest_verification=pending
 runtime_compatibility=pending
 forward_pass=pending
 P4B_MODEL_SMOKE_PENDING
 
-GitHub Actions: WORKFLOW_NOT_RUN
+RUNPOD_S3_LIVE_SMOKE_PENDING
+OBJECT_STORAGE_ENDPOINT, OBJECT_STORAGE_ACCESS_KEY, OBJECT_STORAGE_SECRET_KEY, OBJECT_STORAGE_BUCKET, and OBJECT_STORAGE_REGION were unset.
 
-ZIP hygiene: PASS (phase_p4b_document_content_bundle(5).zip)
+WORKFLOW_NOT_RUN
+.github/workflows/ci.yml contains job ai-supervision, but that workflow was not executed on GitHub.
+
+P4B_CODE_READY_FOR_RUNPOD_AND_REAL_MODEL_SMOKE
+
+ZIP hygiene: PASS (phase_p4b_document_content_bundle(12).zip)

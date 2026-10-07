@@ -57,11 +57,13 @@ func main() {
 	var objects storage.ObjectStore
 	if cfg.AdminIngestionEnabled {
 		client, err := storage.NewMinIO(storage.MinIOConfig{
-			Endpoint:  cfg.ObjectStorageEndpoint,
-			AccessKey: cfg.ObjectStorageAccessKey,
-			SecretKey: cfg.ObjectStorageSecretKey,
-			Bucket:    cfg.ObjectStorageBucket,
-			UseSSL:    cfg.ObjectStorageUseSSL,
+			Endpoint:         cfg.ObjectStorageEndpoint,
+			AccessKey:        cfg.ObjectStorageAccessKey,
+			SecretKey:        cfg.ObjectStorageSecretKey,
+			Bucket:           cfg.ObjectStorageBucket,
+			UseSSL:           cfg.ObjectStorageUseSSL,
+			Region:           cfg.ObjectStorageRegion,
+			AutoCreateBucket: cfg.ObjectStorageAutoCreateBucket,
 		})
 		if err != nil {
 			logger.Error("object storage is not ready")

@@ -45,6 +45,36 @@ def _env_float(name: str, default: float) -> float:
     return value
 
 
+def _is_runpod(endpoint: str) -> bool:
+    return "runpod" in (endpoint or "").lower()
+
+
+def _bounded_float(name: str, default: float, low: float, high: float) -> float:
+    value = _env_float(name, default)
+    if value < low or value > high:
+        raise ConfigError(f"{name} must be between {low} and {high}")
+    return value
+
+
+def _auto_create_bucket(endpoint: str) -> bool:
+    raw = os.getenv("OBJECT_STORAGE_AUTO_CREATE_BUCKET")
+    explicit = raw is not None and raw.strip() != ""
+    if explicit:
+        token = raw.strip().lower()
+        if token not in ("1", "true", "yes", "on", "0", "false", "no", "off"):
+            raise ConfigError("OBJECT_STORAGE_AUTO_CREATE_BUCKET must be true or false")
+        flag = token in ("1", "true", "yes", "on")
+    else:
+        flag = not _is_runpod(endpoint)
+    if _is_runpod(endpoint):
+        if not os.getenv("OBJECT_STORAGE_REGION", "").strip():
+            raise ConfigError("OBJECT_STORAGE_REGION is required for RunPod object storage")
+        if flag:
+            raise ConfigError("OBJECT_STORAGE_AUTO_CREATE_BUCKET must be false for RunPod object storage")
+        return False
+    return flag
+
+
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
@@ -82,6 +112,9 @@ class Settings:
     max_pdf_pages: int = 50
     max_ocr_pages: int = 20
     embed_batch_size: int = 8
+    termination_grace_s: float = 1.0
+    object_region: str = ""
+    object_auto_create_bucket: bool = True
 
     def provider_ready(self) -> tuple[bool, str | None]:
         """Returns (ready, reason_if_not). Used by /ready — fail closed."""
@@ -195,6 +228,9 @@ def load_settings() -> Settings:
         max_pdf_pages=_bounded_int("INDEX_MAX_PDF_PAGES", 50, 1, 500),
         max_ocr_pages=_bounded_int("INDEX_MAX_OCR_PAGES", 20, 1, 100),
         embed_batch_size=_bounded_int("EMBED_BATCH_SIZE", 8, 1, 32),
+        termination_grace_s=_bounded_float("INDEX_TERMINATION_GRACE_SECONDS", 1.0, 0.05, 5.0),
+        object_region=os.getenv("OBJECT_STORAGE_REGION", "").strip(),
+        object_auto_create_bucket=_auto_create_bucket(os.getenv("OBJECT_STORAGE_ENDPOINT", "")),
     )
 
 

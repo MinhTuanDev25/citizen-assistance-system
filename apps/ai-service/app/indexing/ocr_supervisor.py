@@ -4,24 +4,22 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import os
+import threading
 import time
 from multiprocessing.connection import Connection
 
 from app.indexing.errors import IndexFailure
 
-_STATUSES = ("initializing", "ready", "failed", "timed_out")
-
-
-def _replacement_budget(deadline) -> float | None:
-    if deadline is None:
-        return None
-    try:
-        return deadline.remaining()
-    except IndexFailure:
-        return 0.0
+_STATUSES = ("initializing", "ready", "recovering", "failed", "timed_out")
+_STATE_CODE = {"ready": 1, "recovering": 2, "initializing": 2, "failed": 3, "timed_out": 3, "stopped": 3}
 
 
 def _worker(conn: Connection, spec: dict) -> None:
+    """Stay in the pipeline process group. Do not arm parent-death.
+
+    Recovery runs on a short-lived thread. Linux sends PR_SET_PDEATHSIG when
+    that thread exits, which would kill the replacement worker.
+    """
     kind = spec.get("kind")
     try:
         if kind == "fake":
@@ -79,9 +77,14 @@ class OcrSupervisor:
         self._ctx = mp.get_context("spawn")
         self._idle: list[tuple[mp.Process, Connection]] = []
         self._active: list[tuple[mp.Process, Connection]] = []
-        self._sem = __import__("threading").BoundedSemaphore(self.slots)
-        self._guard = __import__("threading").Lock()
+        self._sem = threading.BoundedSemaphore(self.slots)
+        self._guard = threading.Lock()
+        self._spawn_lock = threading.Lock()
         self._closed = False
+        self._booting: list = []
+        self._recovery_thread = None
+        self._state = None
+        self.max_recoveries = 1
 
     def start(self, timeout_s: float) -> None:
         self.status = "initializing"
@@ -97,11 +100,34 @@ class OcrSupervisor:
                 self.status = "failed"
             raise
         self.status = "ready"
+        self._publish()
+
+    def bind_state(self, state) -> None:
+        self._state = state
+        self._publish()
+
+    def accepting(self) -> bool:
+        return self.status == "ready" and not self._closed
+
+    def wait_settled(self, timeout_s: float = 2.0) -> str:
+        thread = self._recovery_thread
+        if thread is not None:
+            thread.join(timeout_s)
+        return self.status
+
+    def _publish(self) -> None:
+        if self._state is None:
+            return
+        self._state.value = _STATE_CODE.get(self.status, 3)
+
+    def _set_status(self, status: str) -> None:
+        self.status = status
+        self._publish()
 
     def read_page(self, image, page_number: int, timeout_s: float = 30, deadline=None) -> str:
         if deadline is not None:
             timeout_s = deadline.timeout_for_io(timeout_s)
-        if self.status != "ready" or self._closed:
+        if not self._await_ready(timeout_s):
             raise IndexFailure("ocr_model_missing")
         if not self._sem.acquire(blocking=False):
             raise IndexFailure("pipeline_busy")
@@ -114,9 +140,16 @@ class OcrSupervisor:
             conn.send({"op": "ocr", "image": image, "page": page_number})
             end = time.monotonic() + timeout_s
             ready = False
+            deadline_hit = False
             while True:
                 if self._closed:
                     break
+                if deadline is not None:
+                    try:
+                        deadline.check()
+                    except IndexFailure:
+                        deadline_hit = True
+                        break
                 left = end - time.monotonic()
                 if left <= 0:
                     break
@@ -125,21 +158,21 @@ class OcrSupervisor:
                     break
             if not ready:
                 checked_out = False
-                self._retire(worker, replace_budget=_replacement_budget(deadline))
-                raise IndexFailure("ocr_timeout")
+                self._retire(worker)
+                raise IndexFailure("timeout" if deadline_hit else "ocr_timeout")
             try:
                 msg = conn.recv()
             except (EOFError, OSError) as exc:
                 checked_out = False
-                self._retire(worker, replace_budget=_replacement_budget(deadline))
+                self._retire(worker)
                 raise IndexFailure("ocr_failed") from exc
             if proc.exitcode not in (None, 0) or not isinstance(msg, dict) or msg.get("event") != "result":
                 checked_out = False
-                self._retire(worker, replace_budget=_replacement_budget(deadline))
+                self._retire(worker)
                 raise IndexFailure("ocr_failed")
             if msg.get("page") not in (None, page_number):
                 checked_out = False
-                self._retire(worker, replace_budget=_replacement_budget(deadline))
+                self._retire(worker)
                 raise IndexFailure("ocr_failed")
             if deadline is not None:
                 deadline.check()
@@ -152,15 +185,27 @@ class OcrSupervisor:
     def shutdown(self) -> None:
         with self._guard:
             self._closed = True
+        with self._spawn_lock:
+            pass
+        with self._guard:
             workers = list(self._idle) + list(self._active)
+            booting = list(self._booting)
             self._idle = []
             self._active = []
+            self._booting = []
+        for proc in booting:
+            if proc.is_alive():
+                proc.kill()
+            proc.join(1)
         for proc, conn in workers:
             self._kill_joined(proc, conn)
+        thread = self._recovery_thread
+        if thread is not None:
+            thread.join(2)
         if self.status == "initializing":
-            self.status = "failed"
-        elif self.status == "ready":
-            self.status = "stopped"
+            self._set_status("failed")
+        else:
+            self._set_status("stopped")
 
     def worker_count(self) -> int:
         return self.alive_workers()
@@ -178,26 +223,55 @@ class OcrSupervisor:
             return len(self._active)
 
     def _spawn(self, timeout_s: float) -> None:
-        if self._closed:
-            raise IndexFailure("ocr_failed")
-        parent, child = self._ctx.Pipe(duplex=True)
-        proc = self._ctx.Process(target=_worker, args=(child, dict(self.spec)), daemon=False)
-        self.spawn_count += 1
-        proc.start()
-        child.close()
+        with self._spawn_lock:
+            with self._guard:
+                if self._closed:
+                    raise IndexFailure("ocr_failed")
+                parent, child = self._ctx.Pipe(duplex=True)
+                proc = self._ctx.Process(target=_worker, args=(child, dict(self.spec)), daemon=False)
+                self.spawn_count += 1
+                self._booting.append(proc)
+            delay = float(self.spec.get("start_delay_s") or 0)
+            if delay:
+                time.sleep(delay)
+            with self._guard:
+                if self._closed:
+                    self._booting = [item for item in self._booting if item is not proc]
+                    child.close()
+                    parent.close()
+                    raise IndexFailure("ocr_failed")
+            proc.start()
+            child.close()
+            with self._guard:
+                if self._closed:
+                    self._abort_started(proc, parent)
+                    raise IndexFailure("ocr_failed")
         if not parent.poll(timeout_s):
+            self._forget_booting(proc)
             self._kill_joined(proc, parent)
             raise IndexFailure("ocr_timeout")
         try:
             msg = parent.recv()
         except (EOFError, OSError) as exc:
+            self._forget_booting(proc)
             self._kill_joined(proc, parent)
             raise IndexFailure("ocr_failed") from exc
         if not isinstance(msg, dict) or msg.get("event") != "ready" or not proc.is_alive():
+            self._forget_booting(proc)
             self._kill_joined(proc, parent)
             raise IndexFailure("ocr_failed")
         with self._guard:
+            self._booting = [item for item in self._booting if item is not proc]
             self._idle.append((proc, parent))
+
+    def _abort_started(self, proc: mp.Process, conn: Connection) -> None:
+        with self._guard:
+            self._booting = [item for item in self._booting if item is not proc]
+        self._kill_joined(proc, conn)
+
+    def _forget_booting(self, proc: mp.Process) -> None:
+        with self._guard:
+            self._booting = [item for item in self._booting if item is not proc]
 
     def _checkout(self) -> tuple[mp.Process, Connection]:
         with self._guard:
@@ -214,26 +288,56 @@ class OcrSupervisor:
                 self._idle.append(worker)
 
     def _retire(self, worker: tuple[mp.Process, Connection], replace_budget: float | None = None) -> None:
+        del replace_budget
         with self._guard:
             self._active = [item for item in self._active if item[0] is not worker[0]]
             self._idle = [item for item in self._idle if item[0] is not worker[0]]
         self._kill_joined(worker[0], worker[1])
         if self._closed:
-            self.status = "stopped"
-            return
-        if replace_budget is not None and replace_budget <= 0:
-            self.status = "timed_out"
+            self._set_status("stopped")
             return
         recover = self.spec.get("recover")
         if recover:
             self.spec = {**self.spec, "behavior": recover}
-        budget = self.replace_timeout_s if replace_budget is None else replace_budget
-        try:
-            self._spawn(budget)
-        except IndexFailure as exc:
-            if self.alive_workers() < self.slots:
-                self.status = "timed_out" if exc.code == "ocr_timeout" else "failed"
-            raise
+        self._schedule_recovery()
+
+    def _await_ready(self, timeout_s: float) -> bool:
+        if self.status == "ready" and not self._closed:
+            return True
+        thread = self._recovery_thread
+        if thread is not None:
+            thread.join(max(0.0, timeout_s))
+        return self.status == "ready" and not self._closed
+
+    def _schedule_recovery(self) -> None:
+        with self._guard:
+            if self._closed:
+                return
+            if self._recovery_thread is not None and self._recovery_thread.is_alive():
+                return
+            self._set_status("recovering")
+            thread = threading.Thread(target=self._recover, name="ocr-recovery")
+            self._recovery_thread = thread
+        thread.start()
+
+    def _recover(self) -> None:
+        delay = 0.02
+        for _attempt in range(self.max_recoveries):
+            if self._closed:
+                return
+            time.sleep(delay)
+            if self._closed:
+                return
+            try:
+                self._spawn(self.replace_timeout_s)
+            except IndexFailure:
+                delay = min(delay * 2, 0.5)
+                continue
+            if self.alive_workers() >= 1:
+                self._set_status("ready")
+                return
+        if self.alive_workers() < 1:
+            self._set_status("failed")
 
     def _kill_joined(self, proc: mp.Process, conn: Connection) -> None:
         try:

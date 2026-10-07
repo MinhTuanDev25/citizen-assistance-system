@@ -51,16 +51,23 @@ except ConfigError as exc:
 from app.indexing.runtime import IndexGate, build_models, current_health
 
 _models = None
-_gate = IndexGate(_settings.index_max_inflight)
+_gate = IndexGate(
+    _settings.index_max_inflight,
+    grace_s=_settings.termination_grace_s,
+    recovery_timeout_s=min(30.0, float(_settings.pipeline_timeout_s)),
+    kind="pipeline" if _settings.index_mode == "pipeline" else "stage",
+)
 
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     global _models
     if _settings.index_mode == "pipeline":
-        _models = build_models(_settings)
+        _gate.kind = "pipeline"
+        _gate.start(_settings.pipeline_timeout_s)
+        _models = ("worker", "worker", "worker")
     yield
-    _gate.shutdown(timeout_s=5, models=_models)
+    _gate.shutdown(timeout_s=5, models=None if _gate.started else _models)
 
 
 app = FastAPI(title="cas-ai-service", version="0.2.0", lifespan=_lifespan)
@@ -104,15 +111,38 @@ class _ExtractBodyLimit:
                 break
 
         sent = False
+        disconnect = asyncio.Event()
+        finished = asyncio.Event()
+        scope["cas_client_disconnected"] = disconnect
+        state = scope.setdefault("state", {})
+        if isinstance(state, dict):
+            state["client_disconnected"] = disconnect
 
         async def replay():
             nonlocal sent
-            if sent:
-                return {"type": "http.disconnect"}
-            sent = True
-            return {"type": "http.request", "body": body, "more_body": False}
+            if not sent:
+                sent = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            await finished.wait()
+            return {"type": "http.disconnect"}
 
-        await self.app(scope, replay, send)
+        async def watch_disconnect() -> None:
+            while True:
+                message = await receive()
+                if message["type"] == "http.disconnect":
+                    disconnect.set()
+                    return
+
+        watcher = asyncio.create_task(watch_disconnect())
+        try:
+            await self.app(scope, replay, send)
+        finally:
+            finished.set()
+            watcher.cancel()
+            try:
+                await watcher
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 app.add_middleware(_ExtractBodyLimit)
@@ -142,7 +172,7 @@ def health() -> dict[str, str]:
 def ready() -> JSONResponse:
     settings = get_settings()
     ok, reason = settings.provider_ready()
-    health = current_health(settings, _models, force=True) if ok else {
+    health = current_health(settings, _models, force=True, gate=_gate) if ok else {
         "ready": False,
         "reason": reason,
         "checked_at": None,
@@ -155,7 +185,10 @@ def ready() -> JSONResponse:
         "ocr_workers_expected": 0,
         "ocr_workers_alive": 0,
     }
-    if ok and not _gate.serving:
+    if ok and _gate.started and _gate.status != "ready":
+        ok = False
+        reason = _gate.blocked_reason()
+    elif ok and not _gate.serving:
         ok = False
         reason = "pipeline_busy"
     elif ok:
@@ -174,6 +207,8 @@ def ready() -> JSONResponse:
         "ocr_status": health.get("ocr_status"),
         "ocr_workers_expected": health.get("ocr_workers_expected"),
         "ocr_workers_alive": health.get("ocr_workers_alive"),
+        "ocr_workers_recovering": health.get("ocr_workers_recovering", 0),
+        "ocr_workers_failed": health.get("ocr_workers_failed", 0),
         "index_mode": settings.index_mode,
         "embedding_provider": settings.embedding_provider,
         "ocr_provider": settings.ocr_provider,
@@ -194,8 +229,11 @@ def status() -> dict:
     }
     body.update(settings.status_dict())
     provider_ok, provider_reason = settings.provider_ready()
-    health = current_health(settings, _models)
-    if provider_ok and not _gate.serving:
+    health = current_health(settings, _models, gate=_gate)
+    if provider_ok and _gate.started and _gate.status != "ready":
+        body["ready"] = False
+        body["reason"] = _gate.blocked_reason()
+    elif provider_ok and not _gate.serving:
         body["ready"] = False
         body["reason"] = "pipeline_busy"
     elif provider_ok:
@@ -215,6 +253,8 @@ def status() -> dict:
     body["ocr_status"] = health.get("ocr_status")
     body["ocr_workers_expected"] = health.get("ocr_workers_expected")
     body["ocr_workers_alive"] = health.get("ocr_workers_alive")
+    body["ocr_workers_recovering"] = health.get("ocr_workers_recovering", 0)
+    body["ocr_workers_failed"] = health.get("ocr_workers_failed", 0)
     return body
 
 
@@ -300,11 +340,49 @@ async def index_document(http_request: Request):
             from app.indexing.deadline import Deadline
 
             clock = Deadline(settings.pipeline_timeout_s)
-            future = _gate.submit(lambda: _run_v2(body, settings, clock))
-            return await asyncio.wait_for(asyncio.wrap_future(future), clock.remaining())
+            budget = settings.pipeline_timeout_s + _gate.grace_s + 0.25
+            disconnect = http_request.scope.get("cas_client_disconnected")
+            if disconnect is None:
+                disconnect = http_request.scope.get("state", {}).get("client_disconnected")
+            message = {
+                "op": "pipeline",
+                "body": body.model_dump(mode="json"),
+                "timeout_s": settings.pipeline_timeout_s,
+            }
+            handle = await asyncio.to_thread(_gate.submit, message, settings.pipeline_timeout_s)
+
+            async def _on_disconnect() -> None:
+                if disconnect is None:
+                    return
+                await disconnect.wait()
+                clock.cancel()
+                await asyncio.to_thread(_gate.cancel, handle)
+
+            follower = asyncio.create_task(_on_disconnect())
+            try:
+                reply = await asyncio.wait_for(
+                    asyncio.to_thread(_gate.wait, handle, settings.pipeline_timeout_s),
+                    budget,
+                )
+            except asyncio.CancelledError:
+                clock.cancel()
+                await asyncio.shield(asyncio.to_thread(_gate.cancel, handle))
+                raise
+            finally:
+                follower.cancel()
+                try:
+                    await follower
+                except (asyncio.CancelledError, Exception):
+                    pass
+            payload = reply.get("body") if isinstance(reply, dict) else None
+            if not isinstance(payload, dict):
+                return _failed(body, "worker_failed")
+            return IndexResponseV2.model_validate(payload)
         except IndexFailure as exc:
             return _failed(body, exc.code)
         except asyncio.TimeoutError:
+            clock.cancel()
+            await asyncio.shield(asyncio.to_thread(_gate.cancel, handle))
             return _failed(body, "timeout")
     raise HTTPException(status_code=422, detail={"reason": "schema_version"})
 

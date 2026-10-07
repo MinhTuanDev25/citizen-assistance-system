@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import threading
 import time
 import uuid
@@ -53,53 +54,57 @@ def test_subword_counter_splits_past_512_without_dropping_the_tail():
 def test_model_builder_is_called_once_and_gate_holds_the_slot():
     from app import main
 
-    calls = {"n": 0}
-
-    def fake_build(_settings):
-        calls["n"] += 1
-        return ("embedder", "ocr", "renderer")
-
-    original = main.build_models
     mode = main._settings.index_mode
-    main.build_models = fake_build
     object.__setattr__(main._settings, "index_mode", "pipeline")
 
     async def boot():
         async with main.app.router.lifespan_context(main.app):
-            first = main._models
-            second = main._models
-            assert first == ("embedder", "ocr", "renderer")
-            assert second is first
+            assert main._gate.boot_count == 1
+            first = main._gate.call({"op": "ping"}, 2)
+            second = main._gate.call({"op": "ping"}, 2)
+            assert first["pid"] == second["pid"]
+            assert main._gate.boot_count == 1
 
     try:
         asyncio.run(boot())
     finally:
-        main.build_models = original
         object.__setattr__(main._settings, "index_mode", mode)
         main._models = None
+        main._gate.shutdown()
         main._gate = IndexGate(main._settings.index_max_inflight)
-    assert calls["n"] == 1
-    gate = IndexGate(1)
-    started = threading.Event()
+    gate = IndexGate(1, grace_s=0.08, recovery_timeout_s=2)
+    gate.start()
+    started = "/tmp/cas-review-started"
+    wrote = "/tmp/cas-review-wrote"
+    for path in (started, wrote):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    pid = gate.worker_pids()[0]
+    before = [item for item in threading.enumerate() if item.daemon and item.name == "index-pipeline"]
+    try:
+        with pytest.raises(IndexFailure) as timed:
+            gate.call({"op": "hang", "stage": "parser", "seconds": 0.35, "started_path": started, "wrote_path": wrote}, 0.05)
+        assert timed.value.code == "timeout"
+        assert os.path.exists(started)
+        assert os.path.exists(wrote) is False
+        assert gate.pending() == 0
+        assert _pid_alive(pid) is False
+        nxt = gate.call({"op": "ping"}, 2)
+        assert nxt["event"] == "pong"
+        assert nxt["pid"] != pid
+    finally:
+        gate.shutdown()
+        assert before == [item for item in threading.enumerate() if item.daemon and item.name == "index-pipeline"]
 
-    def slow():
-        started.set()
-        time.sleep(0.4)
-        return "done"
 
-    before = len([item for item in threading.enumerate() if item.daemon and item.name.startswith("ocr")])
-    with pytest.raises(IndexFailure) as timed:
-        gate.run(slow, 0.05)
-    assert timed.value.code == "timeout"
-    assert started.is_set()
-    with pytest.raises(IndexFailure) as busy:
-        gate.run(lambda: "nope", 1)
-    assert busy.value.code == "pipeline_busy"
-    time.sleep(0.5)
-    assert gate.run(lambda: "later", 1) == "later"
-    after = len([item for item in threading.enumerate() if item.daemon and item.name.startswith("ocr")])
-    assert after == before
-    gate.shutdown()
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
 
 
 def test_health_answers_while_index_worker_is_busy():
@@ -108,18 +113,18 @@ def test_health_answers_while_index_worker_is_busy():
     from app import main
     from tests.conftest import AUTH_HEADER
 
-    started = threading.Event()
-    release = threading.Event()
-
-    def slow(*_args, **_kwargs):
-        started.set()
-        release.wait(2)
-        return {"outcome": "READY"}
-
-    original = main._run_v2
     mode = main._settings.index_mode
-    main._run_v2 = slow
-    main._gate = IndexGate(1)
+    gate = IndexGate(1, grace_s=0.1, recovery_timeout_s=2)
+    gate.start()
+    started = "/tmp/cas-health-started"
+    release = "/tmp/cas-health-release"
+    for path in (started, release):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    gate.arm_hold(started, release, 5)
+    main._gate = gate
     object.__setattr__(main._settings, "index_mode", "pipeline")
 
     async def scenario():
@@ -146,19 +151,19 @@ def test_health_answers_while_index_worker_is_busy():
                 )
             )
             for _ in range(50):
-                if started.is_set():
+                if os.path.exists(started):
                     break
                 await asyncio.sleep(0.02)
-            assert started.is_set()
+            assert os.path.exists(started)
             health = await client.get("/health")
-            release.set()
+            open(release, "w", encoding="utf-8").close()
             indexed = await index_task
         return health, indexed
 
     try:
         health, indexed = asyncio.run(scenario())
     finally:
-        main._run_v2 = original
+        open(release, "a", encoding="utf-8").close()
         main._gate.shutdown()
         main._gate = IndexGate(main._settings.index_max_inflight)
         object.__setattr__(main._settings, "index_mode", mode)

@@ -134,7 +134,8 @@ for need in \
   docs/models/ocr.manifest.example.json \
   deploy/migrations/000016_p4b_cleanup_claim.up.sql \
   deploy/migrations/000016_p4b_cleanup_claim.down.sql \
-  scripts/p4b_bundle.py
+  scripts/p4b_bundle.py \
+  scripts/p4b-container-supervision-test.sh
 do
   if ! has_entry "$need"; then
     echo "FAIL: missing required path in zip: $need" >&2

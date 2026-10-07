@@ -20,10 +20,13 @@ pytestmark = pytest.mark.skipif(os.getenv("CAS_P4B_INTEGRATION") != "1", reason=
 
 def test_pipeline_writes_postgres_and_qdrant_from_minio():
     import psycopg
-    from minio import Minio
+    from app.indexing.object_storage import ensure_bucket, open_client, storage_config
 
     dsn = os.environ["DATABASE_URL"]
-    endpoint = os.environ.get("OBJECT_STORAGE_ENDPOINT", "127.0.0.1:9000")
+    os.environ.setdefault("OBJECT_STORAGE_ENDPOINT", "127.0.0.1:9000")
+    os.environ.setdefault("OBJECT_STORAGE_ACCESS_KEY", "minioadmin")
+    os.environ.setdefault("OBJECT_STORAGE_SECRET_KEY", "minioadmin")
+    os.environ.setdefault("OBJECT_STORAGE_AUTO_CREATE_BUCKET", "true")
     qdrant = os.environ.get("QDRANT_URL", "http://127.0.0.1:6333")
     data = (Path(__file__).parent / "fixtures" / "native.pdf").read_bytes()
     checksum = hashlib.sha256(data).hexdigest()
@@ -33,14 +36,9 @@ def test_pipeline_writes_postgres_and_qdrant_from_minio():
     request_id = uuid.uuid4()
     claim = uuid.uuid4()
     key = f"xa_chu_se/documents/{doc_id}/{checksum}.pdf"
-    client = Minio(
-        endpoint,
-        access_key=os.environ.get("OBJECT_STORAGE_ACCESS_KEY", "minioadmin"),
-        secret_key=os.environ.get("OBJECT_STORAGE_SECRET_KEY", "minioadmin"),
-        secure=False,
-    )
-    if not client.bucket_exists("cas-documents"):
-        client.make_bucket("cas-documents")
+    cfg = storage_config()
+    client = open_client(config=cfg)
+    ensure_bucket(client, "cas-documents", cfg["auto_create"] or True)
     client.put_object("cas-documents", key, __import__("io").BytesIO(data), len(data), content_type="application/pdf")
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:

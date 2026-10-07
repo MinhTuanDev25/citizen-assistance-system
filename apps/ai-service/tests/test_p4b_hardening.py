@@ -34,7 +34,9 @@ def test_ocr_hang_is_killed_and_the_next_call_works():
         with pytest.raises(IndexFailure) as raised:
             sup.read_page(None, 1, timeout_s=0.2)
         assert raised.value.code == "ocr_timeout"
-        assert time.perf_counter() - started < 3
+        assert time.perf_counter() - started < 1
+        sup.wait_settled(2)
+        assert sup.status == "ready"
         assert sup.worker_count() == 1
         assert sup.read_page(None, 1, timeout_s=2) == "ok"
         assert sup.worker_count() == 1
@@ -228,6 +230,7 @@ def test_check_zip_fails_when_a_model_module_is_missing(tmp_path):
         "deploy/migrations/000016_p4b_cleanup_claim.up.sql",
         "deploy/migrations/000016_p4b_cleanup_claim.down.sql",
         "scripts/p4b_bundle.py",
+        "scripts/p4b-container-supervision-test.sh",
     ]
     archive = tmp_path / "bundle.zip"
 

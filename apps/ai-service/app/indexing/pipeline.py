@@ -260,7 +260,7 @@ def run_pipeline(
         if qdrant_started and hasattr(deps.vectors, "delete_generation"):
             try:
                 deps.vectors.delete_generation(job.generation_id, deadline=Deadline(CLEANUP_BUDGET_S))
-            except IndexFailure:
+            except Exception:
                 log.warning("qdrant_cleanup_failed code=qdrant_failed")
         raise
     stage["write"] = _ms(mark)

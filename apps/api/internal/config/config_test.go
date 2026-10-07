@@ -172,3 +172,32 @@ func TestIndexLeaseMustExceedTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRunPodRejectsNonTLSPort(t *testing.T) {
+	if err := runPodPortError("https://s3api-eu-ro-1.runpod.io:9000"); err == nil || !strings.Contains(err.Error(), "443") {
+		t.Fatalf("https port: %v", err)
+	}
+	if err := runPodPortError("s3api-eu-ro-1.runpod.io:9000"); err == nil || !strings.Contains(err.Error(), "443") {
+		t.Fatalf("hostname port: %v", err)
+	}
+	if err := runPodPortError("https://s3api-eu-ro-1.runpod.io"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runPodPortError("s3api-eu-ro-1.runpod.io:443"); err != nil {
+		t.Fatal(err)
+	}
+	secret := "super-secret-value"
+	err := validateIngestionConfig(Config{
+		AdminIngestionEnabled:      true,
+		ObjectStorageEndpoint:      "https://s3api-eu-ro-1.runpod.io:9000",
+		ObjectStorageAccessKey:     secret,
+		ObjectStorageSecretKey:     secret,
+		ObjectStorageBucket:        "volume",
+		ObjectStorageSSLConfigured: true,
+		ObjectStorageUseSSL:        true,
+		ObjectStorageRegion:        "eu-ro-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "443") || strings.Contains(err.Error(), secret) {
+		t.Fatalf("ingestion port: %v", err)
+	}
+}

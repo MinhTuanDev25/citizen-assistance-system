@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import uuid
@@ -66,8 +67,8 @@ def test_qdrant_cleanup_requires_completed_and_exact_zero():
     def clean(request: httpx.Request) -> httpx.Response:
         cases.append(request.url.path)
         if request.url.path.endswith("/points/delete"):
-            return httpx.Response(200, json={"result": {"status": "completed"}})
-        return httpx.Response(200, json={"result": {"count": 0}})
+            return httpx.Response(200, json={"status": "ok", "result": {"status": "completed"}})
+        return httpx.Response(200, json={"status": "ok", "result": {"count": 0}})
 
     writer = QdrantWriter("http://qdrant", "knowledge_chunks")
     original, client = _http_client(clean)
@@ -482,12 +483,12 @@ def test_onnx_callers_do_not_overlap_the_pipe():
     guard = threading.Lock()
     original = proc._exchange
 
-    def wrapped(payload, timeout_s):
+    def wrapped(payload, timeout_s, deadline=None):
         with guard:
             state["n"] += 1
             state["max"] = max(state["max"], state["n"])
         try:
-            return original(payload, timeout_s)
+            return original(payload, timeout_s, deadline)
         finally:
             with guard:
                 state["n"] -= 1
@@ -527,24 +528,102 @@ def test_dead_onnx_child_is_not_ready():
 
 
 def test_shutdown_kills_a_timed_out_worker_and_closes_the_gate():
-    from app.indexing.embed import OnnxProcess
     from app.indexing.runtime import IndexGate
 
-    proc = OnnxProcess("", behavior="hang")
-    proc.max_respawns = 0
-    proc.start(2)
-    gate = IndexGate(1)
+    gate = IndexGate(1, grace_s=0.08, recovery_timeout_s=2)
+    gate.start()
+    started = "/tmp/cas-index-shutdown-started"
+    try:
+        os.remove(started)
+    except OSError:
+        pass
 
     def work():
-        proc.count_tokens("a", timeout_s=30)
+        try:
+            gate.call({"op": "hang", "seconds": 5, "started_path": started, "stage": "embedding"}, 5)
+        except IndexFailure:
+            return
 
-    future = gate.submit(work)
-    time.sleep(0.15)
-    started = time.perf_counter()
-    pending = gate.shutdown(timeout_s=2, models=[proc])
-    assert time.perf_counter() - started < 2
+    thread = threading.Thread(target=work)
+    thread.start()
+    end = time.monotonic() + 1
+    while time.monotonic() < end and not os.path.exists(started):
+        time.sleep(0.01)
+    assert os.path.exists(started)
+    begin = time.perf_counter()
+    pending = gate.shutdown(timeout_s=1)
+    thread.join(1)
+    assert time.perf_counter() - begin < 1
     assert pending == 0
-    assert future.done()
+    assert thread.is_alive() is False
     with pytest.raises(IndexFailure) as raised:
-        gate.submit(lambda: "no")
+        gate.call({"op": "ping"}, 1)
     assert raised.value.code == "pipeline_busy"
+
+
+def test_cancelled_deadline_blocks_the_next_write():
+    clock = Deadline(5)
+    calls = {"write": 0}
+
+    def work():
+        try:
+            time.sleep(0.15)
+            clock.check()
+            calls["write"] += 1
+        except IndexFailure:
+            return
+
+    thread = threading.Thread(target=work)
+    thread.start()
+    time.sleep(0.05)
+    clock.cancel()
+    thread.join(1)
+    assert calls["write"] == 0
+    other = Deadline(5)
+    assert other.remaining() > 1
+
+
+def test_qdrant_cancel_stops_an_inflight_request():
+    from app.indexing.qdrant import QdrantWriter
+
+    class Handler(BaseHTTPRequestHandler):
+        def _ok(self):
+            length = int(self.headers.get("Content-Length") or 0)
+            if length:
+                self.rfile.read(length)
+            time.sleep(2)
+            payload = b'{"status":"ok","result":{"status":"completed","count":0}}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        do_POST = _ok
+
+        def log_message(self, *_args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    writer = QdrantWriter(f"http://127.0.0.1:{server.server_address[1]}", "knowledge_chunks", timeout_s=30)
+    clock = Deadline(5)
+    box = {}
+
+    def call():
+        try:
+            writer.delete_generation(uuid.uuid4(), deadline=clock)
+            box["code"] = "ok"
+        except IndexFailure as exc:
+            box["code"] = exc.code
+
+    thread = threading.Thread(target=call)
+    thread.start()
+    time.sleep(0.05)
+    started = time.perf_counter()
+    clock.cancel()
+    thread.join(1)
+    try:
+        assert box.get("code") == "timeout"
+        assert time.perf_counter() - started < 0.8
+    finally:
+        server.shutdown()

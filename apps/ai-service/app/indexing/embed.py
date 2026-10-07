@@ -348,6 +348,9 @@ class WordTokenCounter:
 
 
 def _onnx_worker(conn, model_dir: str, batch_size: int, behavior: str) -> None:
+    from app.indexing.procgroup import arm_parent_death
+
+    arm_parent_death()
     if behavior == "init_hang":
         time_sleep(3600)
     if behavior == "init_crash":
@@ -492,22 +495,33 @@ class OnnxProcess:
 
     def _call(self, payload: dict, timeout_s: float, deadline=None) -> dict:
         wait = self._budget(timeout_s, deadline)
-        if not self._lock.acquire(timeout=wait):
+        acquired = self._acquire(wait, deadline)
+        if not acquired:
             raise IndexFailure("timeout")
         try:
             self._seq += 1
             message = dict(payload)
             message["id"] = self._seq
             try:
-                msg = self._exchange(message, self._budget(timeout_s, deadline))
+                msg = self._exchange(message, self._budget(timeout_s, deadline), deadline)
             except IndexFailure:
                 if not self._can_retry(deadline, timeout_s):
                     raise
-                msg = self._exchange(message, self._budget(timeout_s, deadline))
+                msg = self._exchange(message, self._budget(timeout_s, deadline), deadline)
             self._consecutive_failures = 0
             return msg
         finally:
             self._lock.release()
+
+    def _acquire(self, wait: float, deadline) -> bool:
+        end = time.monotonic() + wait
+        while True:
+            if deadline is not None:
+                deadline.check()
+            if self._lock.acquire(timeout=min(0.02, max(0.0, end - time.monotonic()))):
+                return True
+            if time.monotonic() >= end:
+                return False
 
     def _can_retry(self, deadline, timeout_s: float) -> bool:
         if self.status == "stopped" or self.max_respawns <= 0 or self._consecutive_failures >= self.max_respawns:
@@ -522,10 +536,16 @@ class OnnxProcess:
         self._consecutive_failures += 1
         return self._recover(left)
 
-    def _wait_result(self, timeout_s: float):
-        """Poll in short slices so shutdown can kill the child without waiting out the call."""
+    def _wait_result(self, timeout_s: float, deadline=None):
+        """Poll in short slices so shutdown or a cancelled deadline stops the call."""
         end = time.monotonic() + timeout_s
         while True:
+            if deadline is not None:
+                try:
+                    deadline.check()
+                except IndexFailure:
+                    self._disable("timed_out")
+                    raise
             conn = self._conn
             if conn is None or self.status == "stopped":
                 raise IndexFailure("timeout")
@@ -541,12 +561,14 @@ class OnnxProcess:
             if ready:
                 return conn
 
-    def _exchange(self, payload: dict, timeout_s: float) -> dict:
+    def _exchange(self, payload: dict, timeout_s: float, deadline=None) -> dict:
         if self.status != "ready" or self._conn is None:
             raise IndexFailure("embedding_model_missing")
+        if deadline is not None:
+            deadline.check()
         try:
             self._conn.send(payload)
-            conn = self._wait_result(timeout_s)
+            conn = self._wait_result(timeout_s, deadline)
             msg = conn.recv()
         except IndexFailure:
             raise

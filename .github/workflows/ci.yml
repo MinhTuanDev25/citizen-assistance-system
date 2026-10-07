@@ -149,6 +149,13 @@ jobs:
             "SELECT CASE WHEN password_hash IS NULL THEN 'ok' ELSE 'fail' END FROM users WHERE email='admin@chuse.vn';" \
             | grep -q ok
 
+  ai-supervision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: production image process-supervision regression
+        run: bash scripts/p4b-container-supervision-test.sh
+
   compose:
     runs-on: ubuntu-latest
     steps:
