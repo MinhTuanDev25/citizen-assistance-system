@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import pandas as pd
 
@@ -101,6 +101,51 @@ def validation_frame() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def validation_population_frame(*, n: int = 4) -> pd.DataFrame:
+    """Larger synthetic G_validation population for monitor-subset regressions."""
+    rows = []
+    for i in range(1, int(n) + 1):
+        text = f"tham chiếu validation {i}"
+        rows.append(
+            {
+                "record_uid": f"val-{i}",
+                "text_vi": text,
+                "text_vi_norm": normalize_mt_text_v1(text),
+                "split": "validation",
+                "group_id": f"gV{i}",
+                "source_split": "g_validation",
+                "pcm16_sha256": f"{i:02x}" * 32,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def frozen_monitor_subset_frame(
+    validation: pd.DataFrame,
+    *,
+    uids: Optional[Sequence[str]] = None,
+    size: int = 2,
+) -> pd.DataFrame:
+    """Deterministic proper subset of a validation population (unit tests only)."""
+    work = validation.copy().reset_index(drop=True)
+    if uids is None:
+        chosen = work["record_uid"].astype(str).tolist()[: int(size)]
+    else:
+        chosen = [str(uid) for uid in uids]
+    monitor = work[work["record_uid"].astype(str).isin(chosen)].copy().reset_index(drop=True)
+    # Preserve declared order.
+    order = {uid: i for i, uid in enumerate(chosen)}
+    monitor = monitor.sort_values(
+        by="record_uid",
+        key=lambda series: series.astype(str).map(lambda uid: order.get(uid, 10**9)),
+    ).reset_index(drop=True)
+    if len(monitor) != len(chosen):
+        raise ValueError("monitor subset UIDs are not all present in the validation population")
+    if len(monitor) >= len(work):
+        raise ValueError("monitor subset must be a proper subset of the validation population")
+    return monitor
+
+
 def test_frame() -> pd.DataFrame:
     return pd.DataFrame([
         {"record_uid": "t-1", "record_id": "r1", "source_split": "test", "parquet_file": "x.parquet", "shard_row_index": 0,
@@ -174,6 +219,14 @@ def write_frozen_d0_state(
         train["text_vi_norm"] = train["text_vi"].map(normalize_mt_text_v1)
     if "text_vi_norm" not in val.columns:
         val["text_vi_norm"] = val["text_vi"].map(normalize_mt_text_v1)
+    from src.direct_data import DIRECT_MONITOR_CSV
+    from src.direct_full_train import monitor_manifest
+
+    monitor = val.copy().reset_index(drop=True)
+    monitor_path = path / DIRECT_MONITOR_CSV
+    monitor.to_csv(monitor_path, index=False)
+    monitor_sha = sha256_file(monitor_path)
+    monitor_meta = monitor_manifest(monitor, path=monitor_path)
     contract = build_direct_training_contract(
         direct_data_contract_hash="aa" * 32,
         experiment_id=LOCKED_EXPERIMENT_ID,
@@ -185,11 +238,11 @@ def write_frozen_d0_state(
         tokenizer_fingerprint="bb" * 32,
         train_uid_set_hash=compute_uid_set_hash(train),
         validation_uid_set_hash=compute_uid_set_hash(val),
-        monitor_uid_set_hash="ee" * 32,
-        monitor_pair_hash="ff" * 32,
-        monitor_ordered_row_hash="12" * 32,
-        monitor_file_sha256="34" * 32,
-        monitor_size=256,
+        monitor_uid_set_hash=str(monitor_meta["uid_set_hash"]),
+        monitor_pair_hash=str(monitor_meta["pair_hash"]),
+        monitor_ordered_row_hash=str(monitor_meta["ordered_row_hash"]),
+        monitor_file_sha256=monitor_sha,
+        monitor_size=int(len(monitor)),
         source_fingerprint_sha256="56" * 32,
         torch_version=LOCKED_TORCH_VERSION,
         transformers_version=LOCKED_TRANSFORMERS_VERSION,
@@ -520,6 +573,8 @@ def synthetic_training_complete(arm: str, contract_sha256: str, *, fingerprint: 
         "arm": arm,
         "training_contract_sha256": contract_sha256,
         "final_global_step": 100,
+        "expected_max_steps": 100,
+        "reached_max_steps": True,
         "terminal_checkpoint": "checkpoint-101",
         "terminal_checkpoint_fingerprint": fp,
         "best_checkpoint": "checkpoint-100",
@@ -591,6 +646,8 @@ def materialize_arm_proofs(env: Mapping[str, Any], *, best: Optional[Mapping[str
             final_global_step=101,
             checkpoint_path=terminal,
             best_checkpoint=payloads[arm],
+            expected_max_steps=101,
+            reached_max_steps=True,
         )
         layouts[arm] = layout
         payloads[arm]["_terminal_fingerprint"] = live_terminal

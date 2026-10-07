@@ -307,9 +307,13 @@ def test_notebook_default_run_all_source_is_wired():
     root = Path(__file__).resolve().parents[1]
     nb = json.loads((root / "notebooks" / "14_RQ2_Final_Train_Evaluate.ipynb").read_text())
     source = "".join("".join(c.get("source") or []) for c in nb["cells"] if c["cell_type"] == "code")
-    assert "RUN_REAL_TRAINING = False" in source
+    md = "".join("".join(c.get("source") or []) for c in nb["cells"] if c["cell_type"] == "markdown")
+    assert "RUN_REAL_TRAINING = True" in source
     assert "ALLOW_G_TEST_EVALUATION = False" in source
-    assert "RQ2_FINAL_FROZEN = False" in source
+    assert "RQ2_FINAL_FROZEN = True" in source
+    assert "default Run All is safe" not in source
+    assert "Default flags start no training" not in md
+    assert "RQ2 final training is enabled under the frozen protocol" in md
     for name in (
         "verify_upstream_rq2",
         "load_frozen_supervised_splits",
@@ -323,6 +327,50 @@ def test_notebook_default_run_all_source_is_wired():
         "publish_final_generation",
     ):
         assert name in source, name
+
+
+def test_notebook_build_training_arguments_diagnostic_has_locked_cadence():
+    """Cell-2 diagnostic must not omit explicit save/eval cadence fields."""
+    import ast
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    nb = json.loads((root / "notebooks" / "14_RQ2_Final_Train_Evaluate.ipynb").read_text())
+    source = "\n".join("".join(c.get("source") or []) for c in nb["cells"] if c["cell_type"] == "code")
+    assert "build_training_arguments(" in source
+    # Extract each build_training_arguments(...) call body via a coarse bracket match.
+    for match in re.finditer(r"build_training_arguments\s*\(", source):
+        start = match.end() - 1
+        depth = 0
+        end = None
+        for i, ch in enumerate(source[start:], start=start):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        assert end is not None
+        call = "build_training_arguments" + source[start:end]
+        tree = ast.parse(call)
+        call_node = tree.body[0].value
+        assert isinstance(call_node, ast.Call)
+        kwargs = {kw.arg: kw.value for kw in call_node.keywords if kw.arg}
+        assert "training_contract" in kwargs
+        contract_node = kwargs["training_contract"]
+        assert isinstance(contract_node, ast.Dict)
+        keys = set()
+        for key_node in contract_node.keys:
+            if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
+                keys.add(key_node.value)
+        for required in ("save_steps", "eval_steps", "eval_strategy", "save_strategy"):
+            assert required in keys, f"notebook build_training_arguments omits {required}"
+        # Prefer LOCKED constants in the surrounding source.
+        assert "LOCKED_RQ2_SAVE_STEPS" in source
+        assert "LOCKED_RQ2_EVAL_STEPS" in source
+        assert "LOCKED_RQ2_EVAL_STRATEGY" in source
+        assert "LOCKED_RQ2_SAVE_STRATEGY" in source
 
 
 def _unlocked_test_frame(tmp_path):

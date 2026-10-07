@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
+import pandas as pd
+
 from src.direct_contract import (
     LOCKED_ACCELERATE_VERSION,
     LOCKED_DECODER_ID,
@@ -90,6 +92,17 @@ SEED_POLICY_UNSET = "UNSET_REQUIRE_EXPLICIT_CONFIG"
 SEED_POLICY_SINGLE = "compute_constrained_single_seed"
 SEED_POLICY_MULTI = "multi_seed"
 
+# Frozen RQ1 Direct train-time validation monitor (Notebook 05).
+# RQ2 must reuse this exact monitor; it must not resample a new 256-row subset.
+FROZEN_RQ1_DIRECT_MONITOR_SIZE = 256
+FROZEN_RQ1_DIRECT_MONITOR_FILE_SHA256 = (
+    "2ce1616388ad61495a42971e3b1cb4789321bd62987125eafcf9633354d86cb8"
+)
+LOCKED_RQ2_SAVE_STEPS = 1000
+LOCKED_RQ2_EVAL_STEPS = 1000
+LOCKED_RQ2_EVAL_STRATEGY = "steps"
+LOCKED_RQ2_SAVE_STRATEGY = "steps"
+
 RQ1_CONFIG_RELPATH = "configs/rq1.yaml"
 DIRECT_CONFIG_RELPATH = "configs/direct.yaml"
 SOURCE_FINGERPRINT_NOTEBOOK = "notebooks/14_RQ2_Final_Train_Evaluate.ipynb"
@@ -145,6 +158,11 @@ SCIENTIFIC_TRAINING_KEYS = (
     "validation_pair_hash",
     "validation_uid_set_hash",
     "validation_audio_identity_hash",
+    "monitor_size",
+    "monitor_file_sha256",
+    "monitor_uid_set_hash",
+    "monitor_pair_hash",
+    "monitor_ordered_row_hash",
     "nb11_input_contract_sha256",
     "nb12_contract_sha256",
     "nb13_selection_contract_sha256",
@@ -168,6 +186,10 @@ SCIENTIFIC_TRAINING_KEYS = (
     "warmup_ratio",
     "weight_decay",
     "num_train_epochs",
+    "save_steps",
+    "eval_steps",
+    "eval_strategy",
+    "save_strategy",
     "fp16",
     "bf16",
     "gradient_checkpointing",
@@ -215,6 +237,11 @@ FAIRNESS_KEYS = (
     "validation_pair_hash",
     "validation_uid_set_hash",
     "validation_audio_identity_hash",
+    "monitor_size",
+    "monitor_file_sha256",
+    "monitor_uid_set_hash",
+    "monitor_pair_hash",
+    "monitor_ordered_row_hash",
     "nb11_input_contract_sha256",
     "nb12_contract_sha256",
     "nb13_selection_contract_sha256",
@@ -237,6 +264,10 @@ FAIRNESS_KEYS = (
     "warmup_ratio",
     "weight_decay",
     "num_train_epochs",
+    "save_steps",
+    "eval_steps",
+    "eval_strategy",
+    "save_strategy",
     "fp16",
     "bf16",
     "gradient_checkpointing",
@@ -814,7 +845,8 @@ def bind_frozen_d0_identity(
     if evaluate.get("frozen_test_accessed") is not False:
         raise UpstreamGateError("RQ1 D0 evaluate summary is not frozen-test clean")
     from src.direct_contract import assert_direct_training_contract_self_consistent
-    from src.direct_data import DIRECT_TRAIN_CSV, DIRECT_VAL_CSV, load_direct_prepared_frames
+    from src.direct_data import DIRECT_MONITOR_CSV, DIRECT_TRAIN_CSV, DIRECT_VAL_CSV, load_direct_prepared_frames
+    from src.direct_full_train import assert_monitor_file_sha256, monitor_manifest
 
     assert_direct_training_contract_self_consistent(contract)
     hash_value = str(contract.get("direct_training_contract_hash") or "")
@@ -937,6 +969,40 @@ def bind_frozen_d0_identity(
             raise UpstreamGateError("locked RQ1 validation manifest SHA256 does not match D0 prepare provenance")
 
 
+    monitor_path = state / DIRECT_MONITOR_CSV
+    if not monitor_path.is_file():
+        raise UpstreamGateError("frozen RQ1 Direct validation monitor CSV is missing")
+    expected_monitor_sha = str(contract.get("monitor_file_sha256") or "")
+    try:
+        live_monitor_sha = assert_monitor_file_sha256(monitor_path, expected_monitor_sha)
+    except Exception as exc:
+        raise UpstreamGateError(f"frozen RQ1 Direct monitor file identity failed: {exc}") from exc
+    try:
+        monitor_size = int(contract.get("monitor_size"))
+    except (TypeError, ValueError) as exc:
+        raise UpstreamGateError("frozen RQ1 Direct training contract is missing monitor_size") from exc
+    monitor_df = pd.read_csv(monitor_path)
+    if len(monitor_df) != int(monitor_size):
+        raise UpstreamGateError(
+            f"frozen RQ1 Direct monitor has {len(monitor_df)} rows, contract expects {monitor_size}"
+        )
+    live_monitor = monitor_manifest(monitor_df, path=monitor_path)
+    for key, contract_key in (
+        ("uid_set_hash", "monitor_uid_set_hash"),
+        ("pair_hash", "monitor_pair_hash"),
+        ("ordered_row_hash", "monitor_ordered_row_hash"),
+    ):
+        expected = str(contract.get(contract_key) or "")
+        actual = str(live_monitor.get(key) or "")
+        if not is_sha256(expected) or actual != expected:
+            raise UpstreamGateError(f"frozen RQ1 Direct monitor {contract_key} does not match the CSV")
+    if int(monitor_size) == int(FROZEN_RQ1_DIRECT_MONITOR_SIZE):
+        if live_monitor_sha != FROZEN_RQ1_DIRECT_MONITOR_FILE_SHA256:
+            raise UpstreamGateError(
+                "production-sized RQ1 Direct monitor SHA-256 does not match the frozen lock "
+                f"{FROZEN_RQ1_DIRECT_MONITOR_FILE_SHA256}"
+            )
+
     identity = {
         "arm": ARM_D0,
         "d0_policy": D0_POLICY,
@@ -957,6 +1023,12 @@ def bind_frozen_d0_identity(
         "validation_file_sha256": val_file_sha,
         "train_audio_pair_hash": derived_train["audio_pair_hash"],
         "validation_audio_pair_hash": derived_val["audio_pair_hash"],
+        "monitor_size": int(monitor_size),
+        "monitor_file_sha256": live_monitor_sha,
+        "monitor_uid_set_hash": str(live_monitor["uid_set_hash"]),
+        "monitor_pair_hash": str(live_monitor["pair_hash"]),
+        "monitor_ordered_row_hash": str(live_monitor["ordered_row_hash"]),
+        "monitor_path_name": DIRECT_MONITOR_CSV,
         "encoder_id": str(contract.get("encoder_id") or LOCKED_ENCODER_ID),
         "encoder_revision": str(contract.get("encoder_revision") or LOCKED_ENCODER_REVISION),
         "decoder_id": str(contract.get("decoder_id") or LOCKED_DECODER_ID),
@@ -1043,6 +1115,13 @@ def resolve_frozen_d0_init(
         "checkpoint_fingerprint_sha256": fingerprint,
         "direct_training_contract_hash": contract_hash,
         "init_policy": AUGMENTATION_INIT_POLICY,
+        # Frozen RQ1 Direct train-time validation monitor (bound into arm contracts).
+        "monitor_size": int(bound.get("monitor_size") or 0),
+        "monitor_file_sha256": str(bound.get("monitor_file_sha256") or ""),
+        "monitor_uid_set_hash": str(bound.get("monitor_uid_set_hash") or ""),
+        "monitor_pair_hash": str(bound.get("monitor_pair_hash") or ""),
+        "monitor_ordered_row_hash": str(bound.get("monitor_ordered_row_hash") or ""),
+        "monitor_path_name": str(bound.get("monitor_path_name") or ""),
     }
 
 
@@ -1177,6 +1256,40 @@ def locked_architecture() -> Dict[str, Any]:
     }
 
 
+def assert_trainable_eval_monitor_contract(payload: Mapping[str, Any]) -> None:
+    """Fail closed unless train-time eval cadence and frozen monitor identity are explicit."""
+    try:
+        save_steps = int(payload["save_steps"])
+        eval_steps = int(payload["eval_steps"])
+        monitor_size = int(payload["monitor_size"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise TrainingContractError(
+            "trainable arm requires explicit save_steps, eval_steps, and monitor_size"
+        ) from exc
+    if save_steps != LOCKED_RQ2_SAVE_STEPS or eval_steps != LOCKED_RQ2_EVAL_STEPS:
+        raise TrainingContractError(
+            f"trainable arm must lock save_steps={LOCKED_RQ2_SAVE_STEPS} and "
+            f"eval_steps={LOCKED_RQ2_EVAL_STEPS}; got save_steps={save_steps} eval_steps={eval_steps}"
+        )
+    if str(payload.get("eval_strategy") or "") != LOCKED_RQ2_EVAL_STRATEGY:
+        raise TrainingContractError("trainable arm eval_strategy must be 'steps'")
+    if str(payload.get("save_strategy") or "") != LOCKED_RQ2_SAVE_STRATEGY:
+        raise TrainingContractError("trainable arm save_strategy must be 'steps'")
+    if monitor_size <= 0:
+        raise TrainingContractError("trainable arm monitor_size must be positive")
+    if not is_sha256(payload.get("monitor_file_sha256")):
+        raise TrainingContractError("trainable arm is missing monitor_file_sha256")
+    for key in ("monitor_uid_set_hash", "monitor_pair_hash", "monitor_ordered_row_hash"):
+        if not is_sha256(payload.get(key)):
+            raise TrainingContractError(f"trainable arm is missing {key}")
+    if int(monitor_size) == int(FROZEN_RQ1_DIRECT_MONITOR_SIZE):
+        if str(payload.get("monitor_file_sha256") or "").lower() != FROZEN_RQ1_DIRECT_MONITOR_FILE_SHA256:
+            raise TrainingContractError(
+                "monitor_size=256 requires the frozen RQ1 Direct monitor_file_sha256 "
+                f"{FROZEN_RQ1_DIRECT_MONITOR_FILE_SHA256}"
+            )
+
+
 def build_arm_training_contract(fields: Mapping[str, Any]) -> Dict[str, Any]:
     payload = {key: fields.get(key) for key in SCIENTIFIC_TRAINING_KEYS}
     payload["contract_version"] = FINAL_CONTRACT_VERSION
@@ -1224,6 +1337,7 @@ def build_arm_training_contract(fields: Mapping[str, Any]) -> Dict[str, Any]:
         payload["active_seed"] = active
         payload["seed"] = active
         payload["dataloader_seed"] = active
+        assert_trainable_eval_monitor_contract(payload)
     if payload["arm"] == ARM_D0:
         payload["init_policy"] = D0_POLICY
         payload.setdefault("gold_pseudo_mix_policy", GOLD_PSEUDO_MIX_POLICY_UNSET)

@@ -191,6 +191,8 @@ def _orchestrate(tmp_path: Path, seeds: list):
                 final_global_step=101,
                 checkpoint_path=terminal,
                 best_checkpoint=record,
+                expected_max_steps=101,
+                reached_max_steps=True,
             )
             layouts[arm][seed] = layout
             contracts[arm]["by_seed"][seed] = {
@@ -584,20 +586,28 @@ def test_notebook_production_source_has_no_seed_skip_patterns():
     root = Path(__file__).resolve().parents[1]
     nb = json.loads((root / "notebooks" / "14_RQ2_Final_Train_Evaluate.ipynb").read_text())
     source = "\n".join("".join(cell.get("source") or []) for cell in nb["cells"] if cell["cell_type"] == "code")
-    assert "RUN_REAL_TRAINING = False" in source
+    # G_test remains locked. Scientific policy is advisor-approved single seed 13 + 5:1.
     assert "ALLOW_G_TEST_EVALUATION = False" in source
-    assert "RQ2_FINAL_FROZEN = False" in source
+    assert "RUN_REAL_TRAINING = True" in source
+    assert "RQ2_FINAL_FROZEN = True" in source
     assert 'GOLD_PSEUDO_MIX_POLICY = "configured_gold_pseudo_slot_ratio"' in source
     assert "GOLD_SLOTS = 5" in source
     assert "PSEUDO_SLOTS = 1" in source
-    assert 'SEED_POLICY = "multi_seed"' in source
-    assert "SEED_POLICY_SEEDS = [13, 17, 23]" in source
+    assert 'SEED_POLICY = "compute_constrained_single_seed"' in source
+    assert "SEED_POLICY_SEEDS = [13]" in source
+    assert "monitor_frame=DATA[arm][\"monitor_frame\"]" in source
+    assert "SUPERVISED[\"monitor_frame\"]" in source
     assert "for active_seed, run in runs.items()" in source
     assert "for run in runs:" not in source
     assert "summarize_seed_runs([]" not in source
     assert "FRAMES = None" not in source
     assert "runs[0]" not in source
     assert "(not fp or is_sha256(fp))" not in source
+    md = "\n".join("".join(cell.get("source") or []) for cell in nb["cells"] if cell["cell_type"] == "markdown")
+    assert "RQ2 final training is enabled under the frozen protocol" in md
+    assert "Training and G_test stay off until a later explicit unlock" not in md
+    assert "Default flags start no training" not in md
+    assert "default Run All is safe" not in source
     for cell in nb["cells"]:
         if cell["cell_type"] != "code":
             continue

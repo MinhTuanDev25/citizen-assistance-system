@@ -246,14 +246,13 @@ def test_d0_same_name_wrong_fingerprint_fails(tmp_path):
 def test_notebook_default_flags_and_cells_compile():
     nb = json.loads((ROOT / "notebooks" / "14_RQ2_Final_Train_Evaluate.ipynb").read_text())
     source = "".join("".join(c.get("source") or []) for c in nb["cells"] if c["cell_type"] == "code")
-    assert "RUN_REAL_TRAINING = False" in source
     assert "ALLOW_G_TEST_EVALUATION = False" in source
-    assert "RQ2_FINAL_FROZEN = False" in source
     assert 'GOLD_PSEUDO_MIX_POLICY = "configured_gold_pseudo_slot_ratio"' in source
     assert "GOLD_SLOTS = 5" in source
     assert "PSEUDO_SLOTS = 1" in source
-    assert 'SEED_POLICY = "multi_seed"' in source
-    assert "SEED_POLICY_SEEDS = [13, 17, 23]" in source
+    assert 'SEED_POLICY = "compute_constrained_single_seed"' in source
+    assert "SEED_POLICY_SEEDS = [13]" in source
+    assert "monitor_frame=DATA[arm][\"monitor_frame\"]" in source
     assert "public_pretrained_xlsr_mbart50_same_as_rq1_d0" not in source
     for i, cell in enumerate(nb["cells"]):
         if cell["cell_type"] != "code":

@@ -894,19 +894,26 @@ def derive_final_readiness(
     gate("d0_bound", bool(d0.get("checkpoint_fingerprint_sha256") and d0.get("direct_training_contract_hash")),
          checkpoint_fingerprint=str(d0.get("checkpoint_fingerprint_sha256") or ""))
     def _training_complete(layout: Mapping[str, Any], contract: Mapping[str, Any], *, expected_seed: Any = None) -> bool:
-        complete_path = layout.get("training_complete") if isinstance(layout, Mapping) else None
-        payload: Dict[str, Any] = {}
-        if complete_path and Path(complete_path).is_file():
-            payload = json.loads(Path(complete_path).read_text(encoding="utf-8"))
-        ready = (
-            payload.get("status") == STATUS_TRAINING_COMPLETE
-            and str(payload.get("arm") or "") == arm
-            and str(payload.get("training_contract_sha256") or "") == str(contract.get("arm_training_contract_sha256") or "")
-            and bool(contract.get("arm_training_contract_sha256"))
-            and is_sha256(payload.get("terminal_checkpoint_fingerprint"))
-        )
-        if not ready or expected_seed is None:
-            return ready
+        """Reuse the hardened completion-proof reader; never accept a weaker SUCCESS proof."""
+        from src.rq2_final_contract import TrainingContractError
+        from src.rq2_final_train import read_training_complete_proof
+
+        if not isinstance(layout, Mapping) or not isinstance(contract, Mapping):
+            return False
+        complete_path = layout.get("training_complete")
+        expected_hash = str(contract.get("arm_training_contract_sha256") or "")
+        if not complete_path or not expected_hash or not Path(complete_path).is_file():
+            return False
+        try:
+            payload = read_training_complete_proof(
+                layout,
+                arm=arm,
+                expected_contract_hash=expected_hash,
+            )
+        except TrainingContractError:
+            return False
+        if expected_seed is None:
+            return True
         try:
             seed_ok = int(payload.get("active_seed")) == int(expected_seed)
         except (TypeError, ValueError):

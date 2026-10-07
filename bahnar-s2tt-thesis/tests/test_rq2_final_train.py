@@ -1,6 +1,8 @@
 """NB14 resume proof, best-checkpoint, and arm-isolation tests."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from src.rq2_final_contract import (
@@ -26,10 +28,12 @@ from src.rq2_final_data import (
 )
 from src.rq2_final_train import (
     assert_no_cross_arm_resume,
+    assert_training_reached_max_steps,
     bind_d0_arm,
     build_hparams_from_yaml,
     build_trainer,
     build_training_arguments,
+    build_training_complete_proof,
     compute_validation_metrics,
     ensure_arm_root,
     experiment_fingerprint,
@@ -37,6 +41,7 @@ from src.rq2_final_train import (
     merge_training_fields,
     prove_live_trainer_resume,
     prove_resume,
+    read_training_complete_proof,
     resume_or_train_arm,
     select_best_checkpoint,
     validation_history_from_checkpoints,
@@ -239,7 +244,11 @@ def test_resume_or_train_constructs_real_trainer_without_callback(tmp_path):
 
     class FakeTrainer:
         def __init__(self, layout, arm, training_contract):
-            self.state = type("S", (), {"global_step": 7, "best_model_checkpoint": None})()
+            self.state = type(
+                "S",
+                (),
+                {"global_step": 7, "max_steps": 7, "epoch": 1.0, "best_model_checkpoint": None},
+            )()
             self.optimizer = object()
             self.lr_scheduler = object()
             self._layout = layout
@@ -265,12 +274,16 @@ def test_resume_or_train_constructs_real_trainer_without_callback(tmp_path):
 
     flags = Nb14Flags(run_real_training=True, direct_state_dir=env["flags"].direct_state_dir)
     layout = ensure_arm_root(tmp_path / "random-real")
+    monitor = validation_frame()
     result = resume_or_train_arm(
         arm=ARM_RANDOM,
         flags=flags,
         layout=layout,
         training_contract=contract,
         fingerprint=fingerprint,
+        train_frame=validation_frame(),
+        validation_frame=monitor,
+        monitor_frame=monitor,
         trainer_factory=factory,
     )
     assert result["trained"] is True
@@ -286,6 +299,9 @@ def test_resume_or_train_constructs_real_trainer_without_callback(tmp_path):
         layout=layout_q,
         training_contract=contract_q,
         fingerprint=fingerprint_q,
+        train_frame=validation_frame(),
+        validation_frame=monitor,
+        monitor_frame=monitor,
         trainer_factory=factory,
     )
     assert result_q["trained"] is True
@@ -372,6 +388,8 @@ def test_resume_available_is_not_training_complete(tmp_path):
         training_contract_sha256=contract["arm_training_contract_sha256"],
         final_global_step=50,
         checkpoint_path=ckpt,
+        expected_max_steps=50,
+        reached_max_steps=True,
     )
     ready_after = derive_final_readiness(
         flags=env["flags"],
@@ -425,6 +443,7 @@ def test_real_trainer_evaluate_emits_untruncated_metrics(tmp_path, monkeypatch):
     monkeypatch.setenv("ACCELERATE_MIXED_PRECISION", "no")
     import math
     import wave
+    from pathlib import Path
 
     import numpy as np
     import pandas as pd
@@ -563,6 +582,25 @@ def test_real_trainer_evaluate_emits_untruncated_metrics(tmp_path, monkeypatch):
     contract["per_device_eval_batch_size"] = 1
     contract["per_device_train_batch_size"] = 1
     try:
+        # Train-time eval uses the frozen monitor frame (here: same tiny val fixture),
+        # not a separately sampled subset. Full validation_frame is still passed for identity.
+        monitor_frame = val_frame.copy().reset_index(drop=True)
+        from src.direct_full_train import monitor_manifest
+        from src.rq1_contract import sha256_file
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
+            monitor_path = Path(tmp.name)
+        try:
+            monitor_frame.to_csv(monitor_path, index=False)
+            live = monitor_manifest(monitor_frame, path=monitor_path)
+            contract = dict(contract)
+            contract["monitor_size"] = int(len(monitor_frame))
+            contract["monitor_file_sha256"] = sha256_file(monitor_path)
+            contract["monitor_uid_set_hash"] = str(live["uid_set_hash"])
+            contract["monitor_pair_hash"] = str(live["pair_hash"])
+            contract["monitor_ordered_row_hash"] = str(live["ordered_row_hash"])
+        finally:
+            monitor_path.unlink(missing_ok=True)
         trainer = build_trainer(
             arm=ARM_RANDOM,
             layout=layout,
@@ -570,10 +608,15 @@ def test_real_trainer_evaluate_emits_untruncated_metrics(tmp_path, monkeypatch):
             fingerprint=fingerprint,
             train_frame=train_frame,
             validation_frame=val_frame,
+            monitor_frame=monitor_frame,
             audio_cache_roots=[cache],
             processors=(DummyFE(), DummyTok()),
             model=TinyModel(TinyCfg()),
         )
+        # Avoid multiprocessing pickle of local DummyFE in unit tests.
+        trainer.args.dataloader_num_workers = 0
+        trainer.args.dataloader_persistent_workers = False
+        trainer.args.dataloader_prefetch_factor = None
         metrics = trainer.evaluate()
     finally:
         metrics_mod.mt_corpus_metrics = original
@@ -652,6 +695,8 @@ def test_training_complete_keeps_terminal_and_best_distinct(tmp_path):
             "checkpoint_fingerprint": checkpoint_model_state_sha256(best),
             "validation_metric": 12.5,
         },
+        expected_max_steps=30,
+        reached_max_steps=True,
     )
     assert payload["terminal_checkpoint"] == "checkpoint-30"
     assert payload["best_checkpoint"] == "checkpoint-10"
@@ -759,4 +804,352 @@ def test_real_hf_trainer_resume_restores_step(tmp_path, monkeypatch):
     write_resume_proof(layout, proof)
     assert layout["resume_proof"].is_file()
 
+
+def test_assert_training_reached_max_steps_cases():
+    from types import SimpleNamespace
+
+    ok = assert_training_reached_max_steps(
+        SimpleNamespace(state=SimpleNamespace(global_step=46119, max_steps=46119)),
+        arm=ARM_RANDOM,
+    )
+    assert ok == {
+        "final_global_step": 46119,
+        "expected_max_steps": 46119,
+        "reached_max_steps": True,
+    }
+    # CASE C: resume mid-run then complete to max_steps.
+    resumed = assert_training_reached_max_steps(
+        SimpleNamespace(state=SimpleNamespace(global_step=46119, max_steps=46119)),
+        arm=ARM_QUALITY,
+    )
+    assert resumed["reached_max_steps"] is True
+    with pytest.raises(TrainingContractError, match="before reaching max_steps"):
+        assert_training_reached_max_steps(
+            SimpleNamespace(state=SimpleNamespace(global_step=45000, max_steps=46119)),
+            arm=ARM_RANDOM,
+        )
+    with pytest.raises(TrainingContractError, match="max_steps must be > 0"):
+        assert_training_reached_max_steps(
+            SimpleNamespace(state=SimpleNamespace(global_step=10, max_steps=0)),
+            arm=ARM_RANDOM,
+        )
+
+
+def test_premature_stop_marks_failed_and_skips_training_complete(tmp_path):
+    from types import SimpleNamespace
+
+    from src.rq2_final_contract import STATUS_FAILED_TRAINING, STATUS_TRAINING_COMPLETE
+
+    env, contract, fingerprint, sha = _arm_bundle(tmp_path, ARM_RANDOM)
+    layout = ensure_arm_root(tmp_path / "premature-stop")
+    monitor = validation_frame()
+
+    class EarlyStopTrainer:
+        def __init__(self):
+            self.state = SimpleNamespace(
+                global_step=45000,
+                max_steps=46119,
+                epoch=2.9,
+                best_model_checkpoint=None,
+            )
+
+        def train(self, resume_from_checkpoint=None):
+            write_complete_checkpoint(
+                layout["checkpoints"] / "checkpoint-45000",
+                arm=ARM_RANDOM,
+                contract_hash=contract["arm_training_contract_sha256"],
+                data_hash=sha,
+                step=45000,
+            )
+            self.state.global_step = 45000
+            return SimpleNamespace(global_step=45000)
+
+    def factory(**kwargs):
+        return EarlyStopTrainer()
+
+    with pytest.raises(TrainingContractError, match="before reaching max_steps"):
+        resume_or_train_arm(
+            arm=ARM_RANDOM,
+            flags=Nb14Flags(run_real_training=True, direct_state_dir=env["flags"].direct_state_dir),
+            layout=layout,
+            training_contract=contract,
+            fingerprint=fingerprint,
+            train_frame=monitor,
+            validation_frame=monitor,
+            monitor_frame=monitor,
+            trainer_factory=factory,
+        )
+    progress = json.loads(layout["progress"].read_text(encoding="utf-8"))
+    assert progress["status"] == STATUS_FAILED_TRAINING
+    assert progress["status"] != STATUS_TRAINING_COMPLETE
+    assert progress["global_step"] == 45000
+    assert progress["max_steps"] == 46119
+    assert "before reaching max_steps" in progress["failure_reason"]
+    assert not layout["training_complete"].is_file()
+
+
+def test_normal_completion_records_reached_max_steps(tmp_path):
+    from types import SimpleNamespace
+
+    from src.rq2_final_contract import STATUS_TRAINING_COMPLETE
+
+    env, contract, fingerprint, sha = _arm_bundle(tmp_path, ARM_QUALITY)
+    layout = ensure_arm_root(tmp_path / "complete-max")
+    monitor = validation_frame()
+
+    class CompleteTrainer:
+        def __init__(self):
+            self.state = SimpleNamespace(
+                global_step=0,
+                max_steps=46119,
+                epoch=0.0,
+                best_model_checkpoint=None,
+            )
+            self._rq2_eval_monitor_n = 256
+            self._rq2_full_validation_n = 11112
+            self._rq2_eval_semantics = "monitor-only"
+
+        def train(self, resume_from_checkpoint=None):
+            # Simulate a resumed run that finishes at the planned max_steps.
+            assert resume_from_checkpoint is None or True
+            write_complete_checkpoint(
+                layout["checkpoints"] / "checkpoint-46119",
+                arm=ARM_QUALITY,
+                contract_hash=contract["arm_training_contract_sha256"],
+                data_hash=sha,
+                step=46119,
+            )
+            self.state.global_step = 46119
+            self.state.epoch = 3.0
+            return SimpleNamespace(global_step=46119)
+
+    result = resume_or_train_arm(
+        arm=ARM_QUALITY,
+        flags=Nb14Flags(run_real_training=True, direct_state_dir=env["flags"].direct_state_dir),
+        layout=layout,
+        training_contract=contract,
+        fingerprint=fingerprint,
+        train_frame=monitor,
+        validation_frame=monitor,
+        monitor_frame=monitor,
+        trainer_factory=lambda **kwargs: CompleteTrainer(),
+    )
+    assert result["lifecycle"] == STATUS_TRAINING_COMPLETE
+    complete = json.loads(layout["training_complete"].read_text(encoding="utf-8"))
+    assert complete["final_global_step"] == 46119
+    assert complete["expected_max_steps"] == 46119
+    assert complete["reached_max_steps"] is True
+    assert complete["eval_monitor_n"] == 256
+    assert complete["full_validation_n"] == 11112
+    progress = json.loads(layout["progress"].read_text(encoding="utf-8"))
+    assert progress["status"] == STATUS_TRAINING_COMPLETE
+    assert progress["global_step"] == 46119
+    assert progress["max_steps"] == 46119
+    assert read_training_complete_proof(
+        layout,
+        arm=ARM_QUALITY,
+        expected_contract_hash=contract["arm_training_contract_sha256"],
+    )["reached_max_steps"] is True
+
+
+def test_publish_failure_after_build_leaves_no_success_proof(tmp_path, monkeypatch):
+    """Gap regression: failure after in-memory proof construction must not publish SUCCESS."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from src.rq2_final_contract import STATUS_FAILED_TRAINING, STATUS_TRAINING_COMPLETE
+    import src.rq2_final_train as train_mod
+
+    env, contract, fingerprint, sha = _arm_bundle(tmp_path, ARM_RANDOM)
+    layout = ensure_arm_root(tmp_path / "publish-gap")
+    monitor = validation_frame()
+    built = {}
+
+    class CompleteTrainer:
+        def __init__(self):
+            self.state = SimpleNamespace(global_step=0, max_steps=100, epoch=0.0, best_model_checkpoint=None)
+            self._rq2_eval_monitor_n = 2
+            self._rq2_full_validation_n = 4
+            self._rq2_eval_semantics = "monitor-only"
+
+        def train(self, resume_from_checkpoint=None):
+            write_complete_checkpoint(
+                layout["checkpoints"] / "checkpoint-100",
+                arm=ARM_RANDOM,
+                contract_hash=contract["arm_training_contract_sha256"],
+                data_hash=sha,
+                step=100,
+            )
+            self.state.global_step = 100
+            return SimpleNamespace(global_step=100)
+
+    real_build = train_mod.build_training_complete_proof
+
+    def spy_build(**kwargs):
+        payload = real_build(**kwargs)
+        built["payload"] = dict(payload)
+        return payload
+
+    real_write_json = train_mod.write_json
+
+    def fail_on_training_complete(path, obj):
+        if Path(path).name == "training_complete.json":
+            raise RuntimeError("forced training_complete publish failure")
+        return real_write_json(path, obj)
+
+    monkeypatch.setattr(train_mod, "build_training_complete_proof", spy_build)
+    monkeypatch.setattr(train_mod, "write_json", fail_on_training_complete)
+
+    with pytest.raises(RuntimeError, match="forced training_complete publish failure"):
+        resume_or_train_arm(
+            arm=ARM_RANDOM,
+            flags=Nb14Flags(run_real_training=True, direct_state_dir=env["flags"].direct_state_dir),
+            layout=layout,
+            training_contract=contract,
+            fingerprint=fingerprint,
+            train_frame=monitor,
+            validation_frame=monitor,
+            monitor_frame=monitor,
+            trainer_factory=lambda **kwargs: CompleteTrainer(),
+        )
+    assert built["payload"]["status"] == STATUS_TRAINING_COMPLETE
+    assert built["payload"]["reached_max_steps"] is True
+    assert not layout["training_complete"].is_file()
+    progress = json.loads(layout["progress"].read_text(encoding="utf-8"))
+    assert progress["status"] == STATUS_FAILED_TRAINING
+    assert progress["status"] != STATUS_TRAINING_COMPLETE
+    with pytest.raises(TrainingContractError, match="training_complete.json is missing"):
+        read_training_complete_proof(
+            layout,
+            arm=ARM_RANDOM,
+            expected_contract_hash=contract["arm_training_contract_sha256"],
+        )
+
+
+def test_derive_final_readiness_rejects_malformed_terminal_step_proofs(tmp_path):
+    from src.rq2_final_evaluate import derive_final_readiness
+
+    env, contract, fingerprint, sha = _arm_bundle(tmp_path, ARM_RANDOM)
+    layout = ensure_arm_root(tmp_path / "readiness-malformed")
+    terminal = write_complete_checkpoint(
+        layout["checkpoints"] / "checkpoint-100",
+        arm=ARM_RANDOM,
+        contract_hash=contract["arm_training_contract_sha256"],
+        data_hash=sha,
+        step=100,
+    )
+    good = build_training_complete_proof(
+        arm=ARM_RANDOM,
+        training_contract_sha256=contract["arm_training_contract_sha256"],
+        final_global_step=100,
+        checkpoint_path=terminal,
+        expected_max_steps=100,
+        reached_max_steps=True,
+    )
+    write_training_complete_proof(
+        layout,
+        arm=ARM_RANDOM,
+        training_contract_sha256=contract["arm_training_contract_sha256"],
+        final_global_step=100,
+        checkpoint_path=terminal,
+        expected_max_steps=100,
+        reached_max_steps=True,
+    )
+    ready = derive_final_readiness(
+        flags=env["flags"],
+        layouts={ARM_RANDOM: layout},
+        contracts={ARM_RANDOM: {"contract": contract}},
+    )
+    assert ready["gates"]["d_random_complete"]["ok"] is True
+
+    cases = [
+        {k: v for k, v in good.items() if k != "reached_max_steps"},
+        {**good, "reached_max_steps": False},
+        {**good, "final_global_step": 90, "expected_max_steps": 100, "reached_max_steps": True},
+        {**good, "final_global_step": 0, "expected_max_steps": 0, "reached_max_steps": True},
+    ]
+    for bad in cases:
+        layout["training_complete"].write_text(json.dumps(bad), encoding="utf-8")
+        readiness = derive_final_readiness(
+            flags=env["flags"],
+            layouts={ARM_RANDOM: layout},
+            contracts={ARM_RANDOM: {"contract": contract}},
+        )
+        assert readiness["gates"]["d_random_complete"]["ok"] is False
+        assert readiness["flat"]["d_random_complete"] is False
+
+
+def test_read_training_complete_proof_requires_terminal_step_invariants(tmp_path):
+    env, contract, fingerprint, sha = _arm_bundle(tmp_path, ARM_QUALITY)
+    layout = ensure_arm_root(tmp_path / "reader-invariants")
+    terminal = write_complete_checkpoint(
+        layout["checkpoints"] / "checkpoint-46119",
+        arm=ARM_QUALITY,
+        contract_hash=contract["arm_training_contract_sha256"],
+        data_hash=sha,
+        step=46119,
+    )
+    good = build_training_complete_proof(
+        arm=ARM_QUALITY,
+        training_contract_sha256=contract["arm_training_contract_sha256"],
+        final_global_step=46119,
+        checkpoint_path=terminal,
+        expected_max_steps=46119,
+        reached_max_steps=True,
+    )
+    write_training_complete_proof(
+        layout,
+        arm=ARM_QUALITY,
+        training_contract_sha256=contract["arm_training_contract_sha256"],
+        final_global_step=46119,
+        checkpoint_path=terminal,
+        expected_max_steps=46119,
+        reached_max_steps=True,
+    )
+    assert read_training_complete_proof(
+        layout,
+        arm=ARM_QUALITY,
+        expected_contract_hash=contract["arm_training_contract_sha256"],
+    )["final_global_step"] == 46119
+
+    def _write_mutated(**overrides):
+        payload = dict(good)
+        payload.update(overrides)
+        layout["training_complete"].write_text(json.dumps(payload), encoding="utf-8")
+
+    _write_mutated()
+    # B: missing reached_max_steps
+    missing = dict(good)
+    missing.pop("reached_max_steps")
+    layout["training_complete"].write_text(json.dumps(missing), encoding="utf-8")
+    with pytest.raises(TrainingContractError, match="missing reached_max_steps"):
+        read_training_complete_proof(
+            layout,
+            arm=ARM_QUALITY,
+            expected_contract_hash=contract["arm_training_contract_sha256"],
+        )
+    # C: reached_max_steps false
+    _write_mutated(reached_max_steps=False)
+    with pytest.raises(TrainingContractError, match="reached_max_steps must be exactly true"):
+        read_training_complete_proof(
+            layout,
+            arm=ARM_QUALITY,
+            expected_contract_hash=contract["arm_training_contract_sha256"],
+        )
+    # D: step mismatch
+    _write_mutated(final_global_step=45000, expected_max_steps=46119, reached_max_steps=True)
+    with pytest.raises(TrainingContractError, match="final_global_step=45000"):
+        read_training_complete_proof(
+            layout,
+            arm=ARM_QUALITY,
+            expected_contract_hash=contract["arm_training_contract_sha256"],
+        )
+    # E: expected_max_steps <= 0
+    _write_mutated(final_global_step=0, expected_max_steps=0, reached_max_steps=True)
+    with pytest.raises(TrainingContractError, match="expected_max_steps must be > 0"):
+        read_training_complete_proof(
+            layout,
+            arm=ARM_QUALITY,
+            expected_contract_hash=contract["arm_training_contract_sha256"],
+        )
 

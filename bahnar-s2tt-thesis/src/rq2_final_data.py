@@ -607,6 +607,108 @@ def bind_supervised_audio_identity(
     return work
 
 
+def load_frozen_validation_monitor(
+    direct_state_dir: Union[str, Path],
+    validation_frame: pd.DataFrame,
+    *,
+    expected_monitor_file_sha256: str,
+    expected_monitor_size: int,
+    expected_monitor_uid_set_hash: str,
+    expected_monitor_pair_hash: str,
+    expected_monitor_ordered_row_hash: str,
+) -> Dict[str, Any]:
+    """Bind the frozen RQ1 Direct train-time validation monitor. Never resamples."""
+    from src.direct_data import DIRECT_MONITOR_CSV
+    from src.direct_full_train import assert_monitor_file_sha256, monitor_manifest
+
+    state = Path(direct_state_dir)
+    path = state / DIRECT_MONITOR_CSV
+    if not path.is_file():
+        raise UpstreamGateError(f"frozen Direct validation monitor is missing: {DIRECT_MONITOR_CSV}")
+    try:
+        file_sha = assert_monitor_file_sha256(path, expected_monitor_file_sha256)
+    except Exception as exc:
+        raise UpstreamGateError(str(exc)) from exc
+    monitor = pd.read_csv(path)
+    if "record_uid" not in monitor.columns:
+        raise UpstreamGateError("frozen Direct validation monitor is missing record_uid")
+    if "text_vi_norm" not in monitor.columns and "text_vi" not in monitor.columns:
+        raise UpstreamGateError("frozen Direct validation monitor is missing text_vi_norm")
+    if "text_vi_norm" not in monitor.columns:
+        monitor = monitor.copy()
+        monitor["text_vi_norm"] = monitor["text_vi"].astype(str).map(normalize_mt_text_v1)
+    uids = monitor["record_uid"].astype(str).tolist()
+    if not uids:
+        raise UpstreamGateError("frozen Direct validation monitor is empty")
+    if len(uids) != len(set(uids)):
+        raise UpstreamGateError("frozen Direct validation monitor contains duplicate record_uid values")
+    if len(uids) != int(expected_monitor_size):
+        raise UpstreamGateError(
+            f"frozen Direct validation monitor has {len(uids)} rows, expected {expected_monitor_size}"
+        )
+    if "record_uid" not in validation_frame.columns:
+        raise UpstreamGateError("full validation frame is missing record_uid")
+    population = validation_frame.copy().reset_index(drop=True)
+    if "text_vi_norm" not in population.columns:
+        if "text_vi" not in population.columns:
+            raise UpstreamGateError("full validation frame is missing text_vi_norm")
+        population["text_vi_norm"] = population["text_vi"].astype(str).map(normalize_mt_text_v1)
+    pop_uids = set(population["record_uid"].astype(str).tolist())
+    missing = [uid for uid in uids if uid not in pop_uids]
+    if missing:
+        raise UpstreamGateError(
+            "frozen Direct validation monitor contains UIDs outside frozen G_validation: "
+            + ", ".join(missing[:5])
+        )
+    pop_by_uid = {
+        str(row["record_uid"]): row
+        for _, row in population.iterrows()
+    }
+    for _, row in monitor.iterrows():
+        uid = str(row["record_uid"])
+        parent = pop_by_uid[uid]
+        mon_text = str(row.get("text_vi_norm") or "")
+        parent_text = str(parent.get("text_vi_norm") or "")
+        if mon_text != parent_text:
+            raise UpstreamGateError(f"monitor text_vi_norm drifted from G_validation for {uid}")
+        mon_audio = str(row.get("pcm16_sha256") or row.get("sha256_pcm") or "").strip().lower()
+        parent_audio = str(parent.get("pcm16_sha256") or parent.get("sha256_pcm") or "").strip().lower()
+        if mon_audio and parent_audio and mon_audio != parent_audio:
+            raise UpstreamGateError(f"monitor audio identity drifted from G_validation for {uid}")
+    live = monitor_manifest(monitor, path=path)
+    expected = {
+        "uid_set_hash": str(expected_monitor_uid_set_hash),
+        "pair_hash": str(expected_monitor_pair_hash),
+        "ordered_row_hash": str(expected_monitor_ordered_row_hash),
+    }
+    for key, want in expected.items():
+        if not is_sha256(want) or str(live.get(key) or "") != want:
+            raise UpstreamGateError(f"frozen Direct validation monitor {key} does not match the training contract")
+    if int(expected_monitor_size) == 256:
+        from src.rq2_final_contract import FROZEN_RQ1_DIRECT_MONITOR_FILE_SHA256
+
+        if file_sha != FROZEN_RQ1_DIRECT_MONITOR_FILE_SHA256:
+            raise UpstreamGateError(
+                "production monitor_size=256 requires frozen RQ1 monitor SHA-256 "
+                f"{FROZEN_RQ1_DIRECT_MONITOR_FILE_SHA256}"
+            )
+    return {
+        "frame": monitor.reset_index(drop=True),
+        "path": path,
+        "monitor_size": int(len(uids)),
+        "monitor_file_sha256": file_sha,
+        "monitor_uid_set_hash": str(live["uid_set_hash"]),
+        "monitor_pair_hash": str(live["pair_hash"]),
+        "monitor_ordered_row_hash": str(live["ordered_row_hash"]),
+        "record_uids": uids,
+        "eval_semantics": (
+            "eval_* is the fixed frozen RQ1 Direct validation monitor; "
+            "full G_validation is retained for explicit full-validation evaluation "
+            "and is never attached to periodic train-time evaluation."
+        ),
+    }
+
+
 def load_frozen_supervised_splits(
     project_root: Union[str, Path],
     *,
@@ -672,10 +774,25 @@ def load_frozen_supervised_splits(
         validation_path=val_path,
     )
 
-    return {
+    payload = {
         "train": train,
         "validation": validation,
         "identity": identity,
         "train_path": train_path,
         "validation_path": val_path,
+        "monitor": None,
+        "monitor_frame": None,
     }
+    if direct_state_dir:
+        monitor = load_frozen_validation_monitor(
+            direct_state_dir,
+            validation,
+            expected_monitor_file_sha256=str(d0_identity.get("monitor_file_sha256") or ""),
+            expected_monitor_size=int(d0_identity.get("monitor_size") or 0),
+            expected_monitor_uid_set_hash=str(d0_identity.get("monitor_uid_set_hash") or ""),
+            expected_monitor_pair_hash=str(d0_identity.get("monitor_pair_hash") or ""),
+            expected_monitor_ordered_row_hash=str(d0_identity.get("monitor_ordered_row_hash") or ""),
+        )
+        payload["monitor"] = monitor
+        payload["monitor_frame"] = monitor["frame"]
+    return payload

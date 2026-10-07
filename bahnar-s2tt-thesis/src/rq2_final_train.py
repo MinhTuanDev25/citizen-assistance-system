@@ -32,8 +32,14 @@ from src.rq2_final_contract import (
     BEST_CHECKPOINT_METRIC,
     BEST_CHECKPOINT_TIE_BREAK,
     D0_POLICY,
+    FROZEN_RQ1_DIRECT_MONITOR_FILE_SHA256,
+    FROZEN_RQ1_DIRECT_MONITOR_SIZE,
     GOLD_PSEUDO_MIX_POLICY_SLOTTED,
     GOLD_PSEUDO_MIX_POLICY_UNSET,
+    LOCKED_RQ2_EVAL_STEPS,
+    LOCKED_RQ2_EVAL_STRATEGY,
+    LOCKED_RQ2_SAVE_STEPS,
+    LOCKED_RQ2_SAVE_STRATEGY,
     REJECTED_PUBLIC_PRETRAINED_INIT_POLICY,
     GTestFirewallError,
     RUNTIME_ONLY_KEYS,
@@ -99,6 +105,153 @@ def write_progress(layout: Mapping[str, Path], payload: Mapping[str, Any]) -> No
     write_json(layout["progress"], dict(payload))
 
 
+def _utc_now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+STATUS_EVALUATING = "EVALUATING"
+STATUS_SAVING = "SAVING"
+
+EVAL_SEMANTICS_NOTE = (
+    "eval_* is the fixed frozen RQ1 Direct validation monitor; "
+    "full G_validation is retained for explicit full-validation evaluation "
+    "and is never attached to periodic train-time evaluation."
+)
+
+
+class DurableProgressCallback:
+    """Runtime-only durable heartbeat. Does not alter scientific Trainer behavior."""
+
+    def __init__(
+        self,
+        layout: Mapping[str, Path],
+        *,
+        arm: str,
+        seed: Optional[int],
+        every_n_steps: int = 50,
+        eval_steps: Optional[int] = None,
+        save_steps: Optional[int] = None,
+    ):
+        self.layout = layout
+        self.arm = str(arm)
+        self.seed = None if seed is None else int(seed)
+        self.every_n_steps = max(1, int(every_n_steps))
+        self.eval_steps = None if eval_steps is None else int(eval_steps)
+        self.save_steps = None if save_steps is None else int(save_steps)
+        self._started = None
+        self._base_global_step = 0
+        self._last_eval_step = None
+        self._last_save_step = None
+        self._last_eval_metrics = None
+
+    def _write(self, state: Any, status: str) -> None:
+        import time
+
+        if self._started is None:
+            self._started = time.monotonic()
+        global_step = int(getattr(state, "global_step", 0) or 0)
+        max_steps = int(getattr(state, "max_steps", 0) or 0)
+        epoch = float(getattr(state, "epoch", 0.0) or 0.0)
+        elapsed = max(0.0, time.monotonic() - float(self._started))
+        # Throughput is session-local so resume does not inflate steps/s.
+        completed = max(0, global_step - int(self._base_global_step or 0))
+        sps = float(completed) / elapsed if elapsed > 0 and completed > 0 else 0.0
+        remaining = None
+        if sps > 0 and max_steps > global_step:
+            remaining = float(max_steps - global_step) / sps
+        percent = None
+        if max_steps > 0:
+            percent = min(100.0, 100.0 * float(global_step) / float(max_steps))
+        payload = {
+            "arm": self.arm,
+            "seed": self.seed,
+            "status": status,
+            "global_step": global_step,
+            "max_steps": max_steps,
+            "percent_complete": percent,
+            "epoch": epoch,
+            "elapsed_seconds": elapsed,
+            "estimated_remaining_seconds": remaining,
+            "steps_per_second": sps,
+            "eval_steps": self.eval_steps,
+            "save_steps": self.save_steps,
+            "last_eval_step": self._last_eval_step,
+            "last_save_step": self._last_save_step,
+            "last_eval_metrics": self._last_eval_metrics,
+            "last_update_utc": _utc_now(),
+        }
+        write_progress(self.layout, payload)
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        import time
+
+        self._base_global_step = int(getattr(state, "global_step", 0) or 0)
+        self._started = time.monotonic()
+        self._write(state, STATUS_TRAINING_RUNNING)
+        return control
+
+    def on_step_end(self, args, state, control, **kwargs):
+        # DefaultFlowCallback sets should_evaluate/should_save before later callbacks.
+        # Mark live status immediately before those operations begin.
+        if getattr(control, "should_evaluate", False):
+            self._write(state, STATUS_EVALUATING)
+            return control
+        if getattr(control, "should_save", False):
+            self._write(state, STATUS_SAVING)
+            return control
+        step = int(getattr(state, "global_step", 0) or 0)
+        if step > 0 and step % self.every_n_steps == 0:
+            self._write(state, STATUS_TRAINING_RUNNING)
+        return control
+
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        self._last_eval_step = int(getattr(state, "global_step", 0) or 0)
+        if isinstance(metrics, Mapping):
+            self._last_eval_metrics = {
+                key: metrics[key]
+                for key in ("eval_sacrebleu", "eval_chrfpp", "eval_monitor_n", "eval_loss")
+                if key in metrics
+            }
+        if getattr(control, "should_save", False):
+            self._write(state, STATUS_SAVING)
+        else:
+            self._write(state, STATUS_TRAINING_RUNNING)
+        return control
+
+    def on_save(self, args, state, control, **kwargs):
+        self._last_save_step = int(getattr(state, "global_step", 0) or 0)
+        self._write(state, STATUS_TRAINING_RUNNING)
+        return control
+
+    def on_train_end(self, args, state, control, **kwargs):
+        # TRAINING_COMPLETE is owned by train_or_resume_arm after proof succeeds.
+        return control
+
+
+def _as_trainer_callback(callback: DurableProgressCallback):
+    from transformers import TrainerCallback
+
+    class _Bound(TrainerCallback):  # type: ignore[misc,valid-type]
+        def on_train_begin(self, args, state, control, **kwargs):
+            return callback.on_train_begin(args, state, control, **kwargs)
+
+        def on_step_end(self, args, state, control, **kwargs):
+            return callback.on_step_end(args, state, control, **kwargs)
+
+        def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+            return callback.on_evaluate(args, state, control, metrics=metrics, **kwargs)
+
+        def on_save(self, args, state, control, **kwargs):
+            return callback.on_save(args, state, control, **kwargs)
+
+        def on_train_end(self, args, state, control, **kwargs):
+            return callback.on_train_end(args, state, control, **kwargs)
+
+    return _Bound()
+
+
 def build_hparams_from_yaml(project_root: Union[str, Path]) -> Dict[str, Any]:
     cfg = load_direct_yaml_config(code_root() / "configs" / "direct.yaml")
     arch = locked_architecture()
@@ -111,6 +264,11 @@ def build_hparams_from_yaml(project_root: Union[str, Path]) -> Dict[str, Any]:
         "warmup_ratio": float(cfg["warmup_ratio"]),
         "weight_decay": float(cfg["weight_decay"]),
         "num_train_epochs": float(cfg["num_train_epochs"]),
+        "save_steps": int(cfg["save_steps"]),
+        "eval_steps": int(cfg["eval_steps"]),
+        "eval_strategy": LOCKED_RQ2_EVAL_STRATEGY,
+        "save_strategy": LOCKED_RQ2_SAVE_STRATEGY,
+        "monitor_size": int(cfg["monitor_size"]),
         "fp16": bool(cfg["fp16"]),
         "bf16": bool(cfg["bf16"]),
         "gradient_checkpointing": bool(cfg["gradient_checkpointing"]),
@@ -143,8 +301,17 @@ def merge_training_fields(
 ) -> Dict[str, Any]:
     init_policy = D0_POLICY if arm == ARM_D0 else AUGMENTATION_INIT_POLICY
     d0 = dict(d0_init or {})
+    d0_identity = d0.get("identity") if isinstance(d0.get("identity"), Mapping) else {}
     mix = normalize_gold_pseudo_mix_policy(mix_policy or hparams)
     seeds = normalize_seed_policy(seed_policy or hparams)
+
+    def _d0_field(key: str, default: Any = "") -> Any:
+        if d0.get(key) not in (None, ""):
+            return d0.get(key)
+        if d0_identity.get(key) not in (None, ""):
+            return d0_identity.get(key)
+        return hparams.get(key, default)
+
     fields = {
         "arm": arm,
         "d0_policy": D0_POLICY if arm == ARM_D0 else "",
@@ -181,8 +348,19 @@ def merge_training_fields(
         "realized_pseudo_duration_seconds": data_contract["realized_pseudo_duration_seconds"],
         "source_fingerprint_sha256": source_fingerprint_sha256,
         "rq1_direct_training_contract_hash": rq1_direct_training_contract_hash,
+        "save_steps": LOCKED_RQ2_SAVE_STEPS,
+        "eval_steps": LOCKED_RQ2_EVAL_STEPS,
+        "eval_strategy": LOCKED_RQ2_EVAL_STRATEGY,
+        "save_strategy": LOCKED_RQ2_SAVE_STRATEGY,
+        "monitor_size": int(_d0_field("monitor_size", 0) or 0),
+        "monitor_file_sha256": str(_d0_field("monitor_file_sha256", "") or ""),
+        "monitor_uid_set_hash": str(_d0_field("monitor_uid_set_hash", "") or ""),
+        "monitor_pair_hash": str(_d0_field("monitor_pair_hash", "") or ""),
+        "monitor_ordered_row_hash": str(_d0_field("monitor_ordered_row_hash", "") or ""),
         **{k: hparams[k] for k in hparams if k not in RUNTIME_ONLY_KEYS and k not in {
             "gold_pseudo_mix_policy", "gold_slots", "pseudo_slots", "seed_policy", "seed_policy_seeds", "seed", "dataloader_seed",
+            "save_steps", "eval_steps", "eval_strategy", "save_strategy",
+            "monitor_size", "monitor_file_sha256", "monitor_uid_set_hash", "monitor_pair_hash", "monitor_ordered_row_hash",
         }},
     }
     if seeds.get("configured") and seeds.get("seed_policy") == SEED_POLICY_SINGLE:
@@ -513,24 +691,84 @@ def write_resume_proof(layout: Mapping[str, Path], proof: Mapping[str, Any]) -> 
     return payload
 
 
-def write_training_complete_proof(
-    layout: Mapping[str, Path],
+def assert_training_reached_max_steps(trainer: Any, *, arm: str) -> Dict[str, Any]:
+    """Fail closed unless Trainer returned only after reaching the planned max_steps."""
+    state = getattr(trainer, "state", None)
+    if state is None:
+        raise TrainingContractError(f"{arm} trainer.state is missing after train()")
+    try:
+        final_global_step = int(getattr(state, "global_step", 0) or 0)
+        expected_max_steps = int(getattr(state, "max_steps", 0) or 0)
+    except (TypeError, ValueError) as exc:
+        raise TrainingContractError(f"{arm} trainer.state step fields are unreadable after train()") from exc
+    if expected_max_steps <= 0:
+        raise TrainingContractError(
+            f"{arm} trainer.state.max_steps must be > 0 after train(); got {expected_max_steps}"
+        )
+    if final_global_step != expected_max_steps:
+        raise TrainingContractError(
+            f"{arm} training returned before reaching max_steps: "
+            f"final_global_step={final_global_step} expected_max_steps={expected_max_steps}"
+        )
+    return {
+        "final_global_step": final_global_step,
+        "expected_max_steps": expected_max_steps,
+        "reached_max_steps": True,
+    }
+
+
+def assert_training_complete_terminal_steps(payload: Mapping[str, Any], *, arm: str) -> None:
+    """Trust-boundary step invariants for a TRAINING_COMPLETE proof payload."""
+    if "expected_max_steps" not in payload:
+        raise TrainingContractError(f"{arm} training_complete is missing expected_max_steps")
+    if "reached_max_steps" not in payload:
+        raise TrainingContractError(f"{arm} training_complete is missing reached_max_steps")
+    if "final_global_step" not in payload:
+        raise TrainingContractError(f"{arm} training_complete is missing final_global_step")
+    try:
+        final_global_step = int(payload["final_global_step"])
+        expected_max_steps = int(payload["expected_max_steps"])
+    except (TypeError, ValueError) as exc:
+        raise TrainingContractError(f"{arm} training_complete step fields are invalid") from exc
+    if expected_max_steps <= 0:
+        raise TrainingContractError(
+            f"{arm} training_complete expected_max_steps must be > 0; got {expected_max_steps}"
+        )
+    if payload.get("reached_max_steps") is not True:
+        raise TrainingContractError(f"{arm} training_complete reached_max_steps must be exactly true")
+    if final_global_step != expected_max_steps:
+        raise TrainingContractError(
+            f"{arm} training_complete final_global_step={final_global_step} "
+            f"!= expected_max_steps={expected_max_steps}"
+        )
+
+
+def build_training_complete_proof(
     *,
     arm: str,
     training_contract_sha256: str,
     final_global_step: int,
     checkpoint_path: Union[str, Path],
     best_checkpoint: Optional[Mapping[str, Any]] = None,
+    expected_max_steps: int,
+    reached_max_steps: bool = True,
+    mix_observed: Optional[Mapping[str, Any]] = None,
+    eval_monitor_n: Optional[int] = None,
+    full_validation_n: Optional[int] = None,
+    eval_semantics: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Construct and validate the final completion payload. Does not publish."""
     path = Path(checkpoint_path)
     fingerprint = checkpoint_model_state_sha256(path)
     best = dict(best_checkpoint or {})
     best_name = str(best.get("checkpoint_name") or "")
     best_fp = str(best.get("checkpoint_fingerprint") or best.get("checkpoint_fingerprint_sha256") or "")
-    payload = {
+    payload: Dict[str, Any] = {
         "arm": arm,
         "training_contract_sha256": training_contract_sha256,
         "final_global_step": int(final_global_step),
+        "expected_max_steps": int(expected_max_steps),
+        "reached_max_steps": bool(reached_max_steps),
         "terminal_checkpoint": path.name,
         "terminal_checkpoint_fingerprint": fingerprint,
         "best_checkpoint": best_name,
@@ -560,6 +798,47 @@ def write_training_complete_proof(
         payload["validation_metric_value"] = best.get("validation_metric")
     if best.get("g_test_used") is not None:
         payload["g_test_used"] = best.get("g_test_used")
+    if mix_observed:
+        payload["mix_observed"] = dict(mix_observed)
+    if eval_monitor_n is not None:
+        payload["eval_monitor_n"] = int(eval_monitor_n)
+    if full_validation_n is not None:
+        payload["full_validation_n"] = int(full_validation_n)
+    if eval_semantics is not None:
+        payload["eval_semantics"] = str(eval_semantics)
+    assert_training_complete_terminal_steps(payload, arm=arm)
+    return payload
+
+
+def write_training_complete_proof(
+    layout: Mapping[str, Path],
+    *,
+    arm: str,
+    training_contract_sha256: str,
+    final_global_step: int,
+    checkpoint_path: Union[str, Path],
+    best_checkpoint: Optional[Mapping[str, Any]] = None,
+    expected_max_steps: int,
+    reached_max_steps: bool = True,
+    mix_observed: Optional[Mapping[str, Any]] = None,
+    eval_monitor_n: Optional[int] = None,
+    full_validation_n: Optional[int] = None,
+    eval_semantics: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build the final completion payload, then publish it exactly once."""
+    payload = build_training_complete_proof(
+        arm=arm,
+        training_contract_sha256=training_contract_sha256,
+        final_global_step=final_global_step,
+        checkpoint_path=checkpoint_path,
+        best_checkpoint=best_checkpoint,
+        expected_max_steps=expected_max_steps,
+        reached_max_steps=reached_max_steps,
+        mix_observed=mix_observed,
+        eval_monitor_n=eval_monitor_n,
+        full_validation_n=full_validation_n,
+        eval_semantics=eval_semantics,
+    )
     write_json(layout["training_complete"], payload)
     return payload
 
@@ -584,6 +863,7 @@ def read_training_complete_proof(layout: Mapping[str, Path], *, arm: str, expect
     if terminal_name and best_name and terminal_name == best_name:
         if str(payload.get("terminal_checkpoint_fingerprint") or "") != str(payload.get("best_checkpoint_fingerprint") or ""):
             raise TrainingContractError(f"{arm} terminal/best share a name but not a fingerprint")
+    assert_training_complete_terminal_steps(payload, arm=arm)
     return payload
 
 
@@ -1012,6 +1292,7 @@ def compute_validation_metrics(eval_prediction: Any, context: Mapping[str, Any])
     return {
         "sacrebleu": float(metrics["sacrebleu"]),
         "chrfpp": float(metrics["chrfpp"]),
+        "monitor_n": float(len(ordered_uids)),
     }
 
 
@@ -1038,6 +1319,20 @@ def build_training_arguments(
             fp16 = False
     except Exception:
         fp16 = False
+    try:
+        save_steps = int(training_contract["save_steps"])
+        eval_steps = int(training_contract["eval_steps"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise TrainingContractError("training contract must explicitly set save_steps and eval_steps") from exc
+    if save_steps != LOCKED_RQ2_SAVE_STEPS or eval_steps != LOCKED_RQ2_EVAL_STEPS:
+        raise TrainingContractError(
+            f"training contract must lock save_steps={LOCKED_RQ2_SAVE_STEPS} and "
+            f"eval_steps={LOCKED_RQ2_EVAL_STEPS}"
+        )
+    eval_strategy = str(training_contract.get("eval_strategy") or "")
+    save_strategy = str(training_contract.get("save_strategy") or "")
+    if eval_strategy != LOCKED_RQ2_EVAL_STRATEGY or save_strategy != LOCKED_RQ2_SAVE_STRATEGY:
+        raise TrainingContractError("training contract must lock eval_strategy/save_strategy='steps'")
     args = Seq2SeqTrainingArguments(
         output_dir=str(output_dir),
         per_device_train_batch_size=int(training_contract["per_device_train_batch_size"]),
@@ -1063,10 +1358,10 @@ def build_training_arguments(
         metric_for_best_model=str(training_contract.get("metric_for_best_model") or BEST_CHECKPOINT_METRIC),
         greater_is_better=bool(training_contract.get("greater_is_better", True)),
         load_best_model_at_end=True,
-        eval_strategy="steps",
-        save_strategy="steps",
-        save_steps=int(training_contract.get("save_steps") or 1000),
-        eval_steps=int(training_contract.get("eval_steps") or training_contract.get("save_steps") or 1000),
+        eval_strategy=eval_strategy,
+        save_strategy=save_strategy,
+        save_steps=save_steps,
+        eval_steps=eval_steps,
         save_total_limit=int(training_contract.get("save_total_limit") or 2),
         logging_steps=int(training_contract.get("logging_steps") or 50),
 
@@ -1083,6 +1378,52 @@ def build_training_arguments(
     return args
 
 
+def assert_monitor_frame_matches_contract(
+    monitor_frame: pd.DataFrame,
+    training_contract: Mapping[str, Any],
+    *,
+    validation_frame: Optional[pd.DataFrame] = None,
+) -> Dict[str, Any]:
+    """Fail closed unless the Trainer eval frame is the locked frozen monitor."""
+    from src.direct_full_train import monitor_manifest
+
+    if monitor_frame is None or not isinstance(monitor_frame, pd.DataFrame) or monitor_frame.empty:
+        raise TrainingContractError("train-time eval requires the frozen validation monitor frame")
+    try:
+        expected_size = int(training_contract["monitor_size"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise TrainingContractError("training contract is missing monitor_size") from exc
+    if len(monitor_frame) != expected_size:
+        raise TrainingContractError(
+            f"train-time eval monitor has {len(monitor_frame)} rows, contract expects {expected_size}"
+        )
+    if expected_size >= 11112:
+        raise TrainingContractError("train-time eval monitor must not be the full G_validation frame")
+    live = monitor_manifest(monitor_frame)
+    for key, contract_key in (
+        ("n", "monitor_size"),
+        ("uid_set_hash", "monitor_uid_set_hash"),
+        ("pair_hash", "monitor_pair_hash"),
+        ("ordered_row_hash", "monitor_ordered_row_hash"),
+    ):
+        if key == "n":
+            if int(live["n"]) != expected_size:
+                raise TrainingContractError("train-time eval monitor size drifted from the training contract")
+            continue
+        expected = str(training_contract.get(contract_key) or "")
+        if not is_sha256(expected) or str(live.get(key) or "") != expected:
+            raise TrainingContractError(f"train-time eval monitor {contract_key} does not match the training contract")
+    if validation_frame is not None:
+        pop = set(validation_frame["record_uid"].astype(str).tolist())
+        uids = monitor_frame["record_uid"].astype(str).tolist()
+        if len(uids) != len(set(uids)):
+            raise TrainingContractError("train-time eval monitor contains duplicate record_uid values")
+        missing = [uid for uid in uids if uid not in pop]
+        if missing:
+            raise TrainingContractError("train-time eval monitor UID is outside frozen G_validation")
+    return live
+
+
 def build_trainer(
     *,
     arm: str,
@@ -1091,17 +1432,35 @@ def build_trainer(
     fingerprint: Mapping[str, Any],
     train_frame: pd.DataFrame,
     validation_frame: pd.DataFrame,
+    monitor_frame: Optional[pd.DataFrame] = None,
     audio_cache_roots: Sequence[Union[str, Path]] = (),
     processors: Optional[tuple] = None,
     model: Any = None,
     resume_checkpoint: Optional[Union[str, Path]] = None,
     d0_checkpoint_dir: Optional[Union[str, Path]] = None,
 ):
-    """Construct the RQ1 Direct Seq2Seq trainer for one RQ2 arm. Does not call train()."""
+    """Construct the RQ1 Direct Seq2Seq trainer for one RQ2 arm. Does not call train().
+
+    ``validation_frame`` is the full frozen Direct-eligible G_validation and is
+    retained for identity checks. Trainer ``eval_dataset`` uses ``monitor_frame``,
+    the frozen RQ1 Direct 256-row validation monitor.
+    """
     if arm not in TRAINABLE_ARMS:
         raise TrainingContractError(f"build_trainer cannot train arm {arm!r}")
     if str(training_contract.get("init_policy") or "") == REJECTED_PUBLIC_PRETRAINED_INIT_POLICY:
         raise TrainingContractError("public pretrained XLS-R+mBART reinitialization is rejected")
+    if monitor_frame is None:
+        raise TrainingContractError(
+            "build_trainer requires monitor_frame=frozen RQ1 Direct validation monitor; "
+            "full G_validation must not be used as Trainer eval_dataset"
+        )
+    if validation_frame is None or not isinstance(validation_frame, pd.DataFrame) or validation_frame.empty:
+        raise TrainingContractError("build_trainer requires the full frozen G_validation frame for identity checks")
+    assert_monitor_frame_matches_contract(
+        monitor_frame,
+        training_contract,
+        validation_frame=validation_frame,
+    )
     mix_sampler = None
     if "kind" in train_frame.columns and (train_frame["kind"].astype(str) == "pseudo_nb13").any():
         mix_sampler = build_gold_pseudo_sampler(train_frame, training_contract)
@@ -1119,7 +1478,7 @@ def build_trainer(
             raise TrainingContractError("build_trainer needs processors when a model is injected")
     datasets = build_arm_datasets(
         train_frame=train_frame,
-        validation_frame=validation_frame,
+        validation_frame=monitor_frame,
         feature_extractor=feature_extractor,
         tokenizer=tokenizer,
         training_contract=training_contract,
@@ -1133,7 +1492,7 @@ def build_trainer(
     )
     from src.direct_full_train import make_resume_safe_seq2seq_trainer_cls
 
-    metric_context = build_validation_metric_context(validation_frame, tokenizer)
+    metric_context = build_validation_metric_context(monitor_frame, tokenizer)
 
     def _compute_metrics(eval_prediction):
         return compute_validation_metrics(eval_prediction, metric_context)
@@ -1171,6 +1530,14 @@ def build_trainer(
             write_resume_proof(layout, proof)
             return result
 
+    heartbeat = DurableProgressCallback(
+        layout,
+        arm=arm,
+        seed=training_contract.get("active_seed", training_contract.get("seed")),
+        every_n_steps=50,
+        eval_steps=int(training_contract["eval_steps"]),
+        save_steps=int(training_contract["save_steps"]),
+    )
     trainer = Rq2ResumeProofTrainer(
         model=model,
         args=args,
@@ -1179,6 +1546,7 @@ def build_trainer(
         data_collator=collator,
         processing_class=tokenizer,
         compute_metrics=_compute_metrics,
+        callbacks=[_as_trainer_callback(heartbeat)],
     )
     # transformers 4.57.x treats SpeechEncoderDecoderModel(**kwargs) as accepting
     # loss kwargs and injects num_items_in_batch. That kwarg is forwarded to the
@@ -1188,12 +1556,33 @@ def build_trainer(
     trainer._rq2_fingerprint = dict(fingerprint)
     trainer._rq2_metric_context = metric_context
     trainer._rq2_mix_sampler = mix_sampler
+    trainer._rq2_eval_monitor_n = int(len(monitor_frame))
+    trainer._rq2_full_validation_n = int(len(validation_frame))
+    trainer._rq2_eval_semantics = EVAL_SEMANTICS_NOTE
     if mix_sampler is not None:
         trainer._rq2_mix_observed = mix_sampler.observed_ratio()
     if resume_checkpoint is not None:
         try:
             inspect = json.loads((Path(resume_checkpoint) / "trainer_state.json").read_text(encoding="utf-8"))
             trainer._rq2_expected_resume_step = int(inspect.get("global_step") or 0)
+            write_progress(layout, {
+                "arm": arm,
+                "seed": training_contract.get("active_seed", training_contract.get("seed")),
+                "status": STATUS_RESUME_AVAILABLE,
+                "global_step": trainer._rq2_expected_resume_step,
+                "max_steps": None,
+                "percent_complete": None,
+                "epoch": inspect.get("epoch"),
+                "elapsed_seconds": 0.0,
+                "estimated_remaining_seconds": None,
+                "steps_per_second": 0.0,
+                "eval_steps": int(training_contract["eval_steps"]),
+                "save_steps": int(training_contract["save_steps"]),
+                "last_eval_step": None,
+                "last_save_step": None,
+                "last_eval_metrics": None,
+                "last_update_utc": _utc_now(),
+            })
         except Exception as exc:
             raise TrainingContractError(f"{arm} resume checkpoint trainer_state.json is unreadable") from exc
     return trainer
@@ -1208,6 +1597,7 @@ def train_or_resume_arm(
     fingerprint: Mapping[str, Any],
     train_frame: Optional[pd.DataFrame] = None,
     validation_frame: Optional[pd.DataFrame] = None,
+    monitor_frame: Optional[pd.DataFrame] = None,
     audio_cache_roots: Sequence[Union[str, Path]] = (),
     resume_checkpoint: Optional[Union[str, Path]] = None,
     trainer_factory: Optional[Callable[..., Any]] = None,
@@ -1217,7 +1607,24 @@ def train_or_resume_arm(
     ensure_arm_root(layout["root"])
     write_arm_contracts(layout, training_contract, fingerprint)
     write_json(layout["checkpoints"] / "full_experiment_fingerprint.json", dict(fingerprint))
-    write_progress(layout, {"status": "starting", "arm": arm, "records_processed": 0, "batches_processed": 0})
+    write_progress(layout, {
+        "arm": arm,
+        "seed": training_contract.get("active_seed", training_contract.get("seed")),
+        "status": "PREPARING",
+        "global_step": 0,
+        "max_steps": None,
+        "percent_complete": 0.0,
+        "epoch": 0.0,
+        "elapsed_seconds": 0.0,
+        "estimated_remaining_seconds": None,
+        "steps_per_second": 0.0,
+        "eval_steps": training_contract.get("eval_steps"),
+        "save_steps": training_contract.get("save_steps"),
+        "last_eval_step": None,
+        "last_save_step": None,
+        "last_eval_metrics": None,
+        "last_update_utc": _utc_now(),
+    })
     if arm == ARM_D0:
         return bind_d0_arm(layout=layout, flags=flags, training_contract=training_contract, fingerprint=fingerprint)
     if arm not in TRAINABLE_ARMS:
@@ -1227,6 +1634,10 @@ def train_or_resume_arm(
         require_configured_seed_policy(training_contract, for_real_training=True)
         if str(training_contract.get("init_policy") or "") == REJECTED_PUBLIC_PRETRAINED_INIT_POLICY:
             raise TrainingContractError("public pretrained XLS-R+mBART reinitialization is rejected")
+        if monitor_frame is None:
+            raise TrainingContractError(
+                "real training requires monitor_frame=frozen RQ1 Direct validation monitor"
+            )
     proof = None
     live_proof = None
     if resume_checkpoint is not None:
@@ -1237,7 +1648,24 @@ def train_or_resume_arm(
             expected_data_hash=training_contract["data_manifest_sha256"],
         )
         write_resume_proof(layout, {**proof, "proof_status": STATUS_RESUME_AVAILABLE})
-        write_progress(layout, {"status": STATUS_RESUME_AVAILABLE, "arm": arm, "global_step": proof["global_step"]})
+        write_progress(layout, {
+            "arm": arm,
+            "seed": training_contract.get("active_seed", training_contract.get("seed")),
+            "status": STATUS_RESUME_AVAILABLE,
+            "global_step": proof["global_step"],
+            "max_steps": None,
+            "percent_complete": None,
+            "epoch": proof.get("epoch"),
+            "elapsed_seconds": 0.0,
+            "estimated_remaining_seconds": None,
+            "steps_per_second": 0.0,
+            "eval_steps": training_contract.get("eval_steps"),
+            "save_steps": training_contract.get("save_steps"),
+            "last_eval_step": None,
+            "last_save_step": None,
+            "last_eval_metrics": None,
+            "last_update_utc": _utc_now(),
+        })
     if flags.run_real_training is not True:
         write_progress(layout, {"status": "skipped_real_training", "arm": arm})
         return {
@@ -1248,71 +1676,157 @@ def train_or_resume_arm(
             "lifecycle": STATUS_RESUME_AVAILABLE if proof is not None else STATUS_NOT_STARTED,
         }
     factory = trainer_factory or build_trainer
-    write_progress(layout, {"status": STATUS_TRAINING_RUNNING, "arm": arm})
+    write_progress(layout, {
+        "arm": arm,
+        "seed": training_contract.get("active_seed", training_contract.get("seed")),
+        "status": STATUS_TRAINING_RUNNING,
+        "global_step": int((proof or {}).get("global_step") or 0),
+        "max_steps": None,
+        "percent_complete": None,
+        "epoch": (proof or {}).get("epoch"),
+        "elapsed_seconds": 0.0,
+        "estimated_remaining_seconds": None,
+        "steps_per_second": 0.0,
+        "eval_steps": training_contract.get("eval_steps"),
+        "save_steps": training_contract.get("save_steps"),
+        "last_eval_step": None,
+        "last_save_step": None,
+        "last_eval_metrics": None,
+        "last_update_utc": _utc_now(),
+    })
     d0_init = resolve_frozen_d0_init(flags)
     if d0_init["model_state_sha256"] != str(training_contract.get("d0_init_model_state_sha256") or ""):
         raise TrainingContractError("frozen D0 init fingerprint does not match the arm training contract")
     if d0_init["checkpoint_fingerprint_sha256"] != str(training_contract.get("d0_checkpoint_fingerprint_sha256") or ""):
         raise TrainingContractError("frozen D0 checkpoint fingerprint does not match the arm training contract")
     d0_checkpoint_dir = d0_init["checkpoint_dir"]
-    trainer = factory(
-        arm=arm,
-        layout=layout,
-        training_contract=training_contract,
-        fingerprint=fingerprint,
-        train_frame=train_frame,
-        validation_frame=validation_frame,
-        audio_cache_roots=audio_cache_roots,
-        processors=processors,
-        resume_checkpoint=resume_checkpoint,
-        d0_checkpoint_dir=d0_checkpoint_dir,
-    )
-    result = trainer.train(resume_from_checkpoint=str(resume_checkpoint) if resume_checkpoint else None)
-    live_proof = getattr(trainer, "_rq2_live_resume_proof", None)
-    if resume_checkpoint is not None:
-        expected_step = int((proof or {}).get("global_step") or 0)
-        if live_proof is None:
-            live_proof = prove_live_trainer_resume(
-                trainer,
-                expected_global_step=expected_step,
-                checkpoint_path=resume_checkpoint,
-                arm=arm,
-                training_contract_sha256=training_contract["arm_training_contract_sha256"],
-                expected_data_hash=training_contract["data_manifest_sha256"],
-            )
-        write_resume_proof(layout, live_proof)
-        if live_proof.get("proof_status") != "RESUME_PROVEN":
-            write_progress(layout, {"status": STATUS_FAILED_TRAINING, "arm": arm})
-            raise TrainingContractError(f"{arm} resume restore was not proven")
-    final_step = int(getattr(getattr(trainer, "state", None), "global_step", 0) or getattr(result, "global_step", 0) or 0)
-    terminal = _terminal_checkpoint_path(layout, trainer=trainer, resume_checkpoint=resume_checkpoint)
-    best_payload = {}
-    best_path = layout.get("best_checkpoint")
-    if best_path and Path(best_path).is_file():
-        best_payload = json.loads(Path(best_path).read_text(encoding="utf-8"))
-    complete = write_training_complete_proof(
-        layout,
-        arm=arm,
-        training_contract_sha256=training_contract["arm_training_contract_sha256"],
-        final_global_step=final_step,
-        checkpoint_path=terminal,
-        best_checkpoint=best_payload,
-    )
-    mix_observed = getattr(trainer, "_rq2_mix_observed", None)
-    if mix_observed:
-        complete["mix_observed"] = dict(mix_observed)
-        write_json(layout["training_complete"], complete)
-    write_progress(layout, {"status": STATUS_TRAINING_COMPLETE, "arm": arm, "records_processed": final_step})
-    return {
-        "trained": True,
-        "resumed": proof is not None,
-        "proof": proof,
-        "live_resume_proof": live_proof,
-        "training_complete": complete,
-        "result": result,
-        "trainer": trainer,
-        "lifecycle": STATUS_TRAINING_COMPLETE,
+    trainer_kwargs = {
+        "arm": arm,
+        "layout": layout,
+        "training_contract": training_contract,
+        "fingerprint": fingerprint,
+        "train_frame": train_frame,
+        "validation_frame": validation_frame,
+        "monitor_frame": monitor_frame,
+        "audio_cache_roots": audio_cache_roots,
+        "processors": processors,
+        "resume_checkpoint": resume_checkpoint,
+        "d0_checkpoint_dir": d0_checkpoint_dir,
     }
+    trainer = None
+    try:
+        try:
+            trainer = factory(**trainer_kwargs)
+        except TypeError as exc:
+            if "monitor_frame" not in str(exc):
+                raise
+            # Older injected trainer_factory fixtures may not accept monitor_frame.
+            trainer_kwargs.pop("monitor_frame", None)
+            trainer = factory(**trainer_kwargs)
+        result = trainer.train(resume_from_checkpoint=str(resume_checkpoint) if resume_checkpoint else None)
+        live_proof = getattr(trainer, "_rq2_live_resume_proof", None)
+        if resume_checkpoint is not None:
+            expected_step = int((proof or {}).get("global_step") or 0)
+            if live_proof is None:
+                live_proof = prove_live_trainer_resume(
+                    trainer,
+                    expected_global_step=expected_step,
+                    checkpoint_path=resume_checkpoint,
+                    arm=arm,
+                    training_contract_sha256=training_contract["arm_training_contract_sha256"],
+                    expected_data_hash=training_contract["data_manifest_sha256"],
+                )
+            write_resume_proof(layout, live_proof)
+            if live_proof.get("proof_status") != "RESUME_PROVEN":
+                raise TrainingContractError(f"{arm} resume restore was not proven")
+        terminal_proof = assert_training_reached_max_steps(trainer, arm=arm)
+        final_step = int(terminal_proof["final_global_step"])
+        expected_max_steps = int(terminal_proof["expected_max_steps"])
+        terminal = _terminal_checkpoint_path(layout, trainer=trainer, resume_checkpoint=resume_checkpoint)
+        best_payload = {}
+        best_path = layout.get("best_checkpoint")
+        if best_path and Path(best_path).is_file():
+            best_payload = json.loads(Path(best_path).read_text(encoding="utf-8"))
+        mix_observed = getattr(trainer, "_rq2_mix_observed", None)
+        # Build+validate the full proof in memory first. Publish training_complete.json
+        # exactly once only after every required post-train field is present.
+        complete = write_training_complete_proof(
+            layout,
+            arm=arm,
+            training_contract_sha256=training_contract["arm_training_contract_sha256"],
+            final_global_step=final_step,
+            checkpoint_path=terminal,
+            best_checkpoint=best_payload,
+            expected_max_steps=expected_max_steps,
+            reached_max_steps=True,
+            mix_observed=dict(mix_observed) if mix_observed else None,
+            eval_monitor_n=int(
+                getattr(trainer, "_rq2_eval_monitor_n", training_contract.get("monitor_size") or 0) or 0
+            ),
+            full_validation_n=int(getattr(trainer, "_rq2_full_validation_n", 0) or 0),
+            eval_semantics=str(getattr(trainer, "_rq2_eval_semantics", "") or EVAL_SEMANTICS_NOTE),
+        )
+        write_progress(layout, {
+            "arm": arm,
+            "seed": training_contract.get("active_seed", training_contract.get("seed")),
+            "status": STATUS_TRAINING_COMPLETE,
+            "global_step": final_step,
+            "max_steps": expected_max_steps,
+            "percent_complete": 100.0,
+            "epoch": getattr(getattr(trainer, "state", None), "epoch", None),
+            "elapsed_seconds": None,
+            "estimated_remaining_seconds": 0.0,
+            "steps_per_second": None,
+            "eval_steps": training_contract.get("eval_steps"),
+            "save_steps": training_contract.get("save_steps"),
+            "last_eval_step": None,
+            "last_save_step": None,
+            "last_eval_metrics": None,
+            "last_update_utc": _utc_now(),
+        })
+        return {
+            "trained": True,
+            "resumed": proof is not None,
+            "proof": proof,
+            "live_resume_proof": live_proof,
+            "training_complete": complete,
+            "result": result,
+            "trainer": trainer,
+            "lifecycle": STATUS_TRAINING_COMPLETE,
+        }
+    except Exception as exc:
+        failed_step = 0
+        failed_max = None
+        if trainer is not None:
+            state = getattr(trainer, "state", None)
+            failed_step = int(getattr(state, "global_step", 0) or 0)
+            try:
+                failed_max = int(getattr(state, "max_steps", 0) or 0)
+            except (TypeError, ValueError):
+                failed_max = None
+        elif proof is not None:
+            failed_step = int(proof.get("global_step") or 0)
+        write_progress(layout, {
+            "arm": arm,
+            "seed": training_contract.get("active_seed", training_contract.get("seed")),
+            "status": STATUS_FAILED_TRAINING,
+            "global_step": failed_step,
+            "max_steps": failed_max,
+            "percent_complete": None,
+            "epoch": None,
+            "elapsed_seconds": None,
+            "estimated_remaining_seconds": None,
+            "steps_per_second": None,
+            "eval_steps": training_contract.get("eval_steps"),
+            "save_steps": training_contract.get("save_steps"),
+            "last_eval_step": None,
+            "last_save_step": None,
+            "last_eval_metrics": None,
+            "failure_reason": str(exc)[:800],
+            "error": type(exc).__name__,
+            "last_update_utc": _utc_now(),
+        })
+        raise
 
 
 def _latest_checkpoint_path(
@@ -1355,6 +1869,7 @@ def resume_or_train_arm(
     resume_checkpoint: Optional[Union[str, Path]] = None,
     train_frame: Optional[pd.DataFrame] = None,
     validation_frame: Optional[pd.DataFrame] = None,
+    monitor_frame: Optional[pd.DataFrame] = None,
     audio_cache_roots: Sequence[Union[str, Path]] = (),
     processors: Optional[tuple] = None,
 ) -> Dict[str, Any]:
@@ -1373,6 +1888,7 @@ def resume_or_train_arm(
         fingerprint=fingerprint,
         train_frame=train_frame,
         validation_frame=validation_frame,
+        monitor_frame=monitor_frame,
         audio_cache_roots=audio_cache_roots,
         resume_checkpoint=resume_checkpoint,
         trainer_factory=trainer_factory,
