@@ -1069,6 +1069,14 @@ def build_training_arguments(
         eval_steps=int(training_contract.get("eval_steps") or training_contract.get("save_steps") or 1000),
         save_total_limit=int(training_contract.get("save_total_limit") or 2),
         logging_steps=int(training_contract.get("logging_steps") or 50),
+
+        # Runtime-only input pipeline tuning.
+        # These settings do not alter the scientific training contract,
+        # data ordering policy, model, optimizer, loss, or seed policy.
+        dataloader_num_workers=8,
+        dataloader_pin_memory=True,
+        dataloader_persistent_workers=True,
+        dataloader_prefetch_factor=2,
     )
     if resume_from_checkpoint:
         args.resume_from_checkpoint = str(resume_from_checkpoint)
@@ -1133,11 +1141,11 @@ def build_trainer(
     BaseTrainer = make_resume_safe_seq2seq_trainer_cls()
 
     class Rq2ResumeProofTrainer(BaseTrainer):  # type: ignore[misc,valid-type]
-        def _get_train_sampler(self):
+        def _get_train_sampler(self, *args, **kwargs):
             sampler = getattr(self, "_rq2_mix_sampler", None)
             if sampler is not None:
                 return sampler
-            return super()._get_train_sampler()
+            return super()._get_train_sampler(*args, **kwargs)
 
         def _load_from_checkpoint(self, resume_from_checkpoint, *args, **kwargs):
             result = super()._load_from_checkpoint(resume_from_checkpoint, *args, **kwargs)
@@ -1172,6 +1180,10 @@ def build_trainer(
         processing_class=tokenizer,
         compute_metrics=_compute_metrics,
     )
+    # transformers 4.57.x treats SpeechEncoderDecoderModel(**kwargs) as accepting
+    # loss kwargs and injects num_items_in_batch. That kwarg is forwarded to the
+    # MBART decoder, whose forward() does not accept it.
+    trainer.model_accepts_loss_kwargs = False
     trainer._rq2_arm = arm
     trainer._rq2_fingerprint = dict(fingerprint)
     trainer._rq2_metric_context = metric_context

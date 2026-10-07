@@ -243,25 +243,102 @@ def write_frozen_d0_state(
         "direct_training_contract_hash": contract["direct_training_contract_hash"],
     }
     (ckpt / "full_experiment_fingerprint.json").write_text(json.dumps(fingerprint), encoding="utf-8")
+    # Persist the exact prepared CSVs first. Their bytes are part of
+    # the frozen D0 supervised identity.
+    train_csv = path / DIRECT_TRAIN_CSV
+    val_csv = path / DIRECT_VAL_CSV
+
+    train.to_csv(train_csv, index=False)
+    val.to_csv(val_csv, index=False)
+
+    train_file_sha = sha256_file(train_csv)
+    val_file_sha = sha256_file(val_csv)
+
+    train_uid_set_hash = compute_uid_set_hash(train)
+    val_uid_set_hash = compute_uid_set_hash(val)
+
+    train_ordered_uid_hash = compute_ordered_uid_hash(train)
+    val_ordered_uid_hash = compute_ordered_uid_hash(val)
+
+    train_pair_hash = compute_pair_hash(train)
+    val_pair_hash = compute_pair_hash(val)
+
     extra = {
-        "train_ordered_uid_hash": compute_ordered_uid_hash(train),
-        "validation_ordered_uid_hash": compute_ordered_uid_hash(val),
-        "train_pair_hash": compute_pair_hash(train),
-        "validation_pair_hash": compute_pair_hash(val),
-        "train_audio_pair_hash": _audio_pair_hash(train) if "pcm16_sha256" in train.columns else "",
-        "validation_audio_pair_hash": _audio_pair_hash(val) if "pcm16_sha256" in val.columns else "",
+        "train_uid_set_hash": train_uid_set_hash,
+        "validation_uid_set_hash": val_uid_set_hash,
+        "train_ordered_uid_hash": train_ordered_uid_hash,
+        "validation_ordered_uid_hash": val_ordered_uid_hash,
+        "train_pair_hash": train_pair_hash,
+        "validation_pair_hash": val_pair_hash,
+        "train_file_sha256": train_file_sha,
+        "validation_file_sha256": val_file_sha,
+        "train_audio_pair_hash": (
+            _audio_pair_hash(train)
+            if "pcm16_sha256" in train.columns
+            else ""
+        ),
+        "validation_audio_pair_hash": (
+            _audio_pair_hash(val)
+            if "pcm16_sha256" in val.columns
+            else ""
+        ),
     }
-    if manifests and manifests.get("train_path"):
-        extra["train_file_sha256"] = sha256_file(manifests["train_path"])
-    if manifests and manifests.get("validation_path"):
-        extra["validation_file_sha256"] = sha256_file(manifests["validation_path"])
-    train.to_csv(path / DIRECT_TRAIN_CSV, index=False)
-    val.to_csv(path / DIRECT_VAL_CSV, index=False)
-    (path / "direct_training_contract.json").write_text(json.dumps(contract), encoding="utf-8")
-    (path / "direct_train_summary.json").write_text(json.dumps(train_summary), encoding="utf-8")
-    (path / "direct_evaluate_summary.json").write_text(json.dumps(evaluate), encoding="utf-8")
+
+    # Synthetic equivalent of the real Direct prepare provenance.
+    # Raw RQ1 manifest SHA proves origin.
+    # Prepared CSV identities prove the actual gold data that trained D0.
+    prepare_data_contract = {
+        "asr_train_eligible_uid_set_hash": train_uid_set_hash,
+        "asr_validation_eligible_uid_set_hash": val_uid_set_hash,
+        "train_ordered_uid_hash": train_ordered_uid_hash,
+        "validation_ordered_uid_hash": val_ordered_uid_hash,
+        "train_pair_hash": train_pair_hash,
+        "validation_pair_hash": val_pair_hash,
+        "train_file_sha256": train_file_sha,
+        "validation_file_sha256": val_file_sha,
+        "locked_train_manifest_sha256": (
+            sha256_file(manifests["train_path"])
+            if manifests and manifests.get("train_path")
+            else ""
+        ),
+        "locked_validation_manifest_sha256": (
+            sha256_file(manifests["validation_path"])
+            if manifests and manifests.get("validation_path")
+            else ""
+        ),
+    }
+
+    prepare_summary = {
+        "status": "SUCCESS_DIRECT_PREPARE",
+        "data_contract": prepare_data_contract,
+    }
+
+    (path / "direct_training_contract.json").write_text(
+        json.dumps(contract),
+        encoding="utf-8",
+    )
+
+    (path / "direct_train_summary.json").write_text(
+        json.dumps(train_summary),
+        encoding="utf-8",
+    )
+
+    (path / "direct_evaluate_summary.json").write_text(
+        json.dumps(evaluate),
+        encoding="utf-8",
+    )
+
+    (path / "direct_prepare_summary.json").write_text(
+        json.dumps(prepare_summary),
+        encoding="utf-8",
+    )
+
     if write_sidecar:
-        (path / "direct_supervised_identity.json").write_text(json.dumps(extra), encoding="utf-8")
+        (path / "direct_supervised_identity.json").write_text(
+            json.dumps(extra),
+            encoding="utf-8",
+        )
+
     return contract
 
 

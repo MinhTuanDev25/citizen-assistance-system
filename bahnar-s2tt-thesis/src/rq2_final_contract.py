@@ -372,11 +372,14 @@ def assert_nb14_output_dir(
 ) -> Path:
     layout = resolve_nb14_layout(project_root, durable_root=durable_root, env=env)
     root = layout["project_root"]
+    out_input = Path(out_dir).absolute()
     out = Path(out_dir).resolve()
     expected = layout["final_dir"]
     if out != expected:
         raise Rq2FinalError(f"NB14 output dir must be {expected}, got {out}")
-    if layout["durable_root"] != root and out == (root / FINAL_RELATIVE_DIR).resolve():
+
+    project_final_lexical = Path(project_root).absolute() / FINAL_RELATIVE_DIR
+    if layout["durable_root"] != root and out_input == project_final_lexical:
         raise Rq2FinalError("NB14 final output under PROJECT_ROOT is rejected")
     for protected in (
         root / NB11_RELATIVE_DIR,
@@ -856,42 +859,83 @@ def bind_frozen_d0_identity(
     val_csv = state / DIRECT_VAL_CSV
     if not train_csv.is_file() or not val_csv.is_file():
         raise UpstreamGateError("frozen D0 Direct prepared train/validation CSVs are missing")
+
+    # The canonical supervised gold identity for NB14 is the exact Direct
+    # prepared eligible data that trained D0, not the larger raw RQ1 manifests.
     prepared_train, prepared_val = load_direct_prepared_frames(state)
     derived_train = _derive_split_identity(prepared_train, path=train_csv)
     derived_val = _derive_split_identity(prepared_val, path=val_csv)
+
+    # D0 training contract locks the eligible UID sets used by Direct.
     if derived_train["uid_set_hash"] != str(contract.get("train_uid_set_hash") or ""):
         raise UpstreamGateError("D0 prepared train UID-set hash does not match the Direct training contract")
     if derived_val["uid_set_hash"] != str(contract.get("validation_uid_set_hash") or ""):
         raise UpstreamGateError("D0 prepared validation UID-set hash does not match the Direct training contract")
 
+    # Notebook 05 prepare summary is the frozen bridge from raw RQ1
+    # manifests -> Direct prepared eligible data.
+    prepare_summary = _read_json(state / "direct_prepare_summary.json")
+    prepare_contract = prepare_summary.get("data_contract") or {}
+    if not isinstance(prepare_contract, dict) or not prepare_contract:
+        raise UpstreamGateError("RQ1 D0 direct_prepare_summary.json is missing data_contract")
+
+    prepare_checks = (
+        ("asr_train_eligible_uid_set_hash", derived_train["uid_set_hash"], "train UID-set"),
+        ("asr_validation_eligible_uid_set_hash", derived_val["uid_set_hash"], "validation UID-set"),
+        ("train_ordered_uid_hash", derived_train["ordered_uid_hash"], "train ordered UID"),
+        ("validation_ordered_uid_hash", derived_val["ordered_uid_hash"], "validation ordered UID"),
+        ("train_pair_hash", derived_train["pair_hash"], "train UID->text"),
+        ("validation_pair_hash", derived_val["pair_hash"], "validation UID->text"),
+        ("train_file_sha256", derived_train["file_sha256"], "prepared train file"),
+        ("validation_file_sha256", derived_val["file_sha256"], "prepared validation file"),
+    )
+
+    for field, actual, label in prepare_checks:
+        expected = str(prepare_contract.get(field) or "").strip().lower()
+        actual = str(actual or "").strip().lower()
+        if not expected:
+            raise UpstreamGateError(f"D0 prepare data contract is missing {field}")
+        if actual != expected:
+            raise UpstreamGateError(
+                f"D0 prepared {label} identity does not match direct_prepare_summary: "
+                f"{actual} != {expected}"
+            )
+
+    # These remain the prepared-file hashes. Do NOT replace them with the
+    # raw RQ1 manifest hashes: the prepared files are what actually trained D0.
     train_file_sha = derived_train["file_sha256"]
     val_file_sha = derived_val["file_sha256"]
+
     if project_root is not None:
         root = Path(project_root)
         g_train_path = root / "data" / "manifests" / "rq1_train.csv"
         g_val_path = root / "data" / "manifests" / "rq1_validation.csv"
         if not g_train_path.is_file() or not g_val_path.is_file():
             raise UpstreamGateError("locked RQ1 train/validation manifests are missing")
-        import pandas as pd
 
-        g_train = pd.read_csv(g_train_path)
-        g_val = pd.read_csv(g_val_path)
-        g_train_id = _derive_split_identity(g_train, path=g_train_path)
-        g_val_id = _derive_split_identity(g_val, path=g_val_path)
-        for key, label in (
-            ("uid_set_hash", "UID-set"),
-            ("ordered_uid_hash", "ordered UID"),
-            ("pair_hash", "UID->text"),
-            ("audio_pair_hash", "UID->audio"),
-        ):
-            if g_train_id[key] != derived_train[key]:
-                raise UpstreamGateError(f"G_train {label} hash does not match frozen Direct prepared train")
-            if g_val_id[key] != derived_val[key]:
-                raise UpstreamGateError(f"G_validation {label} hash does not match frozen Direct prepared validation")
-        train_file_sha = g_train_id["file_sha256"]
-        val_file_sha = g_val_id["file_sha256"]
-        derived_train = dict(derived_train, file_sha256=train_file_sha)
-        derived_val = dict(derived_val, file_sha256=val_file_sha)
+        # Raw RQ1 manifests establish provenance only. They are intentionally
+        # not row-identical to the Direct eligible data after filtering,
+        # normalization and PCM preparation.
+        locked_train_sha = str(
+            prepare_contract.get("locked_train_manifest_sha256") or ""
+        ).strip().lower()
+        locked_val_sha = str(
+            prepare_contract.get("locked_validation_manifest_sha256") or ""
+        ).strip().lower()
+
+        if not is_sha256(locked_train_sha):
+            raise UpstreamGateError("D0 prepare data contract has invalid locked_train_manifest_sha256")
+        if not is_sha256(locked_val_sha):
+            raise UpstreamGateError("D0 prepare data contract has invalid locked_validation_manifest_sha256")
+
+        actual_train_manifest_sha = sha256_file(g_train_path)
+        actual_val_manifest_sha = sha256_file(g_val_path)
+
+        if actual_train_manifest_sha != locked_train_sha:
+            raise UpstreamGateError("locked RQ1 train manifest SHA256 does not match D0 prepare provenance")
+        if actual_val_manifest_sha != locked_val_sha:
+            raise UpstreamGateError("locked RQ1 validation manifest SHA256 does not match D0 prepare provenance")
+
 
     identity = {
         "arm": ARM_D0,
@@ -1444,6 +1488,8 @@ def build_final_contract(fields: Mapping[str, Any]) -> Dict[str, Any]:
 
 def _resolve_d0_checkpoint_dir(state: Path, *, experiment_id: str, best_name: str) -> Path:
     candidates = [
+        state / "checkpoints" / "full_train" / experiment_id / "ckpts" / best_name,
+        state / "checkpoints" / "full_train" / experiment_id / best_name,
         state / best_name,
         state / "full_train" / experiment_id / best_name,
         state / experiment_id / best_name,

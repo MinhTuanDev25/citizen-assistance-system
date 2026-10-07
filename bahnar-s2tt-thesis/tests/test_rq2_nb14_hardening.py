@@ -62,6 +62,29 @@ def test_durable_root_ignores_code_checkout_current(tmp_path):
     accepted = assert_nb14_output_dir(durable / "artifacts" / "rq2" / "final", project, durable_root=durable)
     assert accepted == (durable / "artifacts" / "rq2" / "final").resolve()
 
+    # Regression: PROJECT_ROOT/artifacts/rq2 may symlink to durable RQ2.
+    project_symlink = tmp_path / "code-symlink"
+    project_symlink.mkdir()
+    project_rq2 = project_symlink / "artifacts" / "rq2"
+    project_rq2.parent.mkdir(parents=True, exist_ok=True)
+    durable_rq2 = durable / "artifacts" / "rq2"
+    durable_rq2.mkdir(parents=True, exist_ok=True)
+    project_rq2.symlink_to(durable_rq2, target_is_directory=True)
+
+    accepted_symlink = assert_nb14_output_dir(
+        durable / "artifacts" / "rq2" / "final",
+        project_symlink,
+        durable_root=durable,
+    )
+    assert accepted_symlink == (durable / "artifacts" / "rq2" / "final").resolve()
+
+    with pytest.raises(Rq2FinalError, match="PROJECT_ROOT"):
+        assert_nb14_output_dir(
+            project_symlink / "artifacts" / "rq2" / "final",
+            project_symlink,
+            durable_root=durable,
+        )
+
 
 def test_missing_and_wrong_nb13_pin_fail(tmp_path):
     durable = tmp_path / "durable"
@@ -234,3 +257,29 @@ def test_pseudo_audio_resolves_under_frozen_u_clean(tmp_path):
         verify_pseudo_audio_rows([missing], u_clean_dir=u_clean)
     with pytest.raises(TrainingContractError, match="missing"):
         verify_pseudo_audio_rows(rows, u_clean_dir=tmp_path / "wrong-root")
+
+
+def test_d0_checkpoint_resolver_accepts_durable_ckpts_layout(tmp_path):
+    from src.rq2_final_contract import _resolve_d0_checkpoint_dir
+
+    state = tmp_path / "contract_deadbeef"
+    experiment_id = "direct_xlsr300m_mbart50_vi_v1"
+    best_name = "checkpoint-35000"
+
+    expected = (
+        state
+        / "checkpoints"
+        / "full_train"
+        / experiment_id
+        / "ckpts"
+        / best_name
+    )
+    expected.mkdir(parents=True)
+
+    resolved = _resolve_d0_checkpoint_dir(
+        state,
+        experiment_id=experiment_id,
+        best_name=best_name,
+    )
+
+    assert resolved == expected

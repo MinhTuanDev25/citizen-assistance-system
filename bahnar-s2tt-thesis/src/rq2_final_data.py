@@ -579,6 +579,22 @@ def bind_supervised_audio_identity(
         digest = str(meta.get("sha256_pcm") or "").strip().lower()
         if not is_sha256(digest):
             raise UpstreamGateError(f"supervised audio identity for {uid} has invalid sha256_pcm")
+
+        row_pos = len(pcm)
+        for existing_col in ("pcm16_sha256", "sha256_pcm"):
+            if existing_col not in work.columns:
+                continue
+            existing = str(work.iloc[row_pos][existing_col] or "").strip().lower()
+            if existing and existing != "nan":
+                if not is_sha256(existing):
+                    raise UpstreamGateError(
+                        f"supervised existing audio identity for {uid} is invalid"
+                    )
+                if existing != digest:
+                    raise UpstreamGateError(
+                        f"supervised existing audio identity conflicts with RQ1 audio index for {uid}"
+                    )
+
         pcm.append(digest)
         relpaths.append(str(meta.get("local_cache_relpath") or ""))
     work["pcm16_sha256"] = pcm
@@ -595,21 +611,59 @@ def load_frozen_supervised_splits(
     project_root: Union[str, Path],
     *,
     d0_identity: Mapping[str, Any],
+    direct_state_dir: Optional[Union[str, Path]] = None,
     durable_root: Optional[Union[str, Path]] = None,
     audio_index_dir: Optional[Union[str, Path]] = None,
 ) -> Dict[str, Any]:
     root = Path(project_root)
-    train_path = root / "data" / "manifests" / RQ1_SPLIT_FILES["g_train"]
-    val_path = root / "data" / "manifests" / RQ1_SPLIT_FILES["g_validation"]
-    train = load_rq1_split_csv(root, split="g_train")
-    validation = load_rq1_split_csv(root, split="g_validation")
+
+    if direct_state_dir:
+        # Canonical NB14 gold data is the exact Direct prepared eligible
+        # train/validation data that trained frozen D0.
+        from src.direct_data import (
+            DIRECT_TRAIN_CSV,
+            DIRECT_VAL_CSV,
+            load_direct_prepared_frames,
+        )
+
+        state = Path(direct_state_dir)
+        train_path = state / DIRECT_TRAIN_CSV
+        val_path = state / DIRECT_VAL_CSV
+
+        if not train_path.is_file() or not val_path.is_file():
+            raise UpstreamGateError(
+                "frozen D0 Direct prepared train/validation CSVs are missing"
+            )
+
+        train, validation = load_direct_prepared_frames(state)
+
+    else:
+        # Compatibility fallback only. This is valid only when the raw RQ1
+        # manifests themselves are exactly identical to D0 supervised data;
+        # the D0 identity assertion below remains fail-closed.
+        train_path = root / "data" / "manifests" / RQ1_SPLIT_FILES["g_train"]
+        val_path = root / "data" / "manifests" / RQ1_SPLIT_FILES["g_validation"]
+        train = load_rq1_split_csv(root, split="g_train")
+        validation = load_rq1_split_csv(root, split="g_validation")
+
     audio_root = durable_root or d0_identity.get("durable_root")
+
     if audio_index_dir or audio_root:
-        audio_map = load_rq1_uid_audio_identity(audio_root or ".", audio_index_dir=audio_index_dir)
+        audio_map = load_rq1_uid_audio_identity(
+            audio_root or ".",
+            audio_index_dir=audio_index_dir,
+        )
         train = bind_supervised_audio_identity(train, audio_map)
         validation = bind_supervised_audio_identity(validation, audio_map)
-    elif "pcm16_sha256" not in train.columns and "sha256_pcm" not in train.columns:
-        raise UpstreamGateError("supervised G_train has no pcm16_sha256 and no durable RQ1 audio index")
+
+    elif (
+        "pcm16_sha256" not in train.columns
+        and "sha256_pcm" not in train.columns
+    ):
+        raise UpstreamGateError(
+            "supervised G_train has no pcm16_sha256 and no durable RQ1 audio index"
+        )
+
     identity = assert_rq1_supervised_matches_d0(
         train=train,
         validation=validation,
@@ -617,4 +671,11 @@ def load_frozen_supervised_splits(
         train_path=train_path,
         validation_path=val_path,
     )
-    return {"train": train, "validation": validation, "identity": identity, "train_path": train_path, "validation_path": val_path}
+
+    return {
+        "train": train,
+        "validation": validation,
+        "identity": identity,
+        "train_path": train_path,
+        "validation_path": val_path,
+    }
