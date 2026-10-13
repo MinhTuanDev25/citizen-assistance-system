@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -118,7 +120,7 @@ func TestMissingQdrantConfigDoesNotClaimOrComplete(t *testing.T) {
 	}
 	for _, cfg := range cases {
 		store.claimCalled = false
-		err := runReaper(context.Background(), cfg, store, func(string) error { return nil }, io.Discard)
+		err := runReaper(context.Background(), cfg, store, func(context.Context, string) error { return nil }, io.Discard)
 		if err == nil || err.Error() != "config_missing" {
 			t.Fatalf("config %v err %v", cfg, err)
 		}
@@ -140,7 +142,7 @@ func TestQdrantFailuresDoNotDeleteChunksOrComplete(t *testing.T) {
 	item := cleanupClaim{id: id, attempts: 1, token: uuid.New()}
 	store := &fakeStore{claimed: []cleanupClaim{item}}
 	var out bytes.Buffer
-	err := runReaper(context.Background(), cfg, store, func(string) error { return errors.New("qdrant_failed") }, &out)
+	err := runReaper(context.Background(), cfg, store, func(context.Context, string) error { return errors.New("qdrant_failed") }, &out)
 	if err == nil {
 		t.Fatal("qdrant failure exited clean")
 	}
@@ -164,7 +166,7 @@ func TestPostgresFailureAfterCleanQdrantDoesNotComplete(t *testing.T) {
 	store := &fakeStore{claimed: []cleanupClaim{item}, completeErr: errors.New("commit failed")}
 	cfg := reaperConfig{databaseURL: "postgres://cas@db/cas", qdrantURL: "http://qdrant", collection: "knowledge_chunks"}
 	var out bytes.Buffer
-	err := runReaper(context.Background(), cfg, store, func(string) error { return nil }, &out)
+	err := runReaper(context.Background(), cfg, store, func(context.Context, string) error { return nil }, &out)
 	if err == nil {
 		t.Fatal("postgres failure exited clean")
 	}
@@ -189,7 +191,7 @@ func TestLostClaimDoesNotDelete(t *testing.T) {
 	cfg := reaperConfig{databaseURL: "postgres://cas@db/cas", qdrantURL: "http://qdrant", collection: "knowledge_chunks"}
 	var deleted bool
 	var out bytes.Buffer
-	err := runReaper(context.Background(), cfg, store, func(string) error {
+	err := runReaper(context.Background(), cfg, store, func(context.Context, string) error {
 		deleted = true
 		return nil
 	}, &out)
@@ -208,6 +210,325 @@ func TestClaimQueryIsBounded(t *testing.T) {
 	if !strings.Contains(renewSQL, "cleanup_claim_token = $2") {
 		t.Fatal("renew does not check the claim token")
 	}
+	if !strings.Contains(claimSQL, "g.status IN ('STAGING', 'FAILED')") {
+		t.Fatal("claim can pick a READY generation")
+	}
+	if !strings.Contains(claimSQL, "link.active_generation_id = g.id") {
+		t.Fatal("claim can pick a generation that is still linked")
+	}
+	if !strings.Contains(claimSQL, "job.status = 'CLAIMED'") {
+		t.Fatal("claim can pick a generation with a live job claim")
+	}
+}
+
+func TestLoadConfigIntervalAndLoopStops(t *testing.T) {
+	getenv := func(key string) string {
+		switch key {
+		case "DATABASE_URL":
+			return "postgres://cas@db/cas"
+		case "QDRANT_URL":
+			return "http://qdrant"
+		case "QDRANT_COLLECTION":
+			return "knowledge_chunks"
+		case "INDEX_REAPER_INTERVAL_SECONDS":
+			return "1"
+		default:
+			return ""
+		}
+	}
+	cfg, err := loadConfig(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.interval != time.Second {
+		t.Fatalf("interval=%s", cfg.interval)
+	}
+	if cfg.shutdown != 30*time.Second {
+		t.Fatalf("shutdown=%s", cfg.shutdown)
+	}
+	store := &fakeStore{}
+	ctx, cancel := context.WithCancel(context.Background())
+	var out bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		done <- runReaperLoop(ctx, cfg, store, func(context.Context, string) error { return nil }, &out)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !store.claimCalled {
+		t.Fatal("loop did not run a cycle")
+	}
+	if !strings.Contains(out.String(), "reaper_stopped") {
+		t.Fatalf("stop log missing: %s", out.String())
+	}
+}
+
+func TestLoadConfigShutdownSeconds(t *testing.T) {
+	getenv := func(key string) string {
+		switch key {
+		case "DATABASE_URL":
+			return "postgres://cas@db/cas"
+		case "QDRANT_URL":
+			return "http://qdrant"
+		case "QDRANT_COLLECTION":
+			return "knowledge_chunks"
+		case "INDEX_REAPER_SHUTDOWN_SECONDS":
+			return "45"
+		default:
+			return ""
+		}
+	}
+	cfg, err := loadConfig(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.shutdown != 45*time.Second {
+		t.Fatalf("shutdown=%s", cfg.shutdown)
+	}
+	bad := func(key string) string {
+		if key == "INDEX_REAPER_SHUTDOWN_SECONDS" {
+			return "0"
+		}
+		return getenv(key)
+	}
+	if _, err := loadConfig(bad); err == nil {
+		t.Fatal("zero shutdown was accepted")
+	}
+}
+
+func TestIdleShutdownSkipsClaim(t *testing.T) {
+	store := &fakeStore{claimed: []cleanupClaim{{id: "11111111-1111-1111-1111-111111111111", attempts: 1, token: uuid.New()}}}
+	cfg := reaperConfig{
+		databaseURL: "postgres://cas@db/cas",
+		qdrantURL:   "http://qdrant",
+		collection:  "knowledge_chunks",
+		batch:       1,
+		shutdown:    time.Second,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := runOnce(ctx, cfg, store, func(context.Context, string) error {
+		t.Fatal("idle shutdown started work")
+		return nil
+	}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if store.claimCalled {
+		t.Fatal("idle shutdown claimed work")
+	}
+}
+
+func TestQdrantCleanupHonorsCanceledContext(t *testing.T) {
+	started := make(chan struct{})
+	var once sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		once.Do(func() { close(started) })
+		time.Sleep(2 * time.Second)
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- deleteQdrantVerifiedCtx(ctx, srv.URL, "knowledge_chunks", "11111111-1111-1111-1111-111111111111")
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("request did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("canceled request succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled request kept running")
+	}
+}
+
+func TestShutdownDoesNotStartANewCycle(t *testing.T) {
+	store := &countingStore{}
+	cfg := reaperConfig{
+		databaseURL: "postgres://cas@db/cas",
+		qdrantURL:   "http://qdrant",
+		collection:  "knowledge_chunks",
+		batch:       1,
+		interval:    20 * time.Millisecond,
+		shutdown:    time.Second,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var out bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		done <- runReaperLoop(ctx, cfg, store, func(context.Context, string) error { return nil }, &out)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	after := store.claims
+	time.Sleep(80 * time.Millisecond)
+	if store.claims != after {
+		t.Fatalf("new cycle after shutdown claims=%d after=%d", store.claims, after)
+	}
+	if !strings.Contains(out.String(), "reaper_shutdown_requested") || !strings.Contains(out.String(), "reaper_stopped") {
+		t.Fatalf("logs %s", out.String())
+	}
+}
+
+func TestInFlightWorkFinishesInsideShutdownGrace(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	item := cleanupClaim{id: "11111111-1111-1111-1111-111111111111", attempts: 1, token: uuid.New()}
+	store := &fakeStore{claimed: []cleanupClaim{item}}
+	cfg := reaperConfig{
+		databaseURL: "postgres://cas@db/cas",
+		qdrantURL:   "http://qdrant",
+		collection:  "knowledge_chunks",
+		batch:       1,
+		shutdown:    time.Second,
+	}
+	parent, cancel := context.WithCancel(context.Background())
+	var out bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		done <- runOnce(parent, cfg, store, func(context.Context, string) error {
+			close(started)
+			<-release
+			return nil
+		}, &out)
+	}()
+	<-started
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if len(store.completed) != 1 {
+		t.Fatalf("in-flight work was dropped: %+v %s", store, out.String())
+	}
+	if !strings.Contains(out.String(), "reaper_draining") {
+		t.Fatalf("drain log missing: %s", out.String())
+	}
+}
+
+func TestShutdownTimeoutCancelsInFlightWork(t *testing.T) {
+	started := make(chan struct{})
+	item := cleanupClaim{id: "11111111-1111-1111-1111-111111111111", attempts: 1, token: uuid.New()}
+	store := &fakeStore{claimed: []cleanupClaim{item}}
+	cfg := reaperConfig{
+		databaseURL: "postgres://cas@db/cas",
+		qdrantURL:   "http://qdrant",
+		collection:  "knowledge_chunks",
+		batch:       1,
+		shutdown:    30 * time.Millisecond,
+	}
+	parent, cancel := context.WithCancel(context.Background())
+	var out bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		done <- runOnce(parent, cfg, store, func(ctx context.Context, _ string) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		}, &out)
+	}()
+	<-started
+	cancel()
+	if err := <-done; err == nil {
+		t.Fatal("timeout did not surface")
+	}
+	if !strings.Contains(out.String(), "reaper_shutdown_timeout") {
+		t.Fatalf("timeout log missing: %s", out.String())
+	}
+	if len(store.completed) != 0 {
+		t.Fatal("incomplete delete was marked completed")
+	}
+}
+
+func TestRepeatedShutdownDoesNotPanic(t *testing.T) {
+	cfg := reaperConfig{
+		databaseURL: "postgres://cas@db/cas",
+		qdrantURL:   "http://qdrant",
+		collection:  "knowledge_chunks",
+		interval:    time.Hour,
+		shutdown:    time.Second,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cancel()
+	var out bytes.Buffer
+	if err := runReaperLoop(ctx, cfg, &fakeStore{}, func(context.Context, string) error { return nil }, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "reaper_stopped") {
+		t.Fatal(out.String())
+	}
+}
+
+func TestNotifySignalsExitOnSIGTERM(t *testing.T) {
+	if os.Getenv("CAS_REAPER_CHILD") == "sigterm" {
+		ctx, stop := notifySignals(context.Background())
+		defer stop()
+		<-ctx.Done()
+		os.Exit(0)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestNotifySignalsExitOnSIGTERM")
+	cmd.Env = append(os.Environ(), "CAS_REAPER_CHILD=sigterm")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("child %v", err)
+	}
+}
+
+func TestNotifySignalsExitOnSIGINT(t *testing.T) {
+	if os.Getenv("CAS_REAPER_CHILD") == "sigint" {
+		ctx, stop := notifySignals(context.Background())
+		defer stop()
+		<-ctx.Done()
+		os.Exit(0)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestNotifySignalsExitOnSIGINT")
+	cmd.Env = append(os.Environ(), "CAS_REAPER_CHILD=sigint")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("child %v", err)
+	}
+}
+
+type countingStore struct {
+	claims int
+}
+
+func (c *countingStore) claim(context.Context, int, int) ([]cleanupClaim, error) {
+	c.claims++
+	return nil, nil
+}
+
+func (c *countingStore) renew(context.Context, cleanupClaim) error { return nil }
+
+func (c *countingStore) complete(context.Context, cleanupClaim) error { return nil }
+
+func (c *countingStore) mark(context.Context, cleanupClaim, string) (string, error) {
+	return "retryable", nil
 }
 
 func TestReaperProcessExitsNonZeroWhenConfigMissing(t *testing.T) {

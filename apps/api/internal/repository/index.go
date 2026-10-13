@@ -361,6 +361,9 @@ func (r *IndexRepo) Claim(ctx context.Context, in index.ClaimInput) (index.Claim
 	if docDomain == nil || domain == "" {
 		return index.ClaimResult{}, index.ErrValidation
 	}
+	if page != nil && strings.TrimSpace(*page) == "" {
+		page = nil
+	}
 	workerReq := index.Request{
 		SchemaVersion: index.SchemaVersion, DocumentID: in.DocumentID, XAID: in.XAID,
 		DomainID: domain, Checksum: checksum, ProcedureVersionID: in.ProcedureVersionID,

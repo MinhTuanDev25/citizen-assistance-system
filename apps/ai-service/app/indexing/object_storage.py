@@ -8,6 +8,17 @@ from urllib.parse import urlparse
 from app.config import ConfigError, _is_runpod
 
 
+def object_bucket_name() -> str:
+    """Local/test may default the bucket. Production pipeline must declare it."""
+    raw = os.getenv("OBJECT_STORAGE_BUCKET")
+    name = (raw or "").strip()
+    if name:
+        return name
+    if os.getenv("APP_ENV", "").strip().lower() == "prod":
+        raise ConfigError("OBJECT_STORAGE_BUCKET is required when APP_ENV=prod")
+    return "cas-documents"
+
+
 def normalize_endpoint(raw: str, use_ssl: bool | None = None) -> tuple[str, bool]:
     """Return host:port and whether TLS is required.
 
@@ -76,7 +87,7 @@ def storage_config() -> dict:
         "auto_create": auto_create,
         "access_key": os.getenv("OBJECT_STORAGE_ACCESS_KEY", ""),
         "secret_key": os.getenv("OBJECT_STORAGE_SECRET_KEY", ""),
-        "bucket": os.getenv("OBJECT_STORAGE_BUCKET", "cas-documents").strip() or "cas-documents",
+        "bucket": object_bucket_name(),
     }
 
 

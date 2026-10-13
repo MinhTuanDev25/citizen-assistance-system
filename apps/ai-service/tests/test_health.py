@@ -11,6 +11,15 @@ def test_health():
     assert r.json()["status"] == "ok"
 
 
+def test_health_stays_ok_when_pipeline_is_not_ready(monkeypatch):
+    from app.indexing import runtime
+
+    monkeypatch.setattr(runtime, "probe_pipeline", lambda *_args, **_kwargs: (False, "postgres_unreachable"))
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+
 def test_ready():
     r = client.get("/ready")
     assert r.status_code == 200

@@ -44,8 +44,8 @@ Start in [`bahnar-s2tt-thesis/README.md`](bahnar-s2tt-thesis/README.md). Do not 
 | Frontend | React + JavaScript |
 | Backend | Go (Gin) |
 | AI | Python (FastAPI) |
-| DB | PostgreSQL + pgvector |
-| Files | MinIO (S3-compatible) |
+| DB | PostgreSQL. P4B vectors are in Qdrant, dimension 384, not the unused pgvector column |
+| Files | MinIO (S3-compatible). Local stack uses MinIO. RunPod S3 is not configured here |
 | Deploy | Docker Compose + reverse proxy |
 
 - A→Z plan: [`docs/IMPLEMENTATION-PLAN-A-TO-Z.md`](docs/IMPLEMENTATION-PLAN-A-TO-Z.md)

@@ -182,6 +182,9 @@ func Load() (Config, error) {
 	if err := validateIndexLease(cfg); err != nil {
 		return Config{}, err
 	}
+	if err := validateProduction(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
 }
 
@@ -214,6 +217,50 @@ func validateIndexLease(cfg Config) error {
 		return fmt.Errorf("INDEX_CLAIM_TTL_SECONDS must be greater than INDEX_TIMEOUT_MS plus 1s")
 	}
 	return nil
+}
+
+func validateProduction(cfg Config) error {
+	if cfg.Env != "prod" {
+		return nil
+	}
+	if isDevPlaceholder(cfg.JWTSecret) {
+		return fmt.Errorf("JWT_SECRET is a development placeholder")
+	}
+	if !productionDatabaseTLS(cfg.DatabaseURL) {
+		return fmt.Errorf("DATABASE_URL in APP_ENV=prod must set sslmode=require, verify-ca, or verify-full")
+	}
+	if isDevPlaceholder(cfg.AIServiceToken) {
+		return fmt.Errorf("AI_SERVICE_TOKEN is a development placeholder")
+	}
+	if cfg.AdminIngestionEnabled {
+		if cfg.ObjectStorageAutoCreateBucket {
+			return fmt.Errorf("OBJECT_STORAGE_AUTO_CREATE_BUCKET must be false when APP_ENV=prod")
+		}
+		if cfg.ObjectStorageAccessKey == "minioadmin" || cfg.ObjectStorageSecretKey == "minioadmin" {
+			return fmt.Errorf("object storage credentials are development defaults")
+		}
+	}
+	if cfg.AdminIndexingEnabled && cfg.IndexMode != "pipeline" {
+		return fmt.Errorf("INDEX_MODE=pipeline is required when APP_ENV=prod and indexing is enabled")
+	}
+	return nil
+}
+
+func isDevPlaceholder(value string) bool {
+	text := strings.ToLower(strings.TrimSpace(value))
+	if text == "" {
+		return false
+	}
+	return strings.Contains(text, "local-dev") || strings.Contains(text, "change-me") || strings.Contains(text, "minioadmin")
+}
+
+func productionDatabaseTLS(dsn string) bool {
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		return false
+	}
+	mode := strings.ToLower(parsed.Query().Get("sslmode"))
+	return mode == "require" || mode == "verify-ca" || mode == "verify-full"
 }
 
 func validateIndexingConfig(cfg Config) error {

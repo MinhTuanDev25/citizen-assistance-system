@@ -43,3 +43,9 @@ apps/api/bin/
 # Docker volumes
 deploy/volumes/
 .tools/
+
+# Local model weights. Never commit ONNX, Paddle, or checkpoints.
+/models/
+
+# Local validation logs. Never commit secrets or model weights.
+/artifacts/

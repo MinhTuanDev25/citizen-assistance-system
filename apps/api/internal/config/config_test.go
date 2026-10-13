@@ -53,6 +53,40 @@ func TestLoadProdWithURL(t *testing.T) {
 	}
 }
 
+func TestLoadProdRejectsLocalDatabaseAndIndexing(t *testing.T) {
+	t.Setenv("APP_ENV", "prod")
+	t.Setenv("CONFIG_FILE", filepath.Join("..", "..", "configs", "prod", "config.yaml"))
+	t.Setenv("JWT_SECRET", "prod-jwt-secret-16chars")
+	t.Setenv("DATABASE_URL", "postgres://u:p@127.0.0.1:5432/citizen_assistance?sslmode=disable")
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "sslmode") {
+		t.Fatalf("sslmode disable accepted: %v", err)
+	}
+	t.Setenv("DATABASE_URL", "postgres://u:p@db.internal:5432/citizen_assistance?sslmode=require")
+	t.Setenv("JWT_SECRET", "local-dev-jwt-secret-change-me")
+	_, err = Load()
+	if err == nil || !strings.Contains(err.Error(), "JWT_SECRET") {
+		t.Fatalf("dev jwt accepted: %v", err)
+	}
+	t.Setenv("JWT_SECRET", "prod-jwt-secret-16chars")
+	t.Setenv("ADMIN_INGESTION_ENABLED", "true")
+	t.Setenv("ADMIN_INDEXING_ENABLED", "true")
+	t.Setenv("OBJECT_STORAGE_ENDPOINT", "storage.internal:443")
+	t.Setenv("OBJECT_STORAGE_ACCESS_KEY", "prod-access")
+	t.Setenv("OBJECT_STORAGE_SECRET_KEY", "prod-secret-value")
+	t.Setenv("OBJECT_STORAGE_BUCKET", "cas-documents")
+	t.Setenv("OBJECT_STORAGE_USE_SSL", "true")
+	t.Setenv("OBJECT_STORAGE_AUTO_CREATE_BUCKET", "false")
+	t.Setenv("DOCUMENT_MAX_BYTES", "20971520")
+	t.Setenv("AI_SERVICE_URL", "http://ai-service:8001")
+	t.Setenv("AI_SERVICE_TOKEN", "prod-ai-service-token")
+	t.Setenv("INDEX_MODE", "mock")
+	_, err = Load()
+	if err == nil || !strings.Contains(err.Error(), "INDEX_MODE") {
+		t.Fatalf("mock indexing accepted: %v", err)
+	}
+}
+
 func TestLoadRejectsBadAIConfig(t *testing.T) {
 	t.Setenv("APP_ENV", "local")
 	t.Setenv("CONFIG_FILE", filepath.Join("..", "..", "configs", "local", "config.yaml"))

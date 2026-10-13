@@ -36,14 +36,26 @@ def main() -> int:
     if abs(norm - 1.0) > 1e-3:
         print("P4B_MODEL_SMOKE_FAIL norm")
         return 1
-    fixture = root / "apps" / "ai-service" / "tests" / "fixtures" / "mixed.pdf"
+    from app.indexing.ocr_smoke import missing_smoke_tokens
+
+    fixture = root / "apps" / "ai-service" / "tests" / "fixtures" / "ocr_text_scan.pdf"
     data = fixture.read_bytes()
-    image = PdfiumRenderer().render(data, 2, 150)
-    text = PaddleOCR(ocr_dir).read_page(image, 2)
+    image = PdfiumRenderer().render(data, 1, 150)
+    if not getattr(image, "shape", None) or not (image < 250).any():
+        print("P4B_MODEL_SMOKE_FAIL ocr_blank_image")
+        return 1
+    text = PaddleOCR(ocr_dir).read_page(image, 1)
     if not text:
         print("P4B_MODEL_SMOKE_FAIL ocr_empty")
         return 1
-    if embedder.revision != "6a0d452a575215f80b8f66276dd4ee5d504942c6" or embedder.checksum != "dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2d88":
+    missing = missing_smoke_tokens(text)
+    if missing:
+        print("P4B_MODEL_SMOKE_FAIL ocr_keywords missing=" + ",".join(missing))
+        return 1
+    from app.indexing.embed import variant_spec
+
+    expected = variant_spec(embedder.variant)["model_sha256"]
+    if embedder.revision != "6a0d452a575215f80b8f66276dd4ee5d504942c6" or embedder.checksum != expected:
         print("P4B_MODEL_SMOKE_FAIL manifest")
         return 1
     print(f"P4B_DONE embedding_dim={len(vector)} ocr_chars={len(text)} image_shape={getattr(image, 'shape', None)}")

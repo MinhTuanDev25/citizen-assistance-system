@@ -307,6 +307,72 @@ func TestDecideRejectsNumberedNonBoolean(t *testing.T) {
 	}
 }
 
+func TestSplitClausesTreatsAccentedVaAsSeparator(t *testing.T) {
+	got := splitClauses("Ở Gia Lai, đã kết hôn rồi và không có giấy")
+	want := []string{"Ở Gia Lai", "đã kết hôn rồi", "không có giấy"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("clauses = %#v", got)
+	}
+	plain := splitClauses("o gia lai, da ket hon roi va khong co giay")
+	if len(plain) != 3 {
+		t.Fatalf("unaccented clauses = %#v", plain)
+	}
+	kept := splitClauses("Bệnh viện vàng, advantage của xã")
+	if len(kept) != 2 || !strings.Contains(kept[0], "vàng") || !strings.Contains(kept[1], "advantage") {
+		t.Fatalf("inner va was split: %#v", kept)
+	}
+	semi := splitClauses("một; hai\nba")
+	if len(semi) != 3 {
+		t.Fatalf("semicolon/newline = %#v", semi)
+	}
+}
+
+func TestDecideVaClauseFillsKhaiSinhSlots(t *testing.T) {
+	def := khaiSinh()
+	first := Decide(TurnInput{Definition: def, Message: "Tôi muốn đăng ký giấy khai sinh"})
+	second := Decide(TurnInput{
+		Definition:    def,
+		Prior:         first.SlotState,
+		HadPriorState: true,
+		Message:       "Ở Gia Lai, đã kết hôn rồi và không có giấy",
+	})
+	if second.SlotState["noi_sinh"].Value != "Ở Gia Lai" {
+		t.Fatalf("noi_sinh = %#v", second.SlotState["noi_sinh"])
+	}
+	if second.SlotState["da_ket_hon"].Value != true {
+		t.Fatalf("da_ket_hon = %#v", second.SlotState["da_ket_hon"])
+	}
+	if second.SlotState["co_giay_chung_sinh"].Value != false {
+		t.Fatalf("co_giay_chung_sinh = %#v", second.SlotState["co_giay_chung_sinh"])
+	}
+	if second.Action != ActionAsk || !containsStr(second.MissingSlots, "nguoi_di_dang_ky") {
+		t.Fatalf("action=%s missing=%#v", second.Action, second.MissingSlots)
+	}
+	third := Decide(TurnInput{
+		Definition:    def,
+		Prior:         second.SlotState,
+		HadPriorState: true,
+		Message:       "ông bà",
+	})
+	if third.FilledSlots["nguoi_di_dang_ky"] != "ong_ba" {
+		t.Fatalf("enum = %#v missing=%#v", third.FilledSlots["nguoi_di_dang_ky"], third.MissingSlots)
+	}
+}
+
+func TestDecideUnaccentedVaDoesNotFillAmbiguousBoolean(t *testing.T) {
+	def := khaiSinh()
+	first := Decide(TurnInput{Definition: def, Message: "Đăng ký khai sinh"})
+	second := Decide(TurnInput{
+		Definition:    def,
+		Prior:         first.SlotState,
+		HadPriorState: true,
+		Message:       "không rõ và có lẽ",
+	})
+	if second.SlotState["da_ket_hon"].Filled() || second.SlotState["co_giay_chung_sinh"].Filled() {
+		t.Fatalf("ambiguous booleans filled: %#v", second.SlotState)
+	}
+}
+
 func TestEqualsFalse(t *testing.T) {
 	def := khaiSinh()
 	state := map[string]SlotValue{

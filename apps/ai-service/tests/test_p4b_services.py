@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 import uuid
 from pathlib import Path
 
@@ -14,20 +15,29 @@ from app.indexing.pipeline import PIPELINE_VERSION, FakeEmbedder, IndexJob, run_
 from app.indexing.postgres import PostgresChunks
 from app.indexing.qdrant import QdrantWriter, point_id
 from app.indexing.ocr import FakeOCR
+from p4b_cleanup import OwnedResources
 
 pytestmark = pytest.mark.skipif(os.getenv("CAS_P4B_INTEGRATION") != "1", reason="set CAS_P4B_INTEGRATION=1")
 
 
 def test_pipeline_writes_postgres_and_qdrant_from_minio():
-    import psycopg
-    from app.indexing.object_storage import ensure_bucket, open_client, storage_config
+    from app.indexing.object_storage import ensure_bucket, open_client
 
-    dsn = os.environ["DATABASE_URL"]
-    os.environ.setdefault("OBJECT_STORAGE_ENDPOINT", "127.0.0.1:9000")
-    os.environ.setdefault("OBJECT_STORAGE_ACCESS_KEY", "minioadmin")
-    os.environ.setdefault("OBJECT_STORAGE_SECRET_KEY", "minioadmin")
-    os.environ.setdefault("OBJECT_STORAGE_AUTO_CREATE_BUCKET", "true")
-    qdrant = os.environ.get("QDRANT_URL", "http://127.0.0.1:6333")
+    from app.indexing.isolation import (
+        IsolationError,
+        connect_test_database,
+        prepare_isolated_target,
+        require_test_collection,
+    )
+
+    try:
+        target = prepare_isolated_target()
+        require_test_collection("p4b_test")
+    except IsolationError as exc:
+        pytest.fail(str(exc))
+    dsn = target["database_url"]
+    bucket = target["bucket"]
+    qdrant = target["qdrant_url"]
     data = (Path(__file__).parent / "fixtures" / "native.pdf").read_bytes()
     checksum = hashlib.sha256(data).hexdigest()
     doc_id = uuid.uuid4()
@@ -36,68 +46,107 @@ def test_pipeline_writes_postgres_and_qdrant_from_minio():
     request_id = uuid.uuid4()
     claim = uuid.uuid4()
     key = f"xa_chu_se/documents/{doc_id}/{checksum}.pdf"
-    cfg = storage_config()
-    client = open_client(config=cfg)
-    ensure_bucket(client, "cas-documents", cfg["auto_create"] or True)
-    client.put_object("cas-documents", key, __import__("io").BytesIO(data), len(data), content_type="application/pdf")
-    with psycopg.connect(dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT v.id, p.id, p.domain_id FROM procedure_versions v
-                JOIN procedures p ON p.id = v.procedure_id
-                WHERE p.xa_id = 'xa_chu_se' AND p.procedure_code = 'dk_khai_sinh' AND v.version = '1.0.0'
-                """
-            )
-            version_id, procedure_id, domain_id = cur.fetchone()
-            cur.execute("SELECT id FROM users WHERE email = 'admin@chuse.vn'")
-            user_id = cur.fetchone()[0]
-            cur.execute(
-                """
-                INSERT INTO documents (
-                    id, xa_id, domain_id, title, filename, storage_uri, checksum, mime_type,
-                    file_size_bytes, processing_status, validity_status, uploaded_by
-                ) VALUES (
-                    %s,'xa_chu_se',%s,'p4b','a.pdf',%s,%s,'application/pdf',
-                    %s,'UPLOADED','PENDING',%s
-                )
-                """,
-                (doc_id, domain_id, f"s3://cas-documents/{key}", checksum, len(data), user_id),
-            )
-            cur.execute(
-                """
-                INSERT INTO procedure_version_documents (
-                    procedure_version_id, document_id, procedure_id, xa_id, domain_id, relationship_type
-                ) VALUES (%s,%s,%s,'xa_chu_se',%s,'SOURCE')
-                """,
-                (version_id, doc_id, procedure_id, domain_id),
-            )
-            cur.execute(
-                """
-                INSERT INTO document_index_jobs (
-                    id, document_id, procedure_version_id, xa_id, request_id, payload_hash,
-                    status, claim_token, claimed_at, claim_expires_at
-                ) VALUES (%s,%s,%s,'xa_chu_se',%s,'abc','CLAIMED',%s,now(),now() + interval '1 minute')
-                """,
-                (job_id, doc_id, version_id, request_id, claim),
-            )
-            cur.execute(
-                """
-                INSERT INTO document_index_generations (
-                    id, xa_id, document_id, procedure_version_id, job_id, status,
-                    pipeline_version, extraction_version, ocr_version, chunk_config_hash,
-                    embedding_model_id, embedding_revision, embedding_checksum, vector_dimension,
-                    source_sha256, content_sha256, manifest_hash
-                ) VALUES (
-                    %s,'xa_chu_se',%s,%s,%s,'STAGING',
-                    'pending','pending','pending','pending','pending','pending','',0,
-                    %s,'',''
-                )
-                """,
-                (generation_id, doc_id, version_id, job_id, checksum),
-            )
-        conn.commit()
+    client = open_client(config={
+        "endpoint": target["minio_endpoint"],
+        "secure": False,
+        "region": "",
+        "access_key": target["access_key"],
+        "secret_key": target["secret_key"],
+    })
+    owned = OwnedResources()
+
+    def drop_rows() -> None:
+        with connect_test_database(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM knowledge_chunks WHERE document_id = %s", (doc_id,))
+                cur.execute("DELETE FROM document_index_generations WHERE document_id = %s", (doc_id,))
+                cur.execute("DELETE FROM document_index_jobs WHERE document_id = %s", (doc_id,))
+                cur.execute("DELETE FROM procedure_version_documents WHERE document_id = %s", (doc_id,))
+                cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
+            conn.commit()
+
+    def drop_object() -> None:
+        try:
+            client.remove_object(bucket, key)
+        except Exception as exc:
+            message = str(exc)
+            if "NoSuchKey" in message or "NoSuchBucket" in message:
+                return
+            raise
+
+    def drop_points() -> None:
+        import httpx
+
+        probe = httpx.get(f"{qdrant}/collections/p4b_test", timeout=5)
+        if probe.status_code == 404:
+            return
+        writer = QdrantWriter(qdrant, "p4b_test")
+        writer.delete_generation(generation_id)
+        writer.delete_generation(generation_id)
+
+    owned.own(drop_object)
+    owned.own(drop_rows)
+    owned.own(drop_points)
     try:
+        ensure_bucket(client, bucket, True)
+        client.put_object(bucket, key, __import__("io").BytesIO(data), len(data), content_type="application/pdf")
+        with connect_test_database(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT v.id, p.id, p.domain_id FROM procedure_versions v
+                    JOIN procedures p ON p.id = v.procedure_id
+                    WHERE p.xa_id = 'xa_chu_se' AND p.procedure_code = 'dk_khai_sinh' AND v.version = '1.0.0'
+                    """
+                )
+                version_id, procedure_id, domain_id = cur.fetchone()
+                cur.execute("SELECT id FROM users WHERE email = 'admin@chuse.vn'")
+                user_id = cur.fetchone()[0]
+                cur.execute(
+                    """
+                    INSERT INTO documents (
+                        id, xa_id, domain_id, title, filename, storage_uri, checksum, mime_type,
+                        file_size_bytes, processing_status, validity_status, uploaded_by
+                    ) VALUES (
+                        %s,'xa_chu_se',%s,'p4b','a.pdf',%s,%s,'application/pdf',
+                        %s,'UPLOADED','PENDING',%s
+                    )
+                    """,
+                    (doc_id, domain_id, f"s3://{bucket}/{key}", checksum, len(data), user_id),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO procedure_version_documents (
+                        procedure_version_id, document_id, procedure_id, xa_id, domain_id, relationship_type
+                    ) VALUES (%s,%s,%s,'xa_chu_se',%s,'SOURCE')
+                    """,
+                    (version_id, doc_id, procedure_id, domain_id),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO document_index_jobs (
+                        id, document_id, procedure_version_id, xa_id, request_id, payload_hash,
+                        status, claim_token, claimed_at, claim_expires_at
+                    ) VALUES (%s,%s,%s,'xa_chu_se',%s,'abc','CLAIMED',%s,now(),now() + interval '1 minute')
+                    """,
+                    (job_id, doc_id, version_id, request_id, claim),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO document_index_generations (
+                        id, xa_id, document_id, procedure_version_id, job_id, status,
+                        pipeline_version, extraction_version, ocr_version, chunk_config_hash,
+                        embedding_model_id, embedding_revision, embedding_checksum, vector_dimension,
+                        source_sha256, content_sha256, manifest_hash
+                    ) VALUES (
+                        %s,'xa_chu_se',%s,%s,%s,'STAGING',
+                        'pending','pending','pending','pending','pending','pending','',0,
+                        %s,'',''
+                    )
+                    """,
+                    (generation_id, doc_id, version_id, job_id, checksum),
+                )
+            conn.commit()
         job = IndexJob(
             schema_version="index.v2",
             xa_id="xa_chu_se",
@@ -107,7 +156,7 @@ def test_pipeline_writes_postgres_and_qdrant_from_minio():
             job_id=job_id,
             claim_token=claim,
             generation_id=generation_id,
-            bucket="cas-documents",
+            bucket=bucket,
             object_key=key,
             checksum=checksum,
             page_range=None,
@@ -121,10 +170,10 @@ def test_pipeline_writes_postgres_and_qdrant_from_minio():
             vectors = QdrantWriter(qdrant, "p4b_test")
             chunks = PostgresChunks(dsn)
 
-        result = run_pipeline(job, Deps(), max_bytes=200_000, chunk_config=ChunkConfig(32, 40, 4), bucket="cas-documents")
+        result = run_pipeline(job, Deps(), max_bytes=200_000, chunk_config=ChunkConfig(32, 40, 4), bucket=bucket)
         assert result.chunk_count == result.vector_count >= 1
         assert result.ocr_pages == 0
-        with psycopg.connect(dsn) as conn:
+        with connect_test_database(dsn) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT count(*) FROM knowledge_chunks WHERE generation_id = %s AND xa_id = 'xa_chu_se'",
@@ -141,15 +190,7 @@ def test_pipeline_writes_postgres_and_qdrant_from_minio():
         assert payload["generation_id"] == str(generation_id)
         assert payload["document_id"] == str(doc_id)
     finally:
-        with psycopg.connect(dsn) as conn:
-            with conn.cursor() as cur:
-                cur.execute("DELETE FROM knowledge_chunks WHERE document_id = %s", (doc_id,))
-                cur.execute("DELETE FROM document_index_generations WHERE document_id = %s", (doc_id,))
-                cur.execute("DELETE FROM document_index_jobs WHERE document_id = %s", (doc_id,))
-                cur.execute("DELETE FROM procedure_version_documents WHERE document_id = %s", (doc_id,))
-                cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
-            conn.commit()
-        client.remove_object("cas-documents", key)
+        owned.finish(sys.exc_info()[1])
 
 
 def test_qdrant_faults_against_a_real_server():
@@ -164,7 +205,13 @@ def test_qdrant_faults_against_a_real_server():
     from app.indexing.pipeline import SavedChunk
     from app.indexing.qdrant import QdrantWriter
 
-    upstream = os.environ.get("QDRANT_URL", "http://127.0.0.1:6333")
+    from app.indexing.isolation import IsolationError, prepare_isolated_target, require_test_collection
+
+    try:
+        target = prepare_isolated_target()
+    except IsolationError as exc:
+        pytest.fail(str(exc))
+    upstream = target["qdrant_url"]
     state = {"fault": "ok", "puts": 0}
 
     class Handler(BaseHTTPRequestHandler):
@@ -238,16 +285,22 @@ def test_qdrant_faults_against_a_real_server():
     def vectors(n):
         return [[0.1] * 384 for _ in range(n)]
 
+    owned: list[tuple[str, uuid.UUID]] = []
     try:
         for fault in ("partial", "acknowledged", "dimension", "missing", "restart"):
             state["fault"] = fault
             state["puts"] = 0
+            require_test_collection(f"p4b_{fault}")
+            generation = uuid.uuid4()
+            owned.append((f"p4b_{fault}", generation))
             writer = QdrantWriter(base, f"p4b_{fault}", batch_size=1)
             with pytest.raises(IndexFailure) as raised:
-                writer.upsert(uuid.uuid4(), chunks(2), vectors(2), payload())
+                writer.upsert(generation, chunks(2), vectors(2), payload())
             assert raised.value.code == "qdrant_failed"
         state["fault"] = "ok"
         generation = uuid.uuid4()
+        owned.append(("p4b_duplicate", generation))
+        require_test_collection("p4b_duplicate")
         writer = QdrantWriter(base, "p4b_duplicate", batch_size=1)
         body = payload()
         first = writer.upsert(generation, chunks(2), vectors(2), body)
@@ -256,12 +309,29 @@ def test_qdrant_faults_against_a_real_server():
     finally:
         server.shutdown()
 
+        def drop(collection: str, generation_id: uuid.UUID):
+            def action() -> None:
+                import httpx
+
+                probe = httpx.get(f"{upstream}/collections/{collection}", timeout=5)
+                if probe.status_code == 404:
+                    return
+                writer = QdrantWriter(upstream, collection)
+                writer.delete_generation(generation_id)
+                writer.delete_generation(generation_id)
+            return action
+
+        resources = OwnedResources()
+        for collection, generation_id in owned:
+            resources.own(drop(collection, generation_id))
+        resources.finish(sys.exc_info()[1])
+
 
 class _Minio:
     def __init__(self, client) -> None:
         self.client = client
 
-    def get(self, bucket: str, key: str, max_bytes: int | None = None) -> bytes:
+    def get(self, bucket: str, key: str, max_bytes: int | None = None, timeout_s: float | None = None, deadline=None) -> bytes:
         response = self.client.get_object(bucket, key)
         try:
             return response.read()

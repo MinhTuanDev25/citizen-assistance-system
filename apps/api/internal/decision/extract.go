@@ -8,7 +8,12 @@ import (
 )
 
 var numberedMark = regexp.MustCompile(`(\d{1,2})\s*[\.\)\:]\s*`)
-var clauseSplit = regexp.MustCompile(`(?i)\s*(?:,|;|\n|\bva\b|\bvà\b)\s*`)
+
+// clauseSplit separates answers on comma, semicolon, newline, or a standalone
+// "va"/"và". Go's \b is ASCII-only, so \bvà\b never matches: à is not a word
+// character, and the boundary after it disappears. Whitespace on both sides
+// keeps "vàng" and "advantage" intact.
+var clauseSplit = regexp.MustCompile(`(?i)\s*(?:,|;|\n)\s*|\s+(?:va|và)\s+`)
 
 var stopwords = map[string]struct{}{
 	"anh": {}, "chi": {}, "da": {}, "chua": {}, "khong": {}, "co": {},

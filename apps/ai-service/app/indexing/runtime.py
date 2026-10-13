@@ -29,9 +29,9 @@ def build_models(settings):
     if settings.embedding_provider == "fake":
         embedder = FakeEmbedder()
     elif settings.embedding_provider == "onnx":
-        from app.indexing.embed import OnnxProcess, require_supported_variant
+        from app.indexing.embed import OnnxProcess, select_embedding_variant
 
-        require_supported_variant()
+        select_embedding_variant()
         embedder = OnnxProcess(settings.embedding_model_dir, batch_size=settings.embed_batch_size)
         embedder.start(settings.pipeline_timeout_s)
     else:
@@ -127,21 +127,15 @@ def _postgres(dsn: str) -> bool:
 
 
 def _qdrant(base_url: str, collection: str) -> str | None:
+    """Read-only collection check. A missing collection is not created here."""
     try:
         import httpx
 
         url = base_url.rstrip("/") + "/collections/" + collection
         response = httpx.get(url, timeout=2.0)
         if response.status_code == 404:
-            created = httpx.put(
-                url,
-                json={"vectors": {"size": 384, "distance": "Cosine"}},
-                timeout=2.0,
-            )
-            if created.status_code not in (200, 409):
-                log.warning("ready_probe code=qdrant_unreachable")
-                return "qdrant_unreachable"
-            response = httpx.get(url, timeout=2.0)
+            log.warning("ready_probe code=qdrant_collection_missing")
+            return "qdrant_collection_missing"
         if response.status_code != 200:
             log.warning("ready_probe code=qdrant_unreachable")
             return "qdrant_unreachable"
@@ -153,6 +147,24 @@ def _qdrant(base_url: str, collection: str) -> str | None:
     except Exception:
         log.warning("ready_probe code=qdrant_unreachable")
         return "qdrant_unreachable"
+
+
+def provision_qdrant_collection(base_url: str, collection: str, dimension: int = 384) -> None:
+    """Create the collection only from an explicit bootstrap. Existing data stays."""
+    from app.indexing.errors import IndexFailure
+
+    import httpx
+
+    url = base_url.rstrip("/") + "/collections/" + collection
+    existing = httpx.get(url, timeout=5.0)
+    if existing.status_code == 200:
+        vectors = existing.json().get("result", {}).get("config", {}).get("params", {}).get("vectors", {})
+        if vectors.get("size") != dimension or vectors.get("distance") != "Cosine":
+            raise IndexFailure("qdrant_collection_mismatch")
+        return
+    created = httpx.put(url, json={"vectors": {"size": dimension, "distance": "Cosine"}}, timeout=5.0)
+    if created.status_code not in (200, 409):
+        raise IndexFailure("qdrant_failed")
 
 
 _MINIO_CLIENT = None

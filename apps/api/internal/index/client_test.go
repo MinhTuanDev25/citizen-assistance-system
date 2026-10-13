@@ -11,6 +11,44 @@ import (
 	"github.com/google/uuid"
 )
 
+func TestMarshalWorkerRequestOmitsFieldsTheOtherContractForbids(t *testing.T) {
+	blank := ""
+	v1, err := marshalWorkerRequest(Request{
+		SchemaVersion: SchemaVersion, DocumentID: uuid.New(), XAID: "xa_chu_se",
+		DomainID: "ho_tich_chung_thuc", Checksum: strings.Repeat("a", 64),
+		ProcedureVersionID: uuid.New(), RelationshipType: "SOURCE", PageRange: &blank,
+		JobID: uuid.New(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(v1)
+	for _, forbidden := range []string{`"job_id"`, `"procedure_id"`, `"page_range"`, `"claim_token"`} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("v1 body contains %s: %s", forbidden, text)
+		}
+	}
+	v2, err := marshalWorkerRequest(Request{
+		SchemaVersion: SchemaVersionV2, DocumentID: uuid.New(), XAID: "xa_chu_se",
+		DomainID: "ho_tich_chung_thuc", RelationshipType: "SOURCE", Checksum: strings.Repeat("b", 64),
+		ProcedureID: uuid.New(), ProcedureVersionID: uuid.New(), JobID: uuid.New(),
+		ClaimToken: uuid.New(), GenerationID: uuid.New(), Bucket: "cas-documents",
+		ObjectKey: "xa_chu_se/documents/a/b.pdf", PipelineVersion: PipelineVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text = string(v2)
+	for _, forbidden := range []string{`"domain_id"`, `"relationship_type"`} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("v2 body contains %s: %s", forbidden, text)
+		}
+	}
+	if !strings.Contains(text, `"job_id"`) || !strings.Contains(text, `"object_key"`) {
+		t.Fatalf("v2 body dropped required fields: %s", text)
+	}
+}
+
 func TestHTTPWorkerRejectsChunkPayload(t *testing.T) {
 	docID := uuid.New()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

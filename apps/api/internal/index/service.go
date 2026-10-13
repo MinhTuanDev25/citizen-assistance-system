@@ -263,7 +263,7 @@ func (s *Service) dispatch(ctx context.Context, documentID, versionID, actor, re
 		code = "worker_failed"
 		if errors.Is(callErr, context.DeadlineExceeded) || errors.Is(wctx.Err(), context.DeadlineExceeded) {
 			code = "timeout"
-		} else if resp.DocumentID != documentID || resp.ProcedureVersionID != versionID {
+		} else if callErr == nil && (resp.DocumentID != documentID || resp.ProcedureVersionID != versionID) {
 			code = "worker_mismatch"
 		} else if resp.ErrorCode != nil && *resp.ErrorCode != "" && len(*resp.ErrorCode) <= MaxErrorCodeLen {
 			code = *resp.ErrorCode

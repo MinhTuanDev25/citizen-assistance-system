@@ -29,6 +29,14 @@ E5_QUANTIZATION_METHOD = "qint8_avx512_vnni"
 # LFS oids published at E5_REVISION. embedding_checksum is the model file digest.
 E5_MODEL_SHA256 = "dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2d88"
 E5_TOKENIZER_SHA256 = "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"
+# onnx/model.onnx at the same revision. LFS oid read from the Hugging Face
+# tree API and checked against the downloaded file. This graph has no AVX-512
+# requirement, so Apple Silicon and linux/arm64 can run it. It is not a
+# substitute for the VNNI graph on a CPU that has those flags.
+E5_FP32_SOURCE_FILE = "onnx/model.onnx"
+E5_FP32_QUANTIZATION = "fp32"
+E5_FP32_METHOD = "fp32"
+E5_FP32_SHA256 = "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665"
 PASSAGE_PREFIX = "passage: "
 QUERY_PREFIX = "query: "
 FAKE_MODEL_ID = "fake-embedding"
@@ -112,6 +120,40 @@ def require_supported_variant(flags: set[str] | None = None) -> str:
     return E5_QUANTIZATION_METHOD
 
 
+def select_embedding_variant(flags: set[str] | None = None, machine: str | None = None) -> str:
+    """Pick one published ONNX graph for this CPU.
+
+    AVX-512 VNNI keeps the int8 graph. arm64 and aarch64 use the fp32 graph from
+    the same revision. Any other CPU without those flags fails closed. This does
+    not switch a real model to the fake embedder.
+    """
+    seen = detect_cpu_flags() if flags is None else normalize_cpu_flags(flags)
+    if all(name in seen for name in REQUIRED_CPU_FLAGS):
+        return E5_QUANTIZATION_METHOD
+    arch = (machine if machine is not None else platform.machine()).lower()
+    if arch in {"arm64", "aarch64"}:
+        return E5_FP32_METHOD
+    raise IndexFailure("embedding_cpu_unsupported")
+
+
+def variant_spec(method: str) -> dict:
+    if method == E5_QUANTIZATION_METHOD:
+        return {
+            "source_file": E5_SOURCE_FILE,
+            "quantization": E5_QUANTIZATION,
+            "quantization_method": E5_QUANTIZATION_METHOD,
+            "model_sha256": E5_MODEL_SHA256,
+        }
+    if method == E5_FP32_METHOD:
+        return {
+            "source_file": E5_FP32_SOURCE_FILE,
+            "quantization": E5_FP32_QUANTIZATION,
+            "quantization_method": E5_FP32_METHOD,
+            "model_sha256": E5_FP32_SHA256,
+        }
+    raise IndexFailure("embedding_checksum_mismatch")
+
+
 def fake_embed(text: str, dimension: int = E5_DIMENSION) -> list[float]:
     digest = hashlib.sha256(text.encode("utf-8")).digest()
     values: list[float] = []
@@ -140,7 +182,7 @@ def fake_checksum() -> str:
     return hashlib.sha256(b"fake-embedding-deterministic-v1").hexdigest()
 
 
-def load_manifest(model_dir: str) -> dict:
+def load_manifest(model_dir: str, variant: str | None = None) -> dict:
     path = Path(model_dir)
     manifest_path = path / "manifest.json"
     if not manifest_path.is_file():
@@ -149,20 +191,22 @@ def load_manifest(model_dir: str) -> dict:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise IndexFailure("embedding_checksum_mismatch") from exc
+    method = variant or manifest.get("quantization_method") or E5_QUANTIZATION_METHOD
+    spec = variant_spec(str(method))
     if manifest.get("model_id") != E5_MODEL_ID or manifest.get("revision") != E5_REVISION:
         raise IndexFailure("embedding_checksum_mismatch")
     if manifest.get("source_repository") != E5_SOURCE_REPOSITORY:
         raise IndexFailure("embedding_checksum_mismatch")
-    if manifest.get("source_file") != E5_SOURCE_FILE:
+    if manifest.get("source_file") != spec["source_file"]:
         raise IndexFailure("embedding_checksum_mismatch")
     if manifest.get("dimension") != E5_DIMENSION:
         raise IndexFailure("embedding_dimension")
-    if manifest.get("quantization") != E5_QUANTIZATION or manifest.get("quantization_method") != E5_QUANTIZATION_METHOD:
+    if manifest.get("quantization") != spec["quantization"] or manifest.get("quantization_method") != spec["quantization_method"]:
         raise IndexFailure("embedding_checksum_mismatch")
     files = manifest.get("files")
     if not isinstance(files, dict):
         raise IndexFailure("embedding_model_missing")
-    expected_files = {"model.onnx": E5_MODEL_SHA256, "tokenizer.json": E5_TOKENIZER_SHA256}
+    expected_files = {"model.onnx": spec["model_sha256"], "tokenizer.json": E5_TOKENIZER_SHA256}
     if set(files) != set(expected_files) or any(files[name] != digest for name, digest in expected_files.items()):
         raise IndexFailure("embedding_checksum_mismatch")
     for name, expected in expected_files.items():
@@ -179,15 +223,14 @@ class OnnxEmbedder:
     """CPU Int8 ONNX adapter. Tokenizer is loaded once. This class never downloads."""
 
     def __init__(self, model_dir: str, batch_size: int = 8) -> None:
-        self.manifest = load_manifest(model_dir)
+        self.variant = select_embedding_variant()
+        self.manifest = load_manifest(model_dir, self.variant)
         self.dimension = E5_DIMENSION
         self.model_id = E5_MODEL_ID
         self.revision = E5_REVISION
         self.max_tokens = E5_MAX_TOKENS
         self.batch_size = max(1, batch_size)
-        # SHA-256 of model.onnx, the upstream LFS oid of the pinned source file.
-        self.checksum = E5_MODEL_SHA256
-        self.variant = require_supported_variant()
+        self.checksum = variant_spec(self.variant)["model_sha256"]
         self.cpu_compatible = True
         self._dir = Path(model_dir)
         try:
@@ -459,7 +502,8 @@ class OnnxProcess:
     def _boot(self, behavior: str, timeout_s: float) -> None:
         self.status = "initializing"
         if behavior == "onnx":
-            self.variant = require_supported_variant()
+            self.variant = select_embedding_variant()
+            self.checksum = variant_spec(self.variant)["model_sha256"]
             self.cpu_compatible = True
         self._disable("initializing")
         parent, child = self._ctx.Pipe(duplex=True)

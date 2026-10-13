@@ -324,6 +324,17 @@ def test_empty_pdf_has_no_extractable_text():
     assert raised.value.code == "no_extractable_text"
 
 
+def test_blank_stripe_page_does_not_invent_administrative_text():
+    ocr = FakeOCR("")
+    result, deps = _run((FIXTURES / "mixed.pdf").read_bytes(), ocr)
+    assert result.ocr_pages == 0
+    assert result.native_pages == 1
+    assert ocr.calls == [2]
+    saved = " ".join(item.text for item in deps.chunks.saved)
+    assert "GIAY KHAI SINH" not in saved
+    assert "123" not in saved
+
+
 def test_renderer_receives_only_the_weak_page():
     ocr = FakeOCR("Noi dung OCR du dai de qua nguong trang.")
     _, deps = _run((FIXTURES / "mixed.pdf").read_bytes(), ocr)

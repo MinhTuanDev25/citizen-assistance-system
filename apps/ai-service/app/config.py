@@ -199,6 +199,8 @@ def load_settings() -> Settings:
     max_inflight = _bounded_int("EXTRACT_MAX_INFLIGHT", 4, 1, 128)
     retry_after_s = _bounded_int("EXTRACT_RETRY_AFTER_SECONDS", 1, 1, 60)
     index_mode, embedding_provider, ocr_provider = _pipeline_settings()
+    if index_mode == "pipeline":
+        _require_pipeline_storage()
 
     return Settings(
         provider=provider,
@@ -215,7 +217,7 @@ def load_settings() -> Settings:
         max_inflight=max_inflight,
         retry_after_s=retry_after_s,
         index_mode=index_mode,
-        object_bucket=os.getenv("OBJECT_STORAGE_BUCKET", "cas-documents").strip() or "cas-documents",
+        object_bucket=_object_bucket_name(),
         qdrant_url=os.getenv("QDRANT_URL", "").strip(),
         qdrant_collection=os.getenv("QDRANT_COLLECTION", "knowledge_chunks").strip() or "knowledge_chunks",
         database_url=os.getenv("DATABASE_URL", "").strip(),
@@ -244,6 +246,11 @@ def _pipeline_settings() -> tuple[str, str, str]:
         embedding_provider = "onnx" if mode == "pipeline" else "fake"
     if ocr_provider == "":
         ocr_provider = "paddle" if mode == "pipeline" else "fake"
+    if os.getenv("APP_ENV", "").strip().lower() == "prod":
+        if mode != "pipeline":
+            raise ConfigError("APP_ENV=prod refuses INDEX_MODE=mock")
+        if embedding_provider == "fake" or ocr_provider == "fake":
+            raise ConfigError("APP_ENV=prod refuses fake embedding or OCR providers")
     if mode != "pipeline":
         return mode, embedding_provider or "fake", ocr_provider or "fake"
     if embedding_provider not in ("onnx", "fake"):
@@ -257,6 +264,36 @@ def _pipeline_settings() -> tuple[str, str, str]:
     if not os.getenv("QDRANT_URL", "").strip() or not os.getenv("DATABASE_URL", "").strip():
         raise ConfigError("QDRANT_URL and DATABASE_URL are required when INDEX_MODE=pipeline")
     return mode, embedding_provider, ocr_provider
+
+
+def _object_bucket_name() -> str:
+    from app.indexing.object_storage import object_bucket_name
+
+    return object_bucket_name()
+
+
+def _require_pipeline_storage() -> None:
+    """Refuse a pipeline process that cannot open the same object store as the API."""
+    from app.indexing.object_storage import storage_config
+
+    prod = os.getenv("APP_ENV", "").strip().lower() == "prod"
+    if not os.getenv("OBJECT_STORAGE_ENDPOINT", "").strip():
+        raise ConfigError("OBJECT_STORAGE_ENDPOINT is required when INDEX_MODE=pipeline")
+    declared_bucket = os.getenv("OBJECT_STORAGE_BUCKET")
+    if prod and (declared_bucket is None or not declared_bucket.strip()):
+        raise ConfigError("OBJECT_STORAGE_BUCKET is required when APP_ENV=prod")
+    cfg = storage_config()
+    if not cfg["bucket"]:
+        raise ConfigError("OBJECT_STORAGE_BUCKET is required when INDEX_MODE=pipeline")
+    if not cfg["access_key"] or not cfg["secret_key"]:
+        raise ConfigError("OBJECT_STORAGE_ACCESS_KEY and OBJECT_STORAGE_SECRET_KEY are required when INDEX_MODE=pipeline")
+    endpoint = os.getenv("OBJECT_STORAGE_ENDPOINT", "").strip().lower()
+    if prod and (not cfg["secure"] or endpoint.startswith("http://")):
+        raise ConfigError("OBJECT_STORAGE_USE_SSL must be true when APP_ENV=prod")
+    if prod and cfg["auto_create"]:
+        raise ConfigError("OBJECT_STORAGE_AUTO_CREATE_BUCKET must be false when APP_ENV=prod")
+    if prod and (cfg["access_key"] == "minioadmin" or cfg["secret_key"] == "minioadmin"):
+        raise ConfigError("object storage credentials are development defaults")
 
 
 def _bounded_int(name: str, default: int, low: int, high: int) -> int:

@@ -9,6 +9,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -71,10 +74,16 @@ const (
 var errCleanupLost = errors.New("cleanup_lost")
 
 func main() {
-	if err := run(context.Background(), os.Getenv, os.Stdout); err != nil {
+	ctx, stop := notifySignals(context.Background())
+	defer stop()
+	if err := run(ctx, os.Getenv, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "reaper_failed code=%s\n", publicCode(err))
 		os.Exit(1)
 	}
+}
+
+func notifySignals(parent context.Context) (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 }
 
 type reaperConfig struct {
@@ -83,6 +92,8 @@ type reaperConfig struct {
 	collection  string
 	grace       int
 	batch       int
+	interval    time.Duration
+	shutdown    time.Duration
 }
 
 func loadConfig(getenv func(string) string) (reaperConfig, error) {
@@ -92,6 +103,8 @@ func loadConfig(getenv func(string) string) (reaperConfig, error) {
 		collection:  getenv("QDRANT_COLLECTION"),
 		grace:       120,
 		batch:       defaultBatchSize,
+		interval:    0,
+		shutdown:    30 * time.Second,
 	}
 	if cfg.databaseURL == "" || cfg.qdrantURL == "" || cfg.collection == "" {
 		return reaperConfig{}, errors.New("config_missing")
@@ -105,6 +118,20 @@ func loadConfig(getenv func(string) string) (reaperConfig, error) {
 		if _, err := fmt.Sscan(raw, &cfg.batch); err != nil || cfg.batch < 1 || cfg.batch > maxBatchSize {
 			return reaperConfig{}, errors.New("config_missing")
 		}
+	}
+	if raw := getenv("INDEX_REAPER_INTERVAL_SECONDS"); raw != "" {
+		var seconds int
+		if _, err := fmt.Sscan(raw, &seconds); err != nil || seconds < 1 {
+			return reaperConfig{}, errors.New("config_missing")
+		}
+		cfg.interval = time.Duration(seconds) * time.Second
+	}
+	if raw := getenv("INDEX_REAPER_SHUTDOWN_SECONDS"); raw != "" {
+		var seconds int
+		if _, err := fmt.Sscan(raw, &seconds); err != nil || seconds < 1 || seconds > 120 {
+			return reaperConfig{}, errors.New("config_missing")
+		}
+		cfg.shutdown = time.Duration(seconds) * time.Second
 	}
 	return cfg, nil
 }
@@ -134,12 +161,91 @@ func run(ctx context.Context, getenv func(string) string, out io.Writer) error {
 		return errors.New("postgres_failed")
 	}
 	defer pool.Close()
+	store := &pgStore{pool: pool}
+	deleteFn := func(c context.Context, id string) error {
+		return deleteQdrantVerifiedCtx(c, cfg.qdrantURL, cfg.collection, id)
+	}
+	if cfg.interval <= 0 {
+		return runOnce(ctx, cfg, store, deleteFn, out)
+	}
+	return runReaperLoop(ctx, cfg, store, deleteFn, out)
+}
+
+func runReaperLoop(ctx context.Context, cfg reaperConfig, store cleanupStore, deleteFn func(context.Context, string) error, out io.Writer) error {
+	ticker := time.NewTicker(cfg.interval)
+	defer ticker.Stop()
+	for {
+		if ctx.Err() != nil {
+			fmt.Fprintln(out, "reaper_shutdown_requested")
+			fmt.Fprintln(out, "reaper_stopped")
+			return nil
+		}
+		if err := runOnce(ctx, cfg, store, deleteFn, out); err != nil {
+			fmt.Fprintf(out, "reaper_cycle_failed code=%s\n", publicCode(err))
+		}
+		select {
+		case <-ctx.Done():
+			fmt.Fprintln(out, "reaper_shutdown_requested")
+			fmt.Fprintln(out, "reaper_stopped")
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (w *lockedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.w.Write(p)
+}
+
+func runOnce(parent context.Context, cfg reaperConfig, store cleanupStore, deleteFn func(context.Context, string) error, out io.Writer) error {
+	if parent.Err() != nil {
+		return nil
+	}
+	logs := &lockedWriter{w: out}
 	budget := time.Duration(cfg.batch)*15*time.Second + time.Minute
-	runCtx, cancel := context.WithTimeout(ctx, budget)
+	workCtx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
-	return runReaper(runCtx, cfg, &pgStore{pool: pool}, func(id string) error {
-		return deleteQdrantVerified(cfg.qdrantURL, cfg.collection, id)
-	}, out)
+	finished := make(chan struct{})
+	var drain sync.WaitGroup
+	drain.Add(1)
+	stop := context.AfterFunc(parent, func() {
+		defer drain.Done()
+		fmt.Fprintln(logs, "reaper_shutdown_requested")
+		fmt.Fprintln(logs, "reaper_draining")
+		timer := time.NewTimer(cfg.shutdown)
+		defer timer.Stop()
+		select {
+		case <-finished:
+			fmt.Fprintln(logs, "reaper_shutdown_completed")
+			return
+		case <-timer.C:
+		}
+		select {
+		case <-finished:
+			fmt.Fprintln(logs, "reaper_shutdown_completed")
+			return
+		default:
+		}
+		fmt.Fprintln(logs, "reaper_shutdown_timeout")
+		cancel()
+		<-finished
+	})
+	defer func() {
+		close(finished)
+		if !stop() {
+			drain.Wait()
+		} else {
+			drain.Done()
+		}
+	}()
+	return runReaper(workCtx, cfg, store, deleteFn, logs)
 }
 
 type cleanupClaim struct {
@@ -163,7 +269,7 @@ type tally struct {
 	lost      int
 }
 
-func runReaper(ctx context.Context, cfg reaperConfig, store cleanupStore, deleteFn func(string) error, out io.Writer) error {
+func runReaper(ctx context.Context, cfg reaperConfig, store cleanupStore, deleteFn func(context.Context, string) error, out io.Writer) error {
 	if cfg.databaseURL == "" || cfg.qdrantURL == "" || cfg.collection == "" {
 		return errors.New("config_missing")
 	}
@@ -200,11 +306,11 @@ func runReaper(ctx context.Context, cfg reaperConfig, store cleanupStore, delete
 	return nil
 }
 
-func finishOne(ctx context.Context, store cleanupStore, deleteFn func(string) error, item cleanupClaim) (string, string) {
+func finishOne(ctx context.Context, store cleanupStore, deleteFn func(context.Context, string) error, item cleanupClaim) (string, string) {
 	if err := store.renew(ctx, item); err != nil {
 		return "lost", "cleanup_lost"
 	}
-	if err := deleteFn(item.id); err != nil {
+	if err := deleteFn(ctx, item.id); err != nil {
 		return markFailed(ctx, store, item, "qdrant_failed")
 	}
 	if err := store.complete(ctx, item); err != nil {
@@ -322,12 +428,16 @@ type qdrantBody struct {
 }
 
 func deleteQdrantVerified(base, collection, id string) error {
+	return deleteQdrantVerifiedCtx(context.Background(), base, collection, id)
+}
+
+func deleteQdrantVerifiedCtx(ctx context.Context, base, collection, id string) error {
 	if base == "" || collection == "" {
 		return errors.New("config_missing")
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
 	filter := []byte(`{"filter":{"must":[{"key":"generation_id","match":{"value":"` + id + `"}}]}}`)
-	deleted, err := qdrantPost(client, base+"/collections/"+collection+"/points/delete?wait=true", filter)
+	deleted, err := qdrantPost(ctx, client, base+"/collections/"+collection+"/points/delete?wait=true", filter)
 	if err != nil {
 		return errors.New("qdrant_failed")
 	}
@@ -335,7 +445,7 @@ func deleteQdrantVerified(base, collection, id string) error {
 		return errors.New("qdrant_failed")
 	}
 	countBody := []byte(`{"filter":{"must":[{"key":"generation_id","match":{"value":"` + id + `"}}]},"exact":true}`)
-	counted, err := qdrantPost(client, base+"/collections/"+collection+"/points/count", countBody)
+	counted, err := qdrantPost(ctx, client, base+"/collections/"+collection+"/points/count", countBody)
 	if err != nil {
 		return errors.New("qdrant_failed")
 	}
@@ -350,8 +460,8 @@ type qdrantReply struct {
 	payload []byte
 }
 
-func qdrantPost(client *http.Client, url string, body []byte) (qdrantReply, error) {
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+func qdrantPost(ctx context.Context, client *http.Client, url string, body []byte) (qdrantReply, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return qdrantReply{}, err
 	}

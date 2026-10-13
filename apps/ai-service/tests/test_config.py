@@ -76,6 +76,133 @@ def test_unknown_provider_is_not_ready_and_not_rewritten_to_mock():
     assert "opneai" not in (reason or "")
 
 
+def _pipeline_env(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    monkeypatch.setenv("AI_SERVICE_TOKEN", "test-service-token")
+    monkeypatch.setenv("INDEX_MODE", "pipeline")
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "onnx")
+    monkeypatch.setenv("OCR_PROVIDER", "paddle")
+    monkeypatch.setenv("EMBEDDING_MODEL_DIR", "/models/embedding")
+    monkeypatch.setenv("OCR_MODEL_DIR", "/models/ocr")
+    monkeypatch.setenv("QDRANT_URL", "http://qdrant:6333")
+    monkeypatch.setenv("DATABASE_URL", "postgres://example")
+    monkeypatch.setenv("OBJECT_STORAGE_ENDPOINT", "https://s3api-eu-ro-1.runpod.io")
+    monkeypatch.setenv("OBJECT_STORAGE_ACCESS_KEY", "prod-access")
+    monkeypatch.setenv("OBJECT_STORAGE_SECRET_KEY", "prod-secret-value")
+    monkeypatch.setenv("OBJECT_STORAGE_BUCKET", "cas-documents")
+    monkeypatch.setenv("OBJECT_STORAGE_REGION", "eu-ro-1")
+    monkeypatch.setenv("OBJECT_STORAGE_USE_SSL", "true")
+    monkeypatch.setenv("OBJECT_STORAGE_AUTO_CREATE_BUCKET", "false")
+
+
+def test_pipeline_requires_storage_credentials(monkeypatch):
+    from app.indexing.object_storage import storage_config
+
+    _pipeline_env(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "prod")
+    settings = load_settings()
+    assert settings.index_mode == "pipeline"
+    cfg = storage_config()
+    assert cfg["access_key"] == "prod-access"
+    assert cfg["secret_key"] == "prod-secret-value"
+    assert cfg["secure"] is True
+    assert cfg["auto_create"] is False
+    monkeypatch.delenv("OBJECT_STORAGE_ACCESS_KEY")
+    with pytest.raises(ConfigError, match="OBJECT_STORAGE_ACCESS_KEY"):
+        load_settings()
+    monkeypatch.setenv("OBJECT_STORAGE_ACCESS_KEY", "prod-access")
+    monkeypatch.delenv("OBJECT_STORAGE_SECRET_KEY")
+    with pytest.raises(ConfigError, match="OBJECT_STORAGE_SECRET_KEY"):
+        load_settings()
+    monkeypatch.setenv("OBJECT_STORAGE_SECRET_KEY", "prod-secret-value")
+    monkeypatch.delenv("OBJECT_STORAGE_ENDPOINT")
+    with pytest.raises(ConfigError, match="OBJECT_STORAGE_ENDPOINT"):
+        load_settings()
+    monkeypatch.setenv("OBJECT_STORAGE_ENDPOINT", "http://storage.internal:9000")
+    monkeypatch.setenv("OBJECT_STORAGE_USE_SSL", "false")
+    with pytest.raises(ConfigError, match="OBJECT_STORAGE_USE_SSL"):
+        load_settings()
+    monkeypatch.setenv("OBJECT_STORAGE_ENDPOINT", "https://s3api-eu-ro-1.runpod.io")
+    monkeypatch.setenv("OBJECT_STORAGE_USE_SSL", "true")
+    monkeypatch.setenv("OBJECT_STORAGE_AUTO_CREATE_BUCKET", "true")
+    with pytest.raises(ConfigError, match="OBJECT_STORAGE_AUTO_CREATE_BUCKET"):
+        load_settings()
+    monkeypatch.setenv("OBJECT_STORAGE_AUTO_CREATE_BUCKET", "false")
+    monkeypatch.setenv("OBJECT_STORAGE_ACCESS_KEY", "minioadmin")
+    with pytest.raises(ConfigError, match="development defaults"):
+        load_settings()
+
+
+def test_prod_pipeline_requires_an_explicit_bucket(monkeypatch):
+    from app.indexing.object_storage import object_bucket_name, storage_config
+
+    _pipeline_env(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.delenv("OBJECT_STORAGE_BUCKET", raising=False)
+    with pytest.raises(ConfigError, match="OBJECT_STORAGE_BUCKET"):
+        load_settings()
+    with pytest.raises(ConfigError, match="OBJECT_STORAGE_BUCKET"):
+        storage_config()
+    with pytest.raises(ConfigError, match="OBJECT_STORAGE_BUCKET"):
+        object_bucket_name()
+    monkeypatch.setenv("OBJECT_STORAGE_BUCKET", "")
+    with pytest.raises(ConfigError, match="OBJECT_STORAGE_BUCKET"):
+        load_settings()
+    monkeypatch.setenv("OBJECT_STORAGE_BUCKET", "   ")
+    with pytest.raises(ConfigError, match="OBJECT_STORAGE_BUCKET"):
+        load_settings()
+    with pytest.raises(ConfigError, match="OBJECT_STORAGE_BUCKET"):
+        storage_config()
+    monkeypatch.setenv("OBJECT_STORAGE_BUCKET", "staging-documents")
+    settings = load_settings()
+    cfg = storage_config()
+    assert settings.object_bucket == "staging-documents"
+    assert cfg["bucket"] == "staging-documents"
+    assert cfg["auto_create"] is False
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("OBJECT_STORAGE_BUCKET", raising=False)
+    settings = load_settings()
+    assert settings.object_bucket == "cas-documents"
+    assert storage_config()["bucket"] == "cas-documents"
+
+
+def test_prod_pipeline_does_not_fallback_or_autocreate_bucket(monkeypatch):
+    from app.indexing.object_storage import ensure_bucket, storage_config
+
+    _pipeline_env(monkeypatch)
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.setenv("OBJECT_STORAGE_BUCKET", "staging-documents")
+    cfg = storage_config()
+    assert cfg["bucket"] != "cas-documents"
+    assert cfg["auto_create"] is False
+
+    class Probe:
+        def bucket_exists(self, bucket):
+            assert bucket == "staging-documents"
+            return False
+
+        def make_bucket(self, bucket):
+            raise AssertionError("production must not auto-create " + bucket)
+
+    assert ensure_bucket(Probe(), cfg["bucket"], cfg["auto_create"]) is False
+
+
+def test_prod_refuses_mock_index_and_fake_models(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    monkeypatch.setenv("AI_SERVICE_TOKEN", "test-service-token")
+    monkeypatch.setenv("APP_ENV", "prod")
+    monkeypatch.setenv("INDEX_MODE", "mock")
+    with pytest.raises(ConfigError, match="INDEX_MODE=mock"):
+        load_settings()
+    monkeypatch.setenv("INDEX_MODE", "pipeline")
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "fake")
+    monkeypatch.setenv("OCR_PROVIDER", "paddle")
+    monkeypatch.setenv("QDRANT_URL", "http://qdrant:6333")
+    monkeypatch.setenv("DATABASE_URL", "postgres://example")
+    with pytest.raises(ConfigError, match="fake embedding"):
+        load_settings()
+
+
 def test_load_settings_rejects_unknown_provider(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "opneai")
     monkeypatch.setenv("AI_SERVICE_TOKEN", "test-service-token")

@@ -94,6 +94,25 @@ func TestWorkerVersionMismatchIsFailed(t *testing.T) {
 	}
 }
 
+func TestWorkerTransportErrorStaysWorkerFailed(t *testing.T) {
+	docID := uuid.New()
+	ver := uuid.New()
+	store := &fakeStore{claim: ClaimResult{JobID: uuid.New(), ClaimToken: uuid.New(), RunWorker: true}}
+	svc := &Service{
+		XAID: "xa_chu_se", Store: store, Timeout: time.Second, ClaimTTL: 5 * time.Second,
+		Worker: WorkerFunc(func(context.Context, Request) (Response, error) {
+			return Response{}, errors.New("index worker status 422")
+		}),
+	}
+	got, err := svc.Request(context.Background(), docID, ver, uuid.New(), uuid.New(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ErrorCode != "worker_failed" || store.finish.Outcome != OutcomeFailed {
+		t.Fatalf("%+v finish %+v", got, store.finish)
+	}
+}
+
 func TestRetryFromReadyIsRejectedByStore(t *testing.T) {
 	store := &rejectStore{err: ErrInvalidState}
 	svc := &Service{XAID: "xa_chu_se", Store: store, Worker: WorkerFunc(func(context.Context, Request) (Response, error) {
