@@ -9,12 +9,11 @@ export default function DeferredIngestionPage({ title }) {
         <h1>{title || 'Pipeline tri thức'}</h1>
         <p>
           OCR, extract bản nháp và publish <strong>chưa triển khai</strong>.
-          Upload PDF thật chỉ có khi build với <code>VITE_ADMIN_INGESTION=true</code>.
         </p>
       </header>
       <div className="panel">
-        <p className="cell-muted">
-          Bản build production mặc định tắt ingestion nên không nhúng dữ liệu giả.
+        <p className="muted">
+          Không có dữ liệu giả. Upload PDF và kích hoạt phiên bản nằm ở Tài liệu và Thủ tục.
         </p>
       </div>
     </div>

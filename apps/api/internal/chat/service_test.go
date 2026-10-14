@@ -102,6 +102,55 @@ func TestPlanTurnConfirmStoresVersionIDs(t *testing.T) {
 	}
 }
 
+func TestPinnedSessionIgnoresNewerActiveCatalog(t *testing.T) {
+	catalog := testCatalog()
+	pinned := catalog[0]
+	newer := pinned
+	newer.VersionID = uuid.New()
+	newer.Version = "2.0.0"
+	newer.Definition = []byte(`{
+		"procedure_code": "dk_khai_sinh",
+		"name": "Đăng ký khai sinh",
+		"intent_examples": ["Đăng ký khai sinh"],
+		"slots": {"noi_sinh": {"type": "string", "question": "Bé sinh ở đâu?"}},
+		"required_slots": ["noi_sinh"],
+		"guidance": {"summary": "v2", "checklist": ["v2"], "where_to_submit": "UBND"}
+	}`)
+	procID := pinned.ProcedureID
+	verID := pinned.VersionID
+	prior, _ := json.Marshal(map[string]decision.SlotValue{
+		"noi_sinh":           {Value: "Gia Lai", Status: decision.StatusKnown},
+		"da_ket_hon":         {Value: true, Status: decision.StatusKnown},
+		"co_giay_chung_sinh": {Value: true, Status: decision.StatusKnown},
+	})
+	snap := &repository.TurnSnapshot{
+		Session: repository.Session{
+			ID: uuid.New(), XaID: "xa_chu_se", Status: "OPEN",
+			ActiveProcedureID: &procID, ActiveProcedureVersionID: &verID,
+		},
+		Catalog:  []repository.ProcedureDefinitionRow{newer},
+		Pinned:   &pinned,
+		PriorRaw: prior,
+		HadPrior: true,
+	}
+	p, err := planTurn(nil, nil, nil, snap, "Tôi muốn đăng ký khai sinh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.save.VersionID == nil || *p.save.VersionID != pinned.VersionID {
+		t.Fatalf("pin jumped to %v", p.save.VersionID)
+	}
+	if p.result.ProcedureVersion != "1.0.0" {
+		t.Fatalf("version=%s", p.result.ProcedureVersion)
+	}
+	if p.result.Guidance == nil || p.result.Guidance.Summary == "v2" {
+		t.Fatalf("used new ACTIVE definition: %+v", p.result.Guidance)
+	}
+	if p.result.Guidance.Summary != "Hồ sơ khai sinh" {
+		t.Fatalf("summary=%s", p.result.Guidance.Summary)
+	}
+}
+
 func TestPayloadHashStable(t *testing.T) {
 	a := PayloadHash("  hello   world  ")
 	b := PayloadHash("hello world")

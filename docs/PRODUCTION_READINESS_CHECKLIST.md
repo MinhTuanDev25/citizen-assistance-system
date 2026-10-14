@@ -24,6 +24,7 @@ Ngày đối chiếu: 2026-10-13. `PRODUCTION_FOUNDATION_READY=false`. `FULL_APP
 | Staging E2E | NOT_RUN | |
 | Backup restore | NOT_RUN | |
 | RunPod S3 live | NOT_RUN | |
-| Phase 4–8 | Chưa làm | |
+| Phase 4 Activate (local) | PASS | Isolated `cas_p4_test` + E5/Qdrant E2E + browser UI; not production-ready |
+| Phase 5–8 | Chưa làm | |
 
 `PRODUCTION_FOUNDATION_READY` chuyển true khi: runner GitHub chạy xanh job `p4b-live` và `production-config`, image AI được build trên kiến trúc máy đích, collection Qdrant được provision một lần trên staging, và một restore Postgres thành công trên database không phải development.

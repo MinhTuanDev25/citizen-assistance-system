@@ -60,7 +60,12 @@ Ba domain vẫn có trong cơ sở dữ liệu để admin thấy catalog. Chat 
 | `POST .../index/retry` | Index lại link `FAILED` | Đã làm. Cần cờ indexing | Admin |
 | `POST .../index/reindex` | Index lại link `READY`, giữ generation cũ đến khi bản mới được kiểm | Đã làm. Cần cờ indexing | Admin |
 | `DELETE /api/v1/admin/documents/:id/links/:versionId` | Gỡ link. Dòng còn trong DB, `unlinked_at` được ghi, generation active bị bỏ khỏi link | Đã làm. Cần cờ indexing | Admin |
-| Kích hoạt phiên bản thủ tục | Đưa version có PDF `READY` thành `ACTIVE`, version cũ thành `ARCHIVED`, ghi audit | Chưa có route | Admin |
+| `GET /api/v1/admin/procedures` | Danh sách thủ tục của xã, kể cả chưa ACTIVE | Đã làm. ADMIN JWT | Admin |
+| `GET /api/v1/admin/procedures/:procedureId/versions` | Versions, tài liệu, eligibility | Đã làm | Admin |
+| `GET /api/v1/admin/procedures/:procedureId/versions/:versionId` | Chi tiết version và definition | Đã làm | Admin |
+| `POST /api/v1/admin/procedures/:procedureId/versions` | Tạo candidate APPROVED, không kích hoạt | Đã làm. Cần `X-Request-ID` | Admin |
+| `POST /api/v1/admin/procedures/:procedureId/versions/:versionId/activate` | Archive ACTIVE cũ, đặt version mới ACTIVE, audit | Đã làm. Atomic + idempotency. Không chạy OCR | Admin |
+| `GET /api/v1/admin/procedures/:procedureId/activation-history` | Lịch sử `PROCEDURE_VERSION_ACTIVATED` | Đã làm | Admin |
 | `GET /health` trên AI service | AI service còn sống | Đã làm | Go, vận hành |
 | `GET /ready` trên AI service | Sẵn sàng nhận job. Trả 503 khi model, OCR hoặc slot pipeline chưa sẵn | Đã làm | Go, vận hành |
 | `GET /v1/status` trên AI service | Phase hiện tại, chế độ index, và `rag: not_implemented` | Đã làm | Go, vận hành |
@@ -73,7 +78,7 @@ Ba domain vẫn có trong cơ sở dữ liệu để admin thấy catalog. Chat 
 
 ### Nền dữ liệu và chạy local
 
-- PostgreSQL kèm pgvector, migration `000001` đến `000016`. `000001`–`000015` đã đóng băng, không sửa.
+- PostgreSQL kèm pgvector, migration `000001` đến `000017`. `000001`–`000016` đã đóng băng, không sửa. `000017` thêm metadata kích hoạt, không đụng seed ACTIVE.
 - Seed một xã `xa_chu_se` và ba domain: hộ tịch và chứng thực, đất đai nhà ở quy hoạch, bảo hiểm và chính sách xã hội.
 - Năm thủ tục seed, version `ACTIVE`: chứng thực bản sao, đăng ký khai sinh, tra cứu quy hoạch, xin giấy phép xây dựng, đăng ký BHYT hộ gia đình.
 - MinIO cho PDF. Qdrant cho vector của pipeline indexing.
@@ -160,17 +165,15 @@ Kiểm tra đã chạy trong vòng bundle 12, trên máy dev:
 
 Chưa chạy: smoke model thật, smoke bucket RunPod, và workflow GitHub Actions của commit này. File workflow có sẵn. “Chưa chạy” nghĩa là chưa có lần Actions xanh được ghi trong vòng này, không phải là chưa viết CI.
 
-P4B **không** có nút Activate, không có `POST /v1/retrieve`, và không đổi câu trả lời của chatbot.
+P4B không có `POST /v1/retrieve` và không đổi câu trả lời của chatbot. Nút kích hoạt phiên bản nằm ở Phase 4 (2026-10-13), xem [`PHASE_4_ACTIVATION_COMPLETION_REPORT.md`](PHASE_4_ACTIVATION_COMPLETION_REPORT.md).
 
 ## Chưa làm
 
 ### 1. Kích hoạt phiên bản (activate)
 
-Admin chưa có thao tác đưa một version mới thành `ACTIVE` sau khi PDF của nó `READY`, rồi đưa version cũ sang `ARCHIVED`.
+Code Phase 4 đã có: API admin, candidate copy-from-ACTIVE, eligibility (generation READY đã publish; `PENDING` không chặn; identity definition khớp DB), transaction atomic, audit, idempotency, session pin, UI tách Activate vs refresh. Chi tiết [`PHASE_4_ACTIVATION_COMPLETION_REPORT.md`](PHASE_4_ACTIVATION_COMPLETION_REPORT.md) và [`PHASE_4_FINAL_ACCEPTANCE_REPORT.md`](PHASE_4_FINAL_ACCEPTANCE_REPORT.md).
 
-Hệ quả: chat vẫn dùng năm definition seed. PDF vừa index không trở thành nguồn của công dân, dù vector đã nằm trên Qdrant.
-
-Việc còn lại: API activate trong một transaction ngắn, chỉ cho phép khi nguồn bắt buộc đã `READY`, ghi audit, và UI admin cho thao tác đó. Không dựng workspace draft hay chuỗi approve.
+Nghiệm thu local 2026-10-13: integration `cas_p4_test` PASS; E2E native PDF + E5/Qdrant + Activate + session pin PASS; browser UI V2 ACTIVE PASS. PaddleOCR scanned PDF `NOT_RUN`. JSON editor / `PENDING→VALID` vẫn backlog. Không production-ready.
 
 ### 2. RAG và citation từ tài liệu
 

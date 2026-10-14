@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext.jsx'
-import { CitizenShell } from '../components/CitizenShell.jsx'
 
 // Compile-time flag: production builds leave VITE_DEMO_LOGIN unset → dead branch tree-shaken.
 const DEMO_ON =
@@ -70,8 +69,18 @@ export default function LoginPage() {
       : 'Đăng nhập để lưu phiên hỏi thủ tục. Bạn vẫn có thể hỏi như khách nếu chưa có tài khoản.'
 
   return (
-    <CitizenShell>
-      <main className="login-wrap">
+    <div className="login-screen">
+      <aside className="login-hero">
+        <div className="login-hero-brand">
+          <div className="brand-icon" aria-hidden>
+            CS
+          </div>
+          <span>Citizen Assistance</span>
+        </div>
+        <h2>Công dân số phục vụ người dân</h2>
+        <p>Hỏi · Tra cứu · Làm thủ tục — tại xã, bằng tiếng Việt.</p>
+      </aside>
+      <main className="login-panel">
         <form className="login-card" onSubmit={onSubmit}>
           <div className="login-tabs" role="tablist" aria-label="Loại tài khoản">
             <button
@@ -104,6 +113,7 @@ export default function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="username"
+              placeholder="email@example.com"
               required
             />
           </label>
@@ -114,6 +124,7 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
+              placeholder="••••••••"
               required
             />
           </label>
@@ -135,6 +146,6 @@ export default function LoginPage() {
           </div>
         </form>
       </main>
-    </CitizenShell>
+    </div>
   )
 }

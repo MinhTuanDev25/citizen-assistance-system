@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
-import { getActiveVersion, listProcedures } from './catalog.js'
+import { activateProcedureVersion, getActiveVersion, listAdminProcedures, listProcedures } from './catalog.js'
 import {
   executeChatTurn,
   loadPendingTurn,
@@ -72,6 +72,27 @@ describe('getActiveVersion admin auth', () => {
       '/api/v1/procedures/proc-uuid-1/active-version',
       { auth: true },
     )
+  })
+})
+
+describe('admin activation client', () => {
+  beforeEach(() => {
+    apiRequest.mockReset()
+    apiRequest.mockResolvedValue({ items: [] })
+  })
+
+  it('lists admin procedures with auth', async () => {
+    await listAdminProcedures()
+    expect(apiRequest).toHaveBeenCalledWith('/api/v1/admin/procedures', { auth: true })
+  })
+
+  it('sends expected active version and request id', async () => {
+    await activateProcedureVersion('p1', 'v2', 'v1', '11111111-1111-1111-1111-111111111111')
+    const [path, opts] = apiRequest.mock.calls[0]
+    expect(path).toContain('/admin/procedures/p1/versions/v2/activate')
+    expect(opts.method).toBe('POST')
+    expect(opts.headers['X-Request-ID']).toBe('11111111-1111-1111-1111-111111111111')
+    expect(JSON.parse(opts.body)).toEqual({ expected_active_version_id: 'v1' })
   })
 })
 

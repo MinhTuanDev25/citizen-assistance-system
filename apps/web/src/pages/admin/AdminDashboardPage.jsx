@@ -4,8 +4,32 @@ import { listProcedures } from '../../api/catalog.js'
 import { listDocuments } from '../../api/documents.js'
 import { useCommune } from '../../commune/CommuneContext.jsx'
 
+const STEPS = [
+  {
+    to: '/admin/documents',
+    step: '1',
+    title: 'Tải PDF',
+    text: 'Lưu tài liệu nguồn theo lĩnh vực.',
+    bg: '#dbeafe',
+  },
+  {
+    to: '/admin/documents',
+    step: '2',
+    title: 'Gắn và lập chỉ mục',
+    text: 'Nối PDF với phiên bản thủ tục, chờ READY.',
+    bg: '#dcfce7',
+  },
+  {
+    to: '/admin/procedures',
+    step: '3',
+    title: 'Kích hoạt phiên bản',
+    text: 'Công dân hỏi đáp theo phiên ACTIVE.',
+    bg: '#ffedd5',
+  },
+]
+
 export default function AdminDashboardPage() {
-  const { xaId } = useCommune()
+  const { xaId, commune } = useCommune()
   const [docs, setDocs] = useState(null)
   const [active, setActive] = useState(null)
   const [apiError, setApiError] = useState('')
@@ -45,38 +69,38 @@ export default function AdminDashboardPage() {
     <div className="admin-page">
       <header className="admin-page-head">
         <h1>Tổng quan</h1>
-        <p>Upload PDF đã có. OCR, bản nháp và RAG chưa triển khai.</p>
+        <p>
+          Xã {commune?.name || '…'}. Số liệu lấy từ API thật. Bản nháp OCR chưa triển khai.
+        </p>
       </header>
 
       {apiError ? <p className="form-error">{apiError}</p> : null}
 
-      <div className="stat-grid">
-        <div className="stat-card">
-          <span>Tài liệu</span>
+      <div className="stat-grid stat-grid-2">
+        <div className="stat-card accent-blue">
+          <span>Tài liệu PDF</span>
           <strong>{docs == null ? '…' : docs}</strong>
+          <Link to="/admin/documents">Mở tài liệu</Link>
         </div>
-        <div className="stat-card">
-          <span>Bản nháp</span>
-          <strong>chưa triển khai</strong>
-        </div>
-        <div className="stat-card">
+        <div className="stat-card accent-teal">
           <span>Thủ tục ACTIVE</span>
           <strong>{active == null ? '…' : active}</strong>
+          <Link to="/admin/procedures">Mở thủ tục</Link>
         </div>
       </div>
 
-      <section className="panel">
-        <h2>Luồng làm việc</h2>
-        <ol className="flow-list">
-          <li>
-            <Link to="/admin/documents">Upload PDF</Link> → lưu documents
-          </li>
-          <li>OCR và extract draft chưa triển khai</li>
-          <li>
-            <Link to="/admin/procedures">Thủ tục ACTIVE</Link>
-          </li>
-        </ol>
-      </section>
+      <p className="cas-side-section">Luồng làm việc</p>
+      <div className="home-grid admin-flow">
+        {STEPS.map((card) => (
+          <Link key={card.title} to={card.to} className="home-card">
+            <div className="icon" style={{ background: card.bg }} aria-hidden>
+              {card.step}
+            </div>
+            <strong>{card.title}</strong>
+            <span>{card.text}</span>
+          </Link>
+        ))}
+      </div>
     </div>
   )
 }

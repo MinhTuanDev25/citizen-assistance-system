@@ -23,6 +23,15 @@ function formatSize(n) {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function pillClass(status) {
+  const u = String(status || '').toUpperCase()
+  if (['READY', 'ACTIVE', 'PROCESSED'].includes(u)) return 'pill ok'
+  if (['FAILED', 'EXPIRED', 'SUPERSEDED'].includes(u)) return 'pill bad'
+  if (['PROCESSING', 'UPLOADED', 'PENDING', 'APPROVED', 'INDEXING'].includes(u)) return 'pill warn'
+  if (u === 'ARCHIVED') return 'pill mute'
+  return 'pill'
+}
+
 export default function DocumentsPage() {
   const [rows, setRows] = useState([])
   const [domains, setDomains] = useState([])
@@ -250,133 +259,153 @@ export default function DocumentsPage() {
   return (
     <div className="admin-page">
       <header className="admin-page-head">
-        <h1>Tài liệu nguồn</h1>
-        <p>Upload PDF thật. OCR và bản nháp thủ tục chưa triển khai.</p>
+        <h1>Tài liệu</h1>
+        <p>Upload và lập chỉ mục PDF. RAG trong hội thoại chưa triển khai.</p>
       </header>
 
-      <form className="panel form-grid" onSubmit={onUpload}>
-        <h2>Upload PDF</h2>
-        <label>
-          File PDF
-          <input
-            name="file"
-            type="file"
-            accept="application/pdf,.pdf"
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
-          />
-        </label>
-        {file ? (
-          <p className="cell-muted">
-            Đã chọn {file.name} ({formatSize(file.size)})
-          </p>
-        ) : null}
-        <label>
-          Tiêu đề
-          <input name="title" value={title} onChange={(e) => setTitle(e.target.value)} />
-        </label>
-        <label>
-          Lĩnh vực
-          <select name="domain" value={domainId} onChange={(e) => setDomainId(e.target.value)}>
-            {domains.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Số hiệu
-          <input name="document_number" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />
-        </label>
-        <label>
-          Cơ quan ban hành
-          <input name="issuer" value={issuer} onChange={(e) => setIssuer(e.target.value)} />
-        </label>
-        <button type="submit" className="btn-primary" disabled={busy}>
-          {busy ? 'Đang tải lên…' : 'Upload'}
-        </button>
-        {error ? <p className="form-error">{error}</p> : null}
-        {msg ? <p className="form-ok">{msg}</p> : null}
-      </form>
-
-      <div className="panel">
-        <h2>Danh sách</h2>
-        <label>
-          Trạng thái xử lý
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="">Tất cả</option>
-            <option value="UPLOADED">UPLOADED</option>
-            <option value="PROCESSING">PROCESSING</option>
-            <option value="PROCESSED">PROCESSED</option>
-            <option value="READY">READY</option>
-            <option value="FAILED">FAILED</option>
-          </select>
-        </label>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Tiêu đề</th>
-                <th>Xử lý</th>
-                <th>Hiệu lực</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((d) => (
-                <tr key={d.id}>
-                  <td>
-                    {d.title}
-                    <div className="cell-muted">{d.filename}</div>
-                  </td>
-                  <td>
-                    <span className="pill">{d.processing_status}</span>
-                  </td>
-                  <td>
-                    <span className="pill">{d.validity_status}</span>
-                  </td>
-                  <td className="row-actions">
-                    <button type="button" onClick={() => setSelected(d)}>
-                      Chi tiết
-                    </button>
-                    <button type="button" onClick={() => { void onDownload(d) }}>
-                      Tải PDF
-                    </button>
-                  </td>
-                </tr>
+      <div className="admin-split">
+        <form className="panel form-grid" onSubmit={onUpload}>
+          <h2>Upload PDF</h2>
+          <label>
+            File PDF
+            <input
+              name="file"
+              type="file"
+              accept="application/pdf,.pdf"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+            />
+          </label>
+          {file ? (
+            <p className="cell-muted">
+              Đã chọn {file.name} ({formatSize(file.size)})
+            </p>
+          ) : null}
+          <label>
+            Tiêu đề
+            <input name="title" value={title} onChange={(e) => setTitle(e.target.value)} />
+          </label>
+          <label>
+            Lĩnh vực
+            <select name="domain" value={domainId} onChange={(e) => setDomainId(e.target.value)}>
+              {domains.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
               ))}
-            </tbody>
-          </table>
+            </select>
+          </label>
+          <label>
+            Số hiệu
+            <input name="document_number" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />
+          </label>
+          <label>
+            Cơ quan ban hành
+            <input name="issuer" value={issuer} onChange={(e) => setIssuer(e.target.value)} />
+          </label>
+          <button type="submit" className="btn-primary" disabled={busy}>
+            {busy ? 'Đang tải lên…' : 'Upload'}
+          </button>
+          {error ? <p className="form-error">{error}</p> : null}
+          {msg ? <p className="form-ok">{msg}</p> : null}
+        </form>
+
+        <div className="panel">
+          <div className="panel-head">
+            <h2>Danh sách</h2>
+            <label className="inline-filter">
+              Trạng thái xử lý
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                <option value="">Tất cả</option>
+                <option value="UPLOADED">UPLOADED</option>
+                <option value="PROCESSING">PROCESSING</option>
+                <option value="PROCESSED">PROCESSED</option>
+                <option value="READY">READY</option>
+                <option value="FAILED">FAILED</option>
+              </select>
+            </label>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tiêu đề</th>
+                  <th>Xử lý</th>
+                  <th>Hiệu lực</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((d) => (
+                  <tr key={d.id} className={selected?.id === d.id ? 'is-selected' : ''}>
+                    <td>
+                      <strong>{d.title}</strong>
+                      <div className="cell-muted">{d.filename}</div>
+                    </td>
+                    <td>
+                      <span className={pillClass(d.processing_status)}>{d.processing_status}</span>
+                    </td>
+                    <td>
+                      <span className={pillClass(d.validity_status)}>{d.validity_status}</span>
+                    </td>
+                    <td className="row-actions">
+                      <button type="button" onClick={() => setSelected(d)}>
+                        Chi tiết
+                      </button>
+                      <button type="button" onClick={() => { void onDownload(d) }}>
+                        Tải PDF
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-        {selected ? (
-          <div className="panel">
-            <h3>{selected.title}</h3>
-            <p>Xử lý: {selected.processing_status}</p>
-            <p>Hiệu lực: {selected.validity_status}</p>
-            <p>Checksum: {selected.checksum}</p>
-            <p>Dung lượng: {formatSize(selected.file_size_bytes || 0)}</p>
-            {indexingOn ? (
-              <form onSubmit={onLink}>
-                <p>Trạng thái lập chỉ mục: {selected.processing_status}</p>
-                <label>
-                  Thủ tục / phiên bản
-                  <select name="procedure_version_id" value={versionId} onChange={(e) => setVersionId(e.target.value)}>
-                    <option value="">Chọn phiên bản</option>
-                    {targets.map((item) => (
-                      <option key={item.procedure_version_id} value={item.procedure_version_id}>
-                        {item.procedure_name} · {item.version}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button type="submit">Gắn thủ tục</button>
-                <ul>
-                  {links.map((link) => (
-                    <li key={link.procedure_version_id}>
-                      {link.procedure_code} · {link.version} · {link.index_status}
-                      {link.last_error_code ? ` · ${link.last_error_code}` : ''}
-                      {link.reindex_error_code ? ` · reindex ${link.reindex_error_code}` : ''}
-                      {link.pipeline_version ? ` · ${link.page_count ?? 0} trang · ${link.chunk_count ?? 0} đoạn · OCR ${link.ocr_page_count ?? 0} · ${link.pipeline_version}${link.embedding_model_id ? ` · ${link.embedding_model_id}` : ''}` : ''}
+      </div>
+
+      {selected ? (
+        <div className="panel">
+          <div className="panel-head">
+            <h2>{selected.title}</h2>
+            <button type="button" className="linkish dark" onClick={() => setSelected(null)}>
+              Đóng
+            </button>
+          </div>
+          <div className="meta-row">
+            <span className={pillClass(selected.processing_status)}>{selected.processing_status}</span>
+            <span className={pillClass(selected.validity_status)}>{selected.validity_status}</span>
+            <span className="cell-muted">{formatSize(selected.file_size_bytes || 0)}</span>
+          </div>
+          <p className="cell-muted">Checksum: {selected.checksum}</p>
+          {indexingOn ? (
+            <form className="form-grid" onSubmit={onLink}>
+              <label>
+                Thủ tục / phiên bản
+                <select name="procedure_version_id" value={versionId} onChange={(e) => setVersionId(e.target.value)}>
+                  <option value="">Chọn phiên bản</option>
+                  {targets.map((item) => (
+                    <option key={item.procedure_version_id} value={item.procedure_version_id}>
+                      {item.procedure_name} · {item.version}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button type="submit" className="btn-primary">Gắn thủ tục</button>
+              <ul className="link-list">
+                {links.map((link) => (
+                  <li key={link.procedure_version_id}>
+                    <div>
+                      <strong>
+                        {link.procedure_code} · {link.version} · {link.index_status}
+                      </strong>
+                      <div className="cell-muted">
+                        <span className={pillClass(link.index_status)}>{link.index_status}</span>
+                        {link.last_error_code ? ` · ${link.last_error_code}` : ''}
+                        {link.reindex_error_code ? ` · reindex ${link.reindex_error_code}` : ''}
+                        {link.pipeline_version ? ` · ${link.page_count ?? 0} trang · ${link.chunk_count ?? 0} đoạn · OCR ${link.ocr_page_count ?? 0} · ${link.pipeline_version}${link.embedding_model_id ? ` · ${link.embedding_model_id}` : ''}` : ''}
+                      </div>
+                    </div>
+                    <div className="row-actions">
                       {link.index_status === 'UPLOADED' ? (
                         <button type="button" disabled={busyVersionIds.includes(link.procedure_version_id)} onClick={() => { void onIndex(link.procedure_version_id, false) }}>
                           Lập chỉ mục
@@ -397,15 +426,15 @@ export default function DocumentsPage() {
                           Bỏ liên kết
                         </button>
                       ) : null}
-                    </li>
-                  ))}
-                </ul>
-                {indexMsg ? <p className="form-ok">{indexMsg}</p> : null}
-              </form>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {indexMsg ? <p className="form-ok">{indexMsg}</p> : null}
+            </form>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }

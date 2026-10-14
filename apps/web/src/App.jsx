@@ -7,7 +7,9 @@ import { RequireCommune } from './components/RequireCommune.jsx'
 import { AdminShell } from './components/AdminShell.jsx'
 import { adminIngestionEnabled } from './config/features.js'
 import CitizenChatPage from './pages/CitizenChatPage.jsx'
+import HomePage from './pages/HomePage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
+import ProceduresCatalogPage from './pages/ProceduresCatalogPage.jsx'
 import SelectCommunePage from './pages/SelectCommunePage.jsx'
 import DeferredIngestionPage from './pages/admin/DeferredIngestionPage.jsx'
 import ProceduresPage from './pages/admin/ProceduresPage.jsx'
@@ -39,10 +41,28 @@ export default function App() {
               path="/"
               element={
                 <RequireCommune>
+                  <HomePage />
+                </RequireCommune>
+              }
+            />
+            <Route
+              path="/hoi"
+              element={
+                <RequireCommune>
                   <CitizenChatPage />
                 </RequireCommune>
               }
             />
+            <Route
+              path="/thu-tuc"
+              element={
+                <RequireCommune>
+                  <ProceduresCatalogPage />
+                </RequireCommune>
+              }
+            />
+            <Route path="/ho-so" element={<Navigate to="/" replace />} />
+            <Route path="/giong-noi" element={<Navigate to="/hoi" replace />} />
             <Route
               path="/login"
               element={

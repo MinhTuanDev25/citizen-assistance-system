@@ -68,6 +68,17 @@ func MapRoutes(
 			sessions.POST("/:sessionId/turns", sessionHandler.Turn)
 		}
 
+		adminProcs := v1.Group("/admin/procedures")
+		adminProcs.Use(requireAdmin)
+		{
+			adminProcs.GET("", procedureHandler.ListAdmin)
+			adminProcs.GET("/:procedureId/versions", procedureHandler.ListVersions)
+			adminProcs.GET("/:procedureId/versions/:versionId", procedureHandler.GetVersion)
+			adminProcs.POST("/:procedureId/versions", procedureHandler.CreateVersion)
+			adminProcs.POST("/:procedureId/versions/:versionId/activate", procedureHandler.Activate)
+			adminProcs.GET("/:procedureId/activation-history", procedureHandler.ActivationHistory)
+		}
+
 		if documentHandler != nil {
 			docs := v1.Group("/admin/documents")
 			docs.Use(requireAdmin)

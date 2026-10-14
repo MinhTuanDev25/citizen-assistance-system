@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/activation"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/aiextract"
 	v1 "github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1"
 	authapi "github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/auth"
@@ -66,6 +67,7 @@ func NewWithIndexWorker(logger *slog.Logger, pool *pgxpool.Pool, cfg config.Conf
 	communeHandler := commune.NewHandler(communeRepo)
 	domainHandler := domain.NewHandler(&repository.DomainRepo{Pool: pool})
 	procedureHandler := procedure.NewHandler(&repository.ProcedureRepo{Pool: pool}, cfg.XAID, cfg.CitizenDomainIDs)
+	procedureHandler.Activation = &activation.Service{Store: &activation.Store{Pool: pool}, XAID: cfg.XAID}
 
 	// AI extraction (P2) is opt-in and off by default. An empty/disabled
 	// config yields a nil Extractor, so chat.Service.Turn runs the exact

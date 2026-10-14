@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { WELCOME } from '../api/chat.js'
 import { listProcedures } from '../api/catalog.js'
 import {
@@ -8,8 +9,7 @@ import {
   orderedMessages,
   startFreshSession,
 } from '../api/session.js'
-import { CitizenShell } from '../components/CitizenShell.jsx'
-import { CommuneScene } from '../components/CommuneScene.jsx'
+import { CitizenLayout } from '../components/CitizenLayout.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { useCommune } from '../commune/CommuneContext.jsx'
 
@@ -61,6 +61,9 @@ function ConfirmActions({ candidates, onPick, disabled }) {
 export default function CitizenChatPage() {
   const { user } = useAuth()
   const { xaId, commune } = useCommune()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const askedRef = useRef('')
   const [messages, setMessages] = useState([])
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -75,6 +78,9 @@ export default function CitizenChatPage() {
   const messagesRef = useRef(null)
   const composingRef = useRef(false)
   const sentEchoRef = useRef({ text: '', at: 0 })
+  const recognitionRef = useRef(null)
+  const [listening, setListening] = useState(false)
+  const [voiceHint, setVoiceHint] = useState('')
 
   useEffect(() => {
     const el = messagesRef.current
@@ -169,6 +175,7 @@ export default function CitizenChatPage() {
   async function submit(text) {
     const content = text.trim()
     if (!content || busy) return
+    stopListening()
 
     setMessages((prev) => [
       ...prev,
@@ -230,6 +237,62 @@ export default function CitizenChatPage() {
     }
   }
 
+  function stopListening() {
+    try {
+      recognitionRef.current?.stop()
+    } catch {
+      /* already stopped */
+    }
+    recognitionRef.current = null
+    setListening(false)
+  }
+
+  useEffect(() => () => stopListening(), [])
+
+  function toggleVoice() {
+    const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!Ctor) {
+      setVoiceHint('Trình duyệt này chưa hỗ trợ nhận giọng nói.')
+      return
+    }
+    if (listening) {
+      stopListening()
+      return
+    }
+    setVoiceHint('')
+    const rec = new Ctor()
+    rec.lang = 'vi-VN'
+    rec.interimResults = true
+    rec.continuous = false
+    rec.onresult = (event) => {
+      let text = ''
+      for (let i = 0; i < event.results.length; i += 1) {
+        text += event.results[i][0].transcript
+      }
+      setDraft(text.trim())
+    }
+    rec.onerror = (event) => {
+      if (event.error === 'not-allowed') {
+        setVoiceHint('Cần cho phép micro để nói câu hỏi.')
+      } else if (event.error !== 'aborted' && event.error !== 'no-speech') {
+        setVoiceHint('Không nhận được giọng nói. Thử lại.')
+      }
+      stopListening()
+    }
+    rec.onend = () => {
+      recognitionRef.current = null
+      setListening(false)
+    }
+    recognitionRef.current = rec
+    try {
+      rec.start()
+      setListening(true)
+    } catch {
+      setVoiceHint('Không bật được micro. Thử lại.')
+      stopListening()
+    }
+  }
+
   function askAboutProcedure(proc) {
     submit(`Tôi muốn hỏi về thủ tục ${proc.name}`)
   }
@@ -263,84 +326,37 @@ export default function CitizenChatPage() {
   const suggestions = catalog
     .flatMap((g) => g.procedures || [])
     .slice(0, 4)
-    .map((p) => p.name)
+
+  useEffect(() => {
+    const ask = location.state?.ask
+    if (!ask || !sessionReady || busy) return
+    if (askedRef.current === ask) return
+    askedRef.current = ask
+    navigate('/hoi', { replace: true, state: {} })
+    void submit(ask)
+  }, [busy, location.state, navigate, sessionReady])
 
   return (
-    <CitizenShell>
-      <main className="citizen-main">
-        <section className="citizen-intro" aria-label="Giới thiệu">
-          <div className="citizen-intro-copy">
-            <p className="citizen-intro-eyebrow">Trợ lý thủ tục hành chính</p>
-            <h1>Hỏi thủ tục bằng tiếng Việt</h1>
-            <p>
-              Tra cứu giấy tờ, điều kiện và nơi nộp tại{' '}
-              <strong>xã {commune?.name || '…'}</strong>
-              {user ? ` · Xin chào, ${user.name}` : ''}. Không bắt buộc đăng
-              nhập.
-            </p>
-            <div className="hints">
-              {suggestions.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  className="hint"
-                  spellCheck={false}
-                  onClick={() => submit(s)}
-                  disabled={busy || !sessionReady}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="citizen-intro-visual">
-            <CommuneScene className="commune-scene" />
-          </div>
-        </section>
-
-        <div className="citizen-aside">
-          <section className="catalog-panel" aria-label="Danh mục thủ tục">
-            <div className="catalog-head">
-              <h2>Thủ tục đang hỗ trợ</h2>
-              <p>Bấm để hỏi nhanh theo danh mục của xã</p>
-            </div>
-            {catalogError ? (
-              <p className="catalog-error">{catalogError}</p>
-            ) : null}
-            {!catalogError && catalog.length === 0 ? (
-              <p className="catalog-muted">Đang tải danh mục…</p>
-            ) : null}
-            <div className="catalog-groups">
-              {catalog.map((g) => (
-                <div key={g.domain_id} className="catalog-group">
-                  <h3>
-                    {g.domain_name} <span>{g.count}</span>
-                  </h3>
-                  <ul>
-                    {(g.procedures || []).map((p) => (
-                      <li key={p.id}>
-                        <button
-                          type="button"
-                          spellCheck={false}
-                          onClick={() => askAboutProcedure(p)}
-                          disabled={busy || !sessionReady}
-                        >
-                          <strong>{p.name}</strong>
-                          <span>Hỏi hướng dẫn</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          </section>
+    <CitizenLayout>
+      <main className="citizen-main chat-only">
+        <div className="quick-row" style={{ marginBottom: '0.75rem' }}>
+          {suggestions.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              disabled={busy || !sessionReady}
+              onClick={() => askAboutProcedure(p)}
+            >
+              {p.name}
+            </button>
+          ))}
         </div>
+        {catalogError ? <p className="form-error">{catalogError}</p> : null}
 
         <section className="chat-panel chat-panel-sticky" aria-label="Hội thoại">
           <div className="chat-header">
             <div>
-              <h2>Hội thoại hỗ trợ</h2>
+              <h2>Hỏi đáp thủ tục</h2>
               <p>
                 {user ? `Xin chào, ${user.name}` : 'Phiên khách'} · xã{' '}
                 {commune?.name}
@@ -414,9 +430,11 @@ export default function CitizenChatPage() {
               }}
               onKeyDown={onKeyDown}
               placeholder={
-                sessionReady
-                  ? 'Nhập câu hỏi của bạn…'
-                  : 'Đang mở phiên chat…'
+                listening
+                  ? 'Đang nghe… hãy nói câu hỏi'
+                  : sessionReady
+                    ? 'Nhập hoặc nói câu hỏi…'
+                    : 'Đang mở phiên chat…'
               }
               rows={2}
               disabled={!sessionReady}
@@ -424,15 +442,32 @@ export default function CitizenChatPage() {
               aria-label="Nội dung câu hỏi"
             />
             <button
+              type="button"
+              className={`voice-mic${listening ? ' listening' : ''}`}
+              onClick={toggleVoice}
+              disabled={busy || !sessionReady}
+              aria-pressed={listening}
+              aria-label={listening ? 'Dừng nghe' : 'Nói câu hỏi'}
+              title={listening ? 'Dừng nghe' : 'Nói câu hỏi'}
+            >
+              {listening ? '●' : '🎙'}
+            </button>
+            <button
               type="submit"
+              className="composer-send"
               onMouseDown={(e) => e.preventDefault()}
               disabled={busy || !sessionReady || !draft.trim()}
             >
               Gửi
             </button>
           </form>
+          {voiceHint ? (
+            <p className="form-error" style={{ margin: '0 0.9rem 0.75rem' }}>
+              {voiceHint}
+            </p>
+          ) : null}
         </section>
       </main>
-    </CitizenShell>
+    </CitizenLayout>
   )
 }

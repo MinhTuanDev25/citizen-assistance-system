@@ -80,6 +80,7 @@ func TestOpenAPIMatchesHandlers(t *testing.T) {
 	assertTurnsPost(t, doc)
 	assertProcedureDetailGet(t, doc, pathByCodeGet)
 	assertProcedureDetailGet(t, doc, pathActiveVersion)
+	assertAdminActivation(t, doc)
 
 	yamlBytes, err := os.ReadFile(yamlPath)
 	if err != nil {
@@ -96,6 +97,7 @@ func TestOpenAPIMatchesHandlers(t *testing.T) {
 	assertTurnsPost(t, yamlDoc)
 	assertProcedureDetailGet(t, yamlDoc, pathByCodeGet)
 	assertProcedureDetailGet(t, yamlDoc, pathActiveVersion)
+	assertAdminActivation(t, yamlDoc)
 
 	docsGo, err := os.ReadFile(docsGoPath)
 	if err != nil {
@@ -118,6 +120,9 @@ func TestOpenAPIMatchesHandlers(t *testing.T) {
 	}
 	if !strings.Contains(docsStr, "403") {
 		t.Error("docs.go embed missing 403 responses for procedure detail")
+	}
+	if !strings.Contains(docsStr, "/api/v1/admin/procedures/{procedureId}/versions/{versionId}/activate") {
+		t.Error("docs.go embed missing admin activate path")
 	}
 }
 
@@ -217,5 +222,30 @@ func assertProcedureDetailGet(t *testing.T, doc swaggerDoc, path string) {
 		if !strings.Contains(combined, needle) {
 			t.Errorf("%s GET docs must describe scope including %q; got: %s", path, needle, combined)
 		}
+	}
+}
+
+func assertAdminActivation(t *testing.T, doc swaggerDoc) {
+	t.Helper()
+	list := "/api/v1/admin/procedures"
+	if _, ok := doc.Paths[list]; !ok || doc.Paths[list].Get == nil {
+		t.Fatalf("missing GET %s", list)
+	}
+	activate := "/api/v1/admin/procedures/{procedureId}/versions/{versionId}/activate"
+	methods, ok := doc.Paths[activate]
+	if !ok || methods.Post == nil {
+		t.Fatalf("missing POST %s", activate)
+	}
+	for _, code := range []string{"200", "401", "403", "409", "422"} {
+		if _, has := methods.Post.Responses[code]; !has {
+			t.Errorf("%s missing response %s", activate, code)
+		}
+	}
+	text := strings.ToLower(methods.Post.Summary + " " + methods.Post.Description)
+	for _, p := range methods.Post.Parameters {
+		text += " " + strings.ToLower(p.Name+" "+p.Description)
+	}
+	if !strings.Contains(text, "x-request-id") && !strings.Contains(text, "idempotency") {
+		t.Errorf("%s must document idempotency", activate)
 	}
 }

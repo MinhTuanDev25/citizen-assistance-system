@@ -13,7 +13,7 @@ Không cần key để viết code của phase 2, 4 và 5. Key và file model ch
 | 1 | Bật màn admin đã viết | Đã chạy local. Biên bản ở report phase 1–3 |
 | 2 | Sửa nhận câu từ khóa | Đã chạy local. Câu mẫu chỉ còn hỏi người đi đăng ký |
 | 3 | Index PDF bằng model thật | Đã index fp32 + Paddle trên ARM64. Smoke fixture chữ in `P4B_DONE`. RunPod S3 chưa chạy |
-| 4 | Activate | Viết API và nút. Một PDF đã `READY` để bấm thử |
+| 4 | Activate | Local acceptance 2026-10-13. `PHASE_4_STATUS=PASS` trên `cas_p4_test` + E5/Qdrant + browser UI. Chưa production-ready |
 | 5 | RAG, citation từ PDF | Cùng weight embedding phase 3 |
 | 6 | LLM extract thật | `OPENAI_API_KEY` hoặc `GEMINI_API_KEY` |
 | 7 | Giọng Bahnar | Model đã chọn từ kết quả nghiên cứu, checkpoint đã đánh giá, inference thử trên audio Bahnar thật, rồi mới viết API |
@@ -78,9 +78,9 @@ Xong phase này khi `scripts/p4b-model-smoke.py` đọc được weight local, v
 
 ## Phase 4 — Activate
 
-Chưa có route và chưa có nút. Admin đưa phiên bản có PDF `READY` thành `ACTIVE`, phiên bản cũ thành `ARCHIVED`, ghi audit. Chat công dân chỉ đọc definition `ACTIVE`.
+Code đã có: API admin, nút kích hoạt trên `/admin/procedures`, candidate APPROVED, eligibility theo generation đã publish, transaction atomic, idempotency, audit, session pin. Chi tiết [`PHASE_4_ACTIVATION_COMPLETION_REPORT.md`](PHASE_4_ACTIVATION_COMPLETION_REPORT.md), vận hành [`PHASE_4_ACTIVATION_RUNBOOK.md`](PHASE_4_ACTIVATION_RUNBOOK.md).
 
-Cần viết API và một nút trên `/admin`. Không cần key LLM hay checkpoint. Cần một PDF đã `READY` từ phase 1 hoặc phase 3 để bấm thử. Từ phase này, checklist người dân lấy từ phiên bản cán bộ vừa bật, vẫn là JSON của phiên bản đó.
+`PHASE_4_CODE_COMPLETE=true`. `PHASE_4_STATUS=PASS` (local, isolated `cas_p4_test`). Integration A–H PASS. Real PDF native + E5-small 384 + Qdrant PASS. Browser UI hiển thị V2 ACTIVE / V1 ARCHIVED. PaddleOCR scanned PDF `NOT_RUN` (thiếu package). Không production-ready. Handoff retrieve: [`PHASE_4_ACTIVATION_RUNBOOK.md`](PHASE_4_ACTIVATION_RUNBOOK.md).
 
 ## Phase 5 — RAG và citation từ PDF
 

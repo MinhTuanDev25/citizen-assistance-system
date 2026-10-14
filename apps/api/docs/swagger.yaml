@@ -2,55 +2,7 @@ basePath: /
 consumes:
 - application/json
 definitions:
-  authapi.loginRequest:
-    properties:
-      email:
-        type: string
-      password:
-        type: string
-    required:
-    - email
-    - password
-    type: object
-  authapi.registerRequest:
-    properties:
-      email:
-        type: string
-      full_name:
-        type: string
-      password:
-        type: string
-    required:
-    - email
-    - full_name
-    - password
-    type: object
-  documentapi.DocumentLinkRequest:
-    properties:
-      page_range:
-        type: string
-      procedure_version_id:
-        type: string
-      relationship_type:
-        type: string
-    type: object
-  handler.liveResponse:
-    properties:
-      status:
-        example: OK
-        type: string
-    type: object
-  handler.readyResponse:
-    properties:
-      checks:
-        additionalProperties:
-          type: string
-        type: object
-      status:
-        example: READY
-        type: string
-    type: object
-  repository.DomainCreate:
+  github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_repository.DomainCreate:
     properties:
       description:
         type: string
@@ -66,7 +18,7 @@ definitions:
     - id
     - name
     type: object
-  repository.DomainUpdate:
+  github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_repository.DomainUpdate:
     properties:
       description:
         type: string
@@ -77,29 +29,61 @@ definitions:
       sort_order:
         type: integer
     type: object
-  response.Envelope:
+  github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope:
     properties:
       data: {}
       error:
-        $ref: '#/definitions/response.Error'
+        $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Error'
       request_id:
         type: string
     type: object
-  response.Error:
+  github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Error:
     properties:
       code:
         type: string
       message:
         type: string
     type: object
-  session.createMessageRequest:
+  internal_api_http_v1_auth.loginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - password
+    type: object
+  internal_api_http_v1_auth.registerRequest:
+    properties:
+      email:
+        type: string
+      full_name:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    - full_name
+    - password
+    type: object
+  internal_api_http_v1_document.DocumentLinkRequest:
+    properties:
+      page_range:
+        type: string
+      procedure_version_id:
+        type: string
+      relationship_type:
+        type: string
+    type: object
+  internal_api_http_v1_session.createMessageRequest:
     properties:
       message:
         type: string
     required:
     - message
     type: object
-  session.createRequest:
+  internal_api_http_v1_session.createRequest:
     properties:
       guest_token:
         type: string
@@ -107,6 +91,22 @@ definitions:
         type: string
     required:
     - xa_id
+    type: object
+  internal_handler.liveResponse:
+    properties:
+      status:
+        example: OK
+        type: string
+    type: object
+  internal_handler.readyResponse:
+    properties:
+      checks:
+        additionalProperties:
+          type: string
+        type: object
+      status:
+        example: READY
+        type: string
     type: object
 info:
   contact: {}
@@ -143,23 +143,23 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "422":
           description: Unprocessable Entity
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       security:
       - BearerAuth: []
       summary: List admin documents for this commune
@@ -212,31 +212,31 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "413":
           description: Request Entity Too Large
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "422":
           description: Unprocessable Entity
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       security:
       - BearerAuth: []
       summary: Upload an admin PDF
@@ -256,23 +256,23 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       security:
       - BearerAuth: []
       summary: Get one admin document
@@ -296,19 +296,19 @@ paths:
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       security:
       - BearerAuth: []
       summary: Download the stored PDF
@@ -331,23 +331,23 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       security:
       - BearerAuth: []
       summary: List procedure versions attached to a document
@@ -372,46 +372,46 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/documentapi.DocumentLinkRequest'
+          $ref: '#/definitions/internal_api_http_v1_document.DocumentLinkRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "422":
           description: Unprocessable Entity
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       security:
       - BearerAuth: []
       summary: Attach a document to a procedure version
@@ -441,35 +441,35 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "422":
           description: Unprocessable Entity
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       security:
       - BearerAuth: []
       summary: Detach a document from a procedure version
@@ -499,35 +499,35 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "422":
           description: Unprocessable Entity
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       security:
       - BearerAuth: []
       summary: Claim indexing for one document link
@@ -557,35 +557,35 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "422":
           description: Unprocessable Entity
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       security:
       - BearerAuth: []
       summary: Reindex a READY link without dropping the active generation
@@ -615,35 +615,35 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "422":
           description: Unprocessable Entity
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       security:
       - BearerAuth: []
       summary: Retry one link from FAILED or an expired PROCESSING lease
@@ -657,15 +657,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       security:
       - BearerAuth: []
       summary: Index generation counts for this commune
@@ -679,24 +679,291 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       security:
       - BearerAuth: []
       summary: List procedure versions that can receive a document
       tags:
       - admin-documents
+  /api/v1/admin/procedures:
+    get:
+      description: Admin-only. Server commune scope. Does not use ListActive. Marks
+        seed ACTIVE rows without activated_at as legacy_active.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      security:
+      - BearerAuth: []
+      summary: List commune procedures including versions without ACTIVE
+      tags:
+      - admin-procedures
+  /api/v1/admin/procedures/{procedureId}/activation-history:
+    get:
+      description: Admin-only. Returns PROCEDURE_VERSION_ACTIVATED rows. Citizen/guest
+        cannot call this route.
+      parameters:
+      - description: Procedure UUID
+        in: path
+        name: procedureId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      security:
+      - BearerAuth: []
+      summary: Read-only activation audit for one procedure
+      tags:
+      - admin-procedures
+  /api/v1/admin/procedures/{procedureId}/versions:
+    get:
+      description: Admin-only. Includes APPROVED, INDEXING, ACTIVE, ARCHIVED. Eligibility
+        requires published READY generations, not mock READY.
+      parameters:
+      - description: Procedure UUID
+        in: path
+        name: procedureId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      security:
+      - BearerAuth: []
+      summary: List procedure versions with indexing eligibility
+      tags:
+      - admin-procedures
+    post:
+      consumes:
+      - application/json
+      description: Admin-only. Copies definition from the current ACTIVE version unless
+        definition is supplied. Requires confirm=true. Does not activate.
+      parameters:
+      - description: Procedure UUID
+        in: path
+        name: procedureId
+        required: true
+        type: string
+      - description: Idempotency UUID
+        in: header
+        name: X-Request-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      security:
+      - BearerAuth: []
+      summary: Create an APPROVED candidate procedure version
+      tags:
+      - admin-procedures
+  /api/v1/admin/procedures/{procedureId}/versions/{versionId}:
+    get:
+      description: Admin-only. Reasons include MOCK_INDEX_NOT_PUBLISHED when a link
+        is READY without a published generation.
+      parameters:
+      - description: Procedure UUID
+        in: path
+        name: procedureId
+        required: true
+        type: string
+      - description: Version UUID
+        in: path
+        name: versionId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      security:
+      - BearerAuth: []
+      summary: Get one procedure version, definition, and Activate eligibility
+      tags:
+      - admin-procedures
+  /api/v1/admin/procedures/{procedureId}/versions/{versionId}/activate:
+    post:
+      consumes:
+      - application/json
+      description: Admin-only. Archives the current ACTIVE version, sets the candidate
+        ACTIVE, updates procedures.active_version_id, writes PROCEDURE_VERSION_ACTIVATED.
+        expected_active_version_id is required (null if none). 409 STALE_ACTIVE_VERSION
+        / IDEMPOTENCY_CONFLICT / ACTIVATION_CONFLICT. 422 eligibility codes.
+      parameters:
+      - description: Procedure UUID
+        in: path
+        name: procedureId
+        required: true
+        type: string
+      - description: Version UUID
+        in: path
+        name: versionId
+        required: true
+        type: string
+      - description: Idempotency UUID
+        in: header
+        name: X-Request-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      security:
+      - BearerAuth: []
+      summary: Activate a procedure version atomically
+      tags:
+      - admin-procedures
   /api/v1/auth/login:
     post:
       consumes:
@@ -707,26 +974,26 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/authapi.loginRequest'
+          $ref: '#/definitions/internal_api_http_v1_auth.loginRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: Login (citizen or admin)
       tags:
       - auth
@@ -745,11 +1012,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       security:
       - BearerAuth: []
       summary: Logout (client discards token)
@@ -769,19 +1036,19 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       security:
       - BearerAuth: []
       summary: Current user profile
@@ -797,26 +1064,26 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/authapi.registerRequest'
+          $ref: '#/definitions/internal_api_http_v1_auth.registerRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: Register citizen account
       tags:
       - auth
@@ -833,11 +1100,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: List communes
       tags:
       - communes
@@ -855,15 +1122,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: Get commune by id
       tags:
       - communes
@@ -880,11 +1147,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: List domains
       tags:
       - domains
@@ -897,26 +1164,26 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/repository.DomainCreate'
+          $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_repository.DomainCreate'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: Create domain
       tags:
       - domains
@@ -938,19 +1205,19 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: Delete domain (soft by default)
       tags:
       - domains
@@ -967,15 +1234,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: Get domain by id
       tags:
       - domains
@@ -993,26 +1260,26 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/repository.DomainUpdate'
+          $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_repository.DomainUpdate'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: Update domain
       tags:
       - domains
@@ -1044,23 +1311,23 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: List ACTIVE procedures grouped by domain
       tags:
       - procedures
@@ -1086,23 +1353,23 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: validation error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: citizen JWT requested a procedure outside CitizenDomainIDs
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: not found or guest out-of-scope
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: Get ACTIVE version + definition
       tags:
       - procedures
@@ -1132,23 +1399,23 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: validation error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: citizen JWT requested a procedure outside CitizenDomainIDs
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: not found or guest out-of-scope
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: Resolve procedure by code
       tags:
       - procedures
@@ -1168,26 +1435,26 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/session.createRequest'
+          $ref: '#/definitions/internal_api_http_v1_session.createRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: Create conversation session
       tags:
       - sessions
@@ -1218,27 +1485,27 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: List messages for chat UI
       tags:
       - sessions
@@ -1259,7 +1526,7 @@ paths:
         "410":
           description: Gone
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: Deprecated — use POST /turns
       tags:
       - sessions
@@ -1295,38 +1562,38 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/session.createMessageRequest'
+          $ref: '#/definitions/internal_api_http_v1_session.createMessageRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "409":
           description: Conflict
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/response.Envelope'
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
       summary: Run one citizen chat turn
       tags:
       - sessions
@@ -1338,7 +1605,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/handler.liveResponse'
+            $ref: '#/definitions/internal_handler.liveResponse'
       summary: Liveness probe
       tags:
       - health
@@ -1350,7 +1617,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/handler.readyResponse'
+            $ref: '#/definitions/internal_handler.readyResponse'
         "503":
           description: Service Unavailable
           schema:

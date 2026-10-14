@@ -245,7 +245,7 @@ func (r *SessionRepo) SaveTurn(ctx context.Context, tx pgx.Tx, sessionID uuid.UU
 			INSERT INTO session_slot_states (session_id, procedure_id, procedure_version_id, slot_state)
 			VALUES ($1, $2, $3, $4::jsonb)
 			ON CONFLICT (session_id, procedure_id) DO UPDATE
-			SET procedure_version_id = EXCLUDED.procedure_version_id,
+			SET procedure_version_id = session_slot_states.procedure_version_id,
 			    slot_state = EXCLUDED.slot_state,
 			    updated_at = now()`,
 			sessionID, *in.ProcedureID, *in.VersionID, raw,
@@ -255,7 +255,11 @@ func (r *SessionRepo) SaveTurn(ctx context.Context, tx pgx.Tx, sessionID uuid.UU
 		if _, err := tx.Exec(ctx, `
 			UPDATE conversation_sessions
 			SET active_procedure_id = $2,
-			    active_procedure_version_id = $3,
+			    active_procedure_version_id = CASE
+			      WHEN active_procedure_id IS NULL THEN $3
+			      WHEN active_procedure_id = $2 THEN COALESCE(active_procedure_version_id, $3)
+			      ELSE $3
+			    END,
 			    updated_at = now()
 			WHERE id = $1`,
 			sessionID, *in.ProcedureID, *in.VersionID,

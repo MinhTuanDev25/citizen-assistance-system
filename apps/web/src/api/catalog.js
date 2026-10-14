@@ -59,3 +59,52 @@ export async function getActiveVersion(procedureId) {
     { auth: true },
   )
 }
+
+export async function listAdminProcedures() {
+  return apiRequest('/api/v1/admin/procedures', { auth: true })
+}
+
+export async function listProcedureVersions(procedureId) {
+  return apiRequest(
+    `/api/v1/admin/procedures/${encodeURIComponent(procedureId)}/versions`,
+    { auth: true },
+  )
+}
+
+export async function getProcedureVersion(procedureId, versionId) {
+  return apiRequest(
+    `/api/v1/admin/procedures/${encodeURIComponent(procedureId)}/versions/${encodeURIComponent(versionId)}`,
+    { auth: true },
+  )
+}
+
+export async function createProcedureVersion(procedureId, body, requestId) {
+  return apiRequest(
+    `/api/v1/admin/procedures/${encodeURIComponent(procedureId)}/versions`,
+    {
+      auth: true,
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'X-Request-ID': requestId },
+    },
+  )
+}
+
+export async function activateProcedureVersion(procedureId, versionId, expectedActiveVersionId, requestId) {
+  return apiRequest(
+    `/api/v1/admin/procedures/${encodeURIComponent(procedureId)}/versions/${encodeURIComponent(versionId)}/activate`,
+    {
+      auth: true,
+      method: 'POST',
+      body: JSON.stringify({ expected_active_version_id: expectedActiveVersionId }),
+      headers: { 'X-Request-ID': requestId },
+    },
+  )
+}
+
+export async function listActivationHistory(procedureId) {
+  return apiRequest(
+    `/api/v1/admin/procedures/${encodeURIComponent(procedureId)}/activation-history`,
+    { auth: true },
+  )
+}

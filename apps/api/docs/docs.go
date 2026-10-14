@@ -71,31 +71,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "422": {
                         "description": "Unprocessable Entity",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -174,43 +174,43 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "413": {
                         "description": "Request Entity Too Large",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "422": {
                         "description": "Unprocessable Entity",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -234,19 +234,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -270,25 +270,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -321,31 +321,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -384,25 +384,25 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -436,31 +436,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -502,7 +502,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/documentapi.DocumentLinkRequest"
+                            "$ref": "#/definitions/internal_api_http_v1_document.DocumentLinkRequest"
                         }
                     }
                 ],
@@ -510,55 +510,55 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "422": {
                         "description": "Unprocessable Entity",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -605,49 +605,49 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "422": {
                         "description": "Unprocessable Entity",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -694,49 +694,49 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "422": {
                         "description": "Unprocessable Entity",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -783,49 +783,49 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "422": {
                         "description": "Unprocessable Entity",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -872,49 +872,450 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "422": {
                         "description": "Unprocessable Entity",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/procedures": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin-only. Server commune scope. Does not use ListActive. Marks seed ACTIVE rows without activated_at as legacy_active.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-procedures"
+                ],
+                "summary": "List commune procedures including versions without ACTIVE",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/procedures/{procedureId}/activation-history": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin-only. Returns PROCEDURE_VERSION_ACTIVATED rows. Citizen/guest cannot call this route.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-procedures"
+                ],
+                "summary": "Read-only activation audit for one procedure",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Procedure UUID",
+                        "name": "procedureId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/procedures/{procedureId}/versions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin-only. Includes APPROVED, INDEXING, ACTIVE, ARCHIVED. Eligibility requires published READY generations, not mock READY.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-procedures"
+                ],
+                "summary": "List procedure versions with indexing eligibility",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Procedure UUID",
+                        "name": "procedureId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin-only. Copies definition from the current ACTIVE version unless definition is supplied. Requires confirm=true. Does not activate.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-procedures"
+                ],
+                "summary": "Create an APPROVED candidate procedure version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Procedure UUID",
+                        "name": "procedureId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Idempotency UUID",
+                        "name": "X-Request-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/procedures/{procedureId}/versions/{versionId}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin-only. Reasons include MOCK_INDEX_NOT_PUBLISHED when a link is READY without a published generation.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-procedures"
+                ],
+                "summary": "Get one procedure version, definition, and Activate eligibility",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Procedure UUID",
+                        "name": "procedureId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Version UUID",
+                        "name": "versionId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/procedures/{procedureId}/versions/{versionId}/activate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin-only. Archives the current ACTIVE version, sets the candidate ACTIVE, updates procedures.active_version_id, writes PROCEDURE_VERSION_ACTIVATED. expected_active_version_id is required (null if none). 409 STALE_ACTIVE_VERSION / IDEMPOTENCY_CONFLICT / ACTIVATION_CONFLICT. 422 eligibility codes.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-procedures"
+                ],
+                "summary": "Activate a procedure version atomically",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Procedure UUID",
+                        "name": "procedureId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Version UUID",
+                        "name": "versionId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Idempotency UUID",
+                        "name": "X-Request-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -939,7 +1340,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/authapi.loginRequest"
+                            "$ref": "#/definitions/internal_api_http_v1_auth.loginRequest"
                         }
                     }
                 ],
@@ -947,25 +1348,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -999,13 +1400,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1038,25 +1439,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1081,7 +1482,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/authapi.registerRequest"
+                            "$ref": "#/definitions/internal_api_http_v1_auth.registerRequest"
                         }
                     }
                 ],
@@ -1089,25 +1490,25 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1134,13 +1535,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1168,19 +1569,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1207,13 +1608,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1236,7 +1637,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/repository.DomainCreate"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_repository.DomainCreate"
                         }
                     }
                 ],
@@ -1244,25 +1645,25 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1290,19 +1691,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1332,7 +1733,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/repository.DomainUpdate"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_repository.DomainUpdate"
                         }
                     }
                 ],
@@ -1340,25 +1741,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1390,25 +1791,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1454,31 +1855,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1519,31 +1920,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "validation error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "citizen JWT requested a procedure outside CitizenDomainIDs",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "not found or guest out-of-scope",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1578,31 +1979,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "validation error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "citizen JWT requested a procedure outside CitizenDomainIDs",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "not found or guest out-of-scope",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1634,7 +2035,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/session.createRequest"
+                            "$ref": "#/definitions/internal_api_http_v1_session.createRequest"
                         }
                     }
                 ],
@@ -1642,25 +2043,25 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1707,37 +2108,37 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1767,7 +2168,7 @@ const docTemplate = `{
                     "410": {
                         "description": "Gone",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1819,7 +2220,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/session.createMessageRequest"
+                            "$ref": "#/definitions/internal_api_http_v1_session.createMessageRequest"
                         }
                     }
                 ],
@@ -1827,43 +2228,43 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "403": {
                         "description": "Forbidden",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "409": {
                         "description": "Conflict",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "$ref": "#/definitions/response.Envelope"
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     }
                 }
@@ -1882,7 +2283,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/handler.liveResponse"
+                            "$ref": "#/definitions/internal_handler.liveResponse"
                         }
                     }
                 }
@@ -1901,7 +2302,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/handler.readyResponse"
+                            "$ref": "#/definitions/internal_handler.readyResponse"
                         }
                     },
                     "503": {
@@ -1918,79 +2319,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "authapi.loginRequest": {
-            "type": "object",
-            "required": [
-                "email",
-                "password"
-            ],
-            "properties": {
-                "email": {
-                    "type": "string"
-                },
-                "password": {
-                    "type": "string"
-                }
-            }
-        },
-        "authapi.registerRequest": {
-            "type": "object",
-            "required": [
-                "email",
-                "full_name",
-                "password"
-            ],
-            "properties": {
-                "email": {
-                    "type": "string"
-                },
-                "full_name": {
-                    "type": "string"
-                },
-                "password": {
-                    "type": "string"
-                }
-            }
-        },
-        "documentapi.DocumentLinkRequest": {
-            "type": "object",
-            "properties": {
-                "page_range": {
-                    "type": "string"
-                },
-                "procedure_version_id": {
-                    "type": "string"
-                },
-                "relationship_type": {
-                    "type": "string"
-                }
-            }
-        },
-        "handler.liveResponse": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "type": "string",
-                    "example": "OK"
-                }
-            }
-        },
-        "handler.readyResponse": {
-            "type": "object",
-            "properties": {
-                "checks": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "status": {
-                    "type": "string",
-                    "example": "READY"
-                }
-            }
-        },
-        "repository.DomainCreate": {
+        "github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_repository.DomainCreate": {
             "type": "object",
             "required": [
                 "id",
@@ -2014,7 +2343,7 @@ const docTemplate = `{
                 }
             }
         },
-        "repository.DomainUpdate": {
+        "github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_repository.DomainUpdate": {
             "type": "object",
             "properties": {
                 "description": {
@@ -2031,19 +2360,19 @@ const docTemplate = `{
                 }
             }
         },
-        "response.Envelope": {
+        "github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope": {
             "type": "object",
             "properties": {
                 "data": {},
                 "error": {
-                    "$ref": "#/definitions/response.Error"
+                    "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Error"
                 },
                 "request_id": {
                     "type": "string"
                 }
             }
         },
-        "response.Error": {
+        "github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Error": {
             "type": "object",
             "properties": {
                 "code": {
@@ -2054,7 +2383,55 @@ const docTemplate = `{
                 }
             }
         },
-        "session.createMessageRequest": {
+        "internal_api_http_v1_auth.loginRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "password"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api_http_v1_auth.registerRequest": {
+            "type": "object",
+            "required": [
+                "email",
+                "full_name",
+                "password"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "full_name": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api_http_v1_document.DocumentLinkRequest": {
+            "type": "object",
+            "properties": {
+                "page_range": {
+                    "type": "string"
+                },
+                "procedure_version_id": {
+                    "type": "string"
+                },
+                "relationship_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api_http_v1_session.createMessageRequest": {
             "type": "object",
             "required": [
                 "message"
@@ -2065,7 +2442,7 @@ const docTemplate = `{
                 }
             }
         },
-        "session.createRequest": {
+        "internal_api_http_v1_session.createRequest": {
             "type": "object",
             "required": [
                 "xa_id"
@@ -2076,6 +2453,30 @@ const docTemplate = `{
                 },
                 "xa_id": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_handler.liveResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "example": "OK"
+                }
+            }
+        },
+        "internal_handler.readyResponse": {
+            "type": "object",
+            "properties": {
+                "checks": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "status": {
+                    "type": "string",
+                    "example": "READY"
                 }
             }
         }
