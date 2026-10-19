@@ -1,0 +1,12 @@
+# Configured SHA-256 reference for C0 weights (model.safetensors).
+# Independent of operator serving YAML, but still operator-supplied.
+# A match is REFERENCE_HASH_MATCH, not independent research VERIFIED.
+# Leave empty until hashed on RunPod from:
+#   ASR checkpoint-12500
+#   MT  checkpoint-17500
+# Do not copy asr_weights_sha256 from serving YAML into this file.
+# Empty values mean research_provenance=NOT_VERIFIED.
+# Do not invent hashes.
+
+asr_weights_sha256: ""
+mt_weights_sha256: ""

@@ -1,0 +1,135 @@
+{
+  "model_id": "c0_cascaded",
+  "checkpoint_identity": "missing",
+  "research_provenance": "NOT_VERIFIED",
+  "research_pins_source": null,
+  "pretrained": {
+    "asr": {
+      "architecture": "transformers.Wav2Vec2ForCTC",
+      "processor": "transformers.Wav2Vec2Processor",
+      "pretrained_model_id": "facebook/wav2vec2-xls-r-300m",
+      "pretrained_revision": "1a640f32ac3e39899438a2931f9924c02f080a54",
+      "note": "Base model pin from Notebook 03. Not the fine-tuned ASR identity."
+    },
+    "mt": {
+      "architecture": "transformers.AutoModelForSeq2SeqLM",
+      "pretrained_model_id": "vinai/bartpho-syllable",
+      "pretrained_revision": "36eee8b4d648dd99da56462edcda3c5c97f7f3de",
+      "note": "BARTpho syllable pin from Notebook 04. Not the fine-tuned MT weight identity."
+    }
+  },
+  "tokenizer": {
+    "tokenizer_model_id": "vinai/bartpho-syllable",
+    "tokenizer_revision": "36eee8b4d648dd99da56462edcda3c5c97f7f3de",
+    "tokenizer_source": "hub_pinned_rq1",
+    "tokenizer_parity": "NOT_VERIFIED",
+    "tokenizer_parity_note": "VERIFIED only after load_mt_tokenizer fingerprint matches mt_training_contract.json",
+    "pad_fallback": "pad_token = eos_token when pad_token is missing (load_mt_tokenizer)"
+  },
+  "fine_tuned": {
+    "asr": {
+      "checkpoint": null,
+      "checkpoint_step": null,
+      "expected_checkpoint_step": 12500,
+      "step_name_match": false,
+      "artifacts_present": false,
+      "experiment_id": null,
+      "identity": "missing",
+      "weights_filename": "model.safetensors",
+      "weights_sha256": null,
+      "weights_sha256_status": "NOT_COMPUTED",
+      "configured_hash_match": null,
+      "research_hash_match": null,
+      "research_provenance": "NOT_VERIFIED",
+      "missing_files": [
+        "model.safetensors",
+        "config.json",
+        "vocab.json",
+        "tokenizer_config.json",
+        "preprocessor_config.json"
+      ],
+      "files": [],
+      "trainer_state": {
+        "present": false
+      }
+    },
+    "mt": {
+      "checkpoint": null,
+      "checkpoint_step": null,
+      "expected_checkpoint_step": 17500,
+      "step_name_match": false,
+      "artifacts_present": false,
+      "experiment_id": null,
+      "identity": "missing",
+      "weights_filename": "model.safetensors",
+      "weights_sha256": null,
+      "weights_sha256_status": "NOT_COMPUTED",
+      "configured_hash_match": null,
+      "research_hash_match": null,
+      "research_provenance": "NOT_VERIFIED",
+      "missing_files": [
+        "model.safetensors",
+        "config.json",
+        "tokenizer_config.json",
+        "sentencepiece.bpe.model",
+        "dict.txt",
+        "generation_config.json"
+      ],
+      "files": [],
+      "trainer_state": {
+        "present": false
+      }
+    }
+  },
+  "decoding": {
+    "asr": "argmax over CTC logits, processor.batch_decode, normalize_bahnar_ctc_v1",
+    "mt_input": "normalize_bahnar_ctc_v1",
+    "mt_output": "normalize_mt_text_v1",
+    "generation": {
+      "max_source_length": 256,
+      "generation_max_length": 256,
+      "num_beams": 4,
+      "matches_rq1": true,
+      "source": "configs/mt.yaml locked Notebook 04 contract"
+    },
+    "dtype": "from_pretrained default; evaluation does not cast dtype"
+  },
+  "audio": {
+    "research": {
+      "sample_rate_hz": 16000,
+      "channels": "mono mean if the file has more than one channel",
+      "dtype": "float32",
+      "resample": false,
+      "constraint": "soundfile read must already be 16000 Hz; other rates are rejected"
+    },
+    "serving": {
+      "max_audio_duration_seconds": 30,
+      "max_audio_bytes": 10485760,
+      "note": "Duration and size caps are CLI serving policy, not an RQ1 metric contract."
+    }
+  },
+  "runtime": {
+    "device": "cpu",
+    "required_dependencies": {
+      "torch": "2.8.0",
+      "transformers": "4.57.6",
+      "accelerate": "1.10.1"
+    },
+    "installed_dependencies": {
+      "torch": null,
+      "transformers": null,
+      "accelerate": null
+    },
+    "installed_match_required": {
+      "torch": false,
+      "transformers": false,
+      "accelerate": false
+    }
+  },
+  "excluded_training_files": [
+    "optimizer.pt",
+    "scheduler.pt",
+    "rng_state.pth",
+    "trainer_state.json"
+  ]
+}

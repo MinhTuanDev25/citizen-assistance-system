@@ -1,0 +1,13 @@
+# Inference subset copied from bahnar-s2tt-thesis/requirements.txt.
+# Exact pins exist only where that file already pins them.
+# This is not a newly resolved pip freeze.
+numpy>=1.24,<2.3
+pandas>=2.0,<3
+PyYAML>=6.0,<7
+soundfile>=0.12.1,<1
+torch==2.8.0
+transformers==4.57.6
+accelerate==1.10.1
+safetensors>=0.4,<1
+tokenizers>=0.15,<1
+sentencepiece>=0.2,<1

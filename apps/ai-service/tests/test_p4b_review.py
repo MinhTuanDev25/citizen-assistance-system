@@ -285,6 +285,24 @@ def test_page_cap_runs_before_extract_text(monkeypatch):
     assert calls["n"] == 0
 
 
+def test_page_range_limit_counts_selected_pages(monkeypatch):
+    class Page:
+        def extract_text(self):
+            return "native text that is definitely long enough"
+
+    class Reader:
+        is_encrypted = False
+
+        def __init__(self, _buffer):
+            self.pages = [Page() for _ in range(8)]
+
+    import pypdf
+
+    monkeypatch.setattr(pypdf, "PdfReader", Reader)
+    pages = read_selected_pages(b"%PDF-1.4\n", 1000, 2, "7-8")
+    assert [number for number, _ in pages] == [7, 8]
+
+
 def test_bounded_stream_stops_early():
     def chunks():
         yield b"a" * 10
@@ -338,12 +356,11 @@ def test_manifest_rejects_wrong_revision_quantization_and_checksum(tmp_path):
     assert quant.value.code == "embedding_checksum_mismatch"
 
 
-def test_routes_do_not_add_retrieval_or_activate():
+def test_retrieve_stays_internal_to_ai_service():
     root = Path(__file__).resolve().parents[3]
     routes = (root / "apps/api/internal/api/http/v1/routes.go").read_text(encoding="utf-8")
     main = (root / "apps/ai-service/app/main.py").read_text(encoding="utf-8")
     assert "/retrieve" not in routes
     assert "/rag" not in routes
-    assert "Activate" not in routes
-    assert "/v1/retrieve" not in main
+    assert "/v1/retrieve" in main
     assert "/v1/chat" not in main

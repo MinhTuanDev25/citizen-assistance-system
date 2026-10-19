@@ -41,6 +41,8 @@ type Config struct {
 	AIIntentSelectMin   float64
 	AIIntentConfirmMin  float64
 	AISlotConfidenceMin float64
+	AIRetrieveEnabled   bool
+	AIRetrieveTimeoutMS int
 
 	// Admin PDF intake (P3.1). Off by default: the API does not open object storage.
 	AdminIngestionEnabled         bool
@@ -67,6 +69,10 @@ const DocumentMaxHardBytes int64 = 64 << 20
 // AIExtractTimeoutHardMaxMS matches aiextract.HardMaxTimeout. A configured
 // timeout above this is a startup error, not a silent clamp.
 const AIExtractTimeoutHardMaxMS = 8000
+
+// AIRetrieveTimeoutHardMaxMS is the retrieve ceiling. Local ONNX cold start
+// can exceed 3s; 10000 is a test value, not a production default.
+const AIRetrieveTimeoutHardMaxMS = 10000
 
 type fileConfig struct {
 	Server struct {
@@ -137,6 +143,8 @@ func Load() (Config, error) {
 		AIIntentSelectMin:             0.82,
 		AIIntentConfirmMin:            0.55,
 		AISlotConfidenceMin:           0.6,
+		AIRetrieveEnabled:             false,
+		AIRetrieveTimeoutMS:           3000,
 		IndexMode:                     "mock",
 		IndexClaimTTL:                 30 * time.Second,
 		IndexTimeout:                  3 * time.Second,
@@ -372,6 +380,17 @@ func validateAIConfig(cfg Config) error {
 			return fmt.Errorf("AI_SERVICE_TOKEN is required when AI_EXTRACT_ENABLED=true")
 		}
 	}
+	if cfg.AIRetrieveTimeoutMS <= 0 || cfg.AIRetrieveTimeoutMS > AIRetrieveTimeoutHardMaxMS {
+		return fmt.Errorf("AI_RETRIEVE_TIMEOUT_MS must be in (0, %d]", AIRetrieveTimeoutHardMaxMS)
+	}
+	if cfg.AIRetrieveEnabled {
+		if strings.TrimSpace(cfg.AIServiceURL) == "" {
+			return fmt.Errorf("AI_SERVICE_URL is required when AI_RETRIEVE_ENABLED=true")
+		}
+		if token == "" {
+			return fmt.Errorf("AI_SERVICE_TOKEN is required when AI_RETRIEVE_ENABLED=true")
+		}
+	}
 	return nil
 }
 
@@ -428,6 +447,23 @@ func applyEnvOverrides(cfg *Config) error {
 		if len(ids) > 0 {
 			cfg.CitizenDomainIDs = ids
 		}
+	}
+	if v, ok := os.LookupEnv("AI_RETRIEVE_ENABLED"); ok && strings.TrimSpace(v) != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			cfg.AIRetrieveEnabled = true
+		case "0", "false", "no", "off":
+			cfg.AIRetrieveEnabled = false
+		default:
+			return fmt.Errorf("AI_RETRIEVE_ENABLED must be true or false")
+		}
+	}
+	if v, ok := os.LookupEnv("AI_RETRIEVE_TIMEOUT_MS"); ok && strings.TrimSpace(v) != "" {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("AI_RETRIEVE_TIMEOUT_MS must be an integer")
+		}
+		cfg.AIRetrieveTimeoutMS = n
 	}
 	if v, ok := os.LookupEnv("AI_EXTRACT_ENABLED"); ok && strings.TrimSpace(v) != "" {
 		switch strings.ToLower(strings.TrimSpace(v)) {

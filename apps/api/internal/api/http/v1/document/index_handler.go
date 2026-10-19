@@ -244,6 +244,10 @@ func (h *Handler) Reindex(c *gin.Context) {
 	h.runIndex(c, false, true)
 }
 
+type reindexRequest struct {
+	PageRange *string `json:"page_range"`
+}
+
 // IndexMetrics godoc
 //
 //	@Summary	Index generation counts for this commune
@@ -276,11 +280,21 @@ func (h *Handler) runIndex(c *gin.Context, retry bool, reindex bool) {
 	if !ok {
 		return
 	}
+	var pageRange *string
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
-		var discard struct{}
-		if err := index.DecodeStrict(c.Request.Body, &discard); err != nil {
-			response.Fail(c, http.StatusBadRequest, "BAD_REQUEST", "invalid request body")
-			return
+		if reindex {
+			var body reindexRequest
+			if err := index.DecodeStrict(c.Request.Body, &body); err != nil {
+				response.Fail(c, http.StatusBadRequest, "BAD_REQUEST", "invalid request body")
+				return
+			}
+			pageRange = body.PageRange
+		} else {
+			var discard struct{}
+			if err := index.DecodeStrict(c.Request.Body, &discard); err != nil {
+				response.Fail(c, http.StatusBadRequest, "BAD_REQUEST", "invalid request body")
+				return
+			}
 		}
 	}
 	id, err := uuid.Parse(c.Param("id"))
@@ -293,9 +307,11 @@ func (h *Handler) runIndex(c *gin.Context, retry bool, reindex bool) {
 		response.Fail(c, http.StatusNotFound, "NOT_FOUND", "document link not found")
 		return
 	}
-	result, err := h.Index.Request(c.Request.Context(), id, versionID, actor, requestID, retry)
+	var result index.Result
 	if reindex {
-		result, err = h.Index.Reindex(c.Request.Context(), id, versionID, actor, requestID)
+		result, err = h.Index.Reindex(c.Request.Context(), id, versionID, actor, requestID, pageRange)
+	} else {
+		result, err = h.Index.Request(c.Request.Context(), id, versionID, actor, requestID, retry)
 	}
 	if err != nil {
 		writeIndexErr(c, err)

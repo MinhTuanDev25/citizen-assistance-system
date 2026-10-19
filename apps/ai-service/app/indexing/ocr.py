@@ -15,12 +15,13 @@ MAX_PIXELS = 4_000_000
 
 
 class FakeRenderer:
-    def __init__(self) -> None:
+    def __init__(self, blank: bool = True) -> None:
         self.calls: list[int] = []
+        self.blank = blank
 
     def render(self, _data: bytes, page_number: int, dpi: int):
         self.calls.append(page_number)
-        return {"page": page_number, "dpi": dpi}
+        return {"page": page_number, "dpi": dpi, "blank": self.blank}
 
 
 class PdfiumRenderer:
@@ -51,12 +52,30 @@ class PdfiumRenderer:
         return image[:, :, :3]
 
 
+VIETNAMESE_REC_PROBE = "ăơư"
+
+
+def rec_dict_supports_vietnamese(model_dir: str | None) -> bool:
+    """True only when the recognition charset includes core Vietnamese letters."""
+    if not model_dir:
+        return False
+    keys = Path(model_dir) / "ppocr_keys_v1.txt"
+    if not keys.is_file():
+        return False
+    try:
+        blob = keys.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return all(ch in blob for ch in VIETNAMESE_REC_PROBE)
+
+
 class FakeOCR:
-    def __init__(self, text: str = "trang scan") -> None:
+    def __init__(self, text: str = "trang scan", vietnamese_capable: bool = False) -> None:
         self.text = text
         self.calls: list[int] = []
         self.images: list = []
         self.version = "fake-ocr-1"
+        self.vietnamese_capable = vietnamese_capable
 
     def read_page(self, image, page_number: int, timeout_s: float = 30, deadline=None) -> str:
         del timeout_s
@@ -115,6 +134,7 @@ class PaddleOCR:
         keys = root / "ppocr_keys_v1.txt"
         if keys.is_file():
             kwargs["rec_char_dict_path"] = str(keys)
+        self.vietnamese_capable = rec_dict_supports_vietnamese(str(root))
         self._engine = Engine(**kwargs)
 
     def read_page(self, image, page_number: int, timeout_s: float = 30, deadline=None) -> str:

@@ -1,5 +1,6 @@
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
+import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.stubEnv('VITE_ADMIN_INDEXING', 'true')
@@ -85,7 +86,7 @@ describe('DocumentsPage per-link indexing', () => {
     document.body.appendChild(host)
     const root = createRoot(host)
     await act(async () => {
-      root.render(createElement(DocumentsPage))
+      root.render(createElement(MemoryRouter, null, createElement(DocumentsPage)))
     })
     await act(async () => {
       await Promise.resolve()
@@ -96,7 +97,9 @@ describe('DocumentsPage per-link indexing', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    expect(host.textContent).toContain('chung_thuc · 1.0.0 · UPLOADED')
+    expect(host.textContent).toContain('Chứng thực · 1.0.0')
+    expect(host.textContent).toContain('Đã tải')
+    expect(host.textContent).not.toContain('chung_thuc · 1.0.0 · UPLOADED')
     expect(host.textContent).not.toContain('Activate')
     const indexButton = buttonNamed(host, 'Lập chỉ mục')
     await act(async () => {
@@ -109,8 +112,9 @@ describe('DocumentsPage per-link indexing', () => {
     const indexCalls = apiRequest.mock.calls.filter((call) => String(call[0]).endsWith('/links/ver-1/index'))
     expect(indexCalls).toHaveLength(1)
     expect(indexCalls[0][1].method).toBe('POST')
-    expect(host.textContent).toContain('FAILED')
-    expect(host.textContent).toContain('mock_failed')
+    expect(host.textContent).toContain('Lỗi')
+    expect(host.textContent).toContain('Thử lại hoặc bỏ liên kết')
+    expect(host.textContent).not.toContain('mock_failed')
     await act(async () => {
       buttonNamed(host, 'Thử lại lập chỉ mục').click()
     })
@@ -118,7 +122,7 @@ describe('DocumentsPage per-link indexing', () => {
       await Promise.resolve()
     })
     expect(apiRequest.mock.calls.some((call) => String(call[0]).endsWith('/links/ver-1/index/retry'))).toBe(true)
-    expect(host.textContent).toContain('READY')
+    expect(host.textContent).toContain('Sẵn sàng')
     expect(host.textContent).toContain('Lập lại chỉ mục')
     await act(async () => {
       buttonNamed(host, 'Lập lại chỉ mục').click()
@@ -152,7 +156,7 @@ describe('DocumentsPage per-link indexing', () => {
     document.body.appendChild(host)
     const root = createRoot(host)
     await act(async () => {
-      root.render(createElement(DocumentsPage))
+      root.render(createElement(MemoryRouter, null, createElement(DocumentsPage)))
     })
     await act(async () => {
       buttonNamed(host, 'Chi tiết').click()
@@ -160,7 +164,7 @@ describe('DocumentsPage per-link indexing', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    expect(host.textContent).toContain('PROCESSING')
+    expect(host.textContent).toContain('Đang xử lý')
     expect(buttonNamed(host, 'Bỏ liên kết')).toBeUndefined()
     expect(buttonNamed(host, 'Thử lại lập chỉ mục')).toBeTruthy()
     expect(host.textContent).not.toContain('Activate')
@@ -207,7 +211,7 @@ describe('DocumentsPage per-link indexing', () => {
     document.body.appendChild(host)
     const root = createRoot(host)
     await act(async () => {
-      root.render(createElement(DocumentsPage))
+      root.render(createElement(MemoryRouter, null, createElement(DocumentsPage)))
     })
     await act(async () => {
       buttonNamed(host, 'Chi tiết').click()
@@ -235,6 +239,31 @@ describe('DocumentsPage per-link indexing', () => {
     act(() => root.unmount())
   })
 
+  it('explains a timeout failure without exposing the error code', async () => {
+    links = [{
+      ...uploadedLink,
+      index_status: 'FAILED',
+      recoverable: true,
+      last_error_code: 'timeout',
+    }]
+    const { default: DocumentsPage } = await import('./DocumentsPage.jsx')
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    await act(async () => {
+      root.render(createElement(MemoryRouter, null, createElement(DocumentsPage)))
+    })
+    await act(async () => {
+      buttonNamed(host, 'Chi tiết').click()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(host.textContent).toContain('Lập chỉ mục quá thời gian')
+    expect(host.textContent).not.toContain('timeout')
+    act(() => root.unmount())
+  })
+
   it('shows pipeline stats for one link and no search or Activate', async () => {
     links = [{
       ...uploadedLink,
@@ -250,7 +279,7 @@ describe('DocumentsPage per-link indexing', () => {
     document.body.appendChild(host)
     const root = createRoot(host)
     await act(async () => {
-      root.render(createElement(DocumentsPage))
+      root.render(createElement(MemoryRouter, null, createElement(DocumentsPage)))
     })
     await act(async () => {
       await Promise.resolve()
@@ -263,11 +292,34 @@ describe('DocumentsPage per-link indexing', () => {
     })
     expect(host.textContent).toContain('2 trang')
     expect(host.textContent).toContain('3 đoạn')
-    expect(host.textContent).toContain('OCR 1')
-    expect(host.textContent).toContain('p4b.1')
-    expect(host.textContent).toContain('intfloat/multilingual-e5-small')
+    expect(host.textContent).not.toContain('OCR 1')
+    expect(host.textContent).not.toContain('p4b.1')
+    expect(host.textContent).not.toContain('intfloat/multilingual-e5-small')
     expect(host.textContent).not.toContain('Activate')
     expect(buttonNamed(host, 'Tìm kiếm')).toBeUndefined()
+    act(() => root.unmount())
+  })
+
+  it('shows page_range on a READY link', async () => {
+    links = [{ ...uploadedLink, index_status: 'READY', page_range: '10-21' }]
+    const { default: DocumentsPage } = await import('./DocumentsPage.jsx')
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    await act(async () => {
+      root.render(createElement(MemoryRouter, null, createElement(DocumentsPage)))
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    await act(async () => {
+      buttonNamed(host, 'Chi tiết').click()
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(host.textContent).toContain('trang 10-21')
+    expect(host.querySelector('input[name="page_range"]')).toBeTruthy()
     act(() => root.unmount())
   })
 })

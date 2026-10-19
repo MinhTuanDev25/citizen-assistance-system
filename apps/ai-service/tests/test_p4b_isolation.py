@@ -125,6 +125,7 @@ def test_guard_accepts_only_the_pinned_test_stack():
     assert target["bucket"] == "cas-p4b-integration-test"
     assert target["qdrant_url"] == "http://127.0.0.1:6335"
     assert require_test_collection("p4b_test") == "p4b_test"
+    assert require_test_collection("p4b_e5") == "p4b_e5"
     assert isolated_p4b_targets(COMPLETE)["compose_project"] == "citizen-assistance-p4b-test"
 
 

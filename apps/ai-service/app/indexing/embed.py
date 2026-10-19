@@ -260,21 +260,25 @@ class OnnxEmbedder:
     def embed(self, text: str) -> list[float]:
         return self.embed_batch([text])[0]
 
+    def embed_query(self, text: str, deadline=None) -> list[float]:
+        if deadline is not None:
+            deadline.check()
+        return self._run([text], prefix=QUERY_PREFIX)[0]
+
     def embed_batch(self, texts: list[str], deadline=None) -> list[list[float]]:
         if deadline is not None:
             deadline.check()
         out: list[list[float]] = []
         for start in range(0, len(texts), self.batch_size):
-            out.extend(self._run(texts[start : start + self.batch_size]))
+            out.extend(self._run(texts[start : start + self.batch_size], prefix=PASSAGE_PREFIX))
         return out
 
-    def _run(self, texts: list[str]) -> list[list[float]]:
+    def _run(self, texts: list[str], prefix: str = PASSAGE_PREFIX) -> list[list[float]]:
         import numpy as np
 
-        for text in texts:
-            if self.count_tokens(text) > E5_MAX_TOKENS:
-                raise IndexFailure("chunk_limit")
-        encoded = [self._tokenizer.encode(PASSAGE_PREFIX + text, add_special_tokens=True) for text in texts]
+        encoded = [self._tokenizer.encode(prefix + text, add_special_tokens=True) for text in texts]
+        if any(len(item.ids) > E5_MAX_TOKENS for item in encoded):
+            raise IndexFailure("chunk_limit")
         width = max(len(item.ids) for item in encoded)
         ids = np.zeros((len(encoded), width), dtype=np.int64)
         mask = np.zeros((len(encoded), width), dtype=np.int64)
@@ -491,8 +495,15 @@ class OnnxProcess:
     def split_text(self, text: str, limit: int, deadline=None) -> list[str]:
         return split_to_limit(self, text, limit, deadline)
 
-    def embed_batch(self, texts: list[str], deadline=None, timeout_s: float = 60) -> list[list[float]]:
-        msg = self._call({"op": "embed", "texts": texts}, timeout_s, deadline)
+    def embed_batch(self, texts: list[str], deadline=None, timeout_s: float | None = None) -> list[list[float]]:
+        # The 60s default is a hang detector for a single IPC. When a pipeline
+        # deadline is set, wait for the remaining budget so a large PDF is not
+        # killed after one slow batch (the old 60s+retry path returned timeout
+        # at ~130s with chunks=0).
+        wait = 60.0 if timeout_s is None else float(timeout_s)
+        if timeout_s is None and deadline is not None:
+            wait = deadline.timeout_for_io()
+        msg = self._call({"op": "embed", "texts": texts}, wait, deadline)
         return msg["vectors"]
 
     def shutdown(self) -> None:

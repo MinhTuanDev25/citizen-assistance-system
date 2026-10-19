@@ -1,5 +1,6 @@
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
+import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { isUnknownActivationOutcome } from './ProceduresPage.jsx'
 
@@ -53,7 +54,7 @@ async function renderPage() {
   const host = document.createElement('div')
   document.body.appendChild(host)
   await act(async () => {
-    createRoot(host).render(createElement(Page))
+    createRoot(host).render(createElement(MemoryRouter, null, createElement(Page)))
     await Promise.resolve()
   })
   return host
@@ -76,7 +77,7 @@ async function openConfirm(host) {
 
 async function confirm(host) {
   await act(async () => {
-    buttonNamed(host, 'Xác nhận kích hoạt').click()
+    buttonNamed(host, 'Xác nhận').click()
     await Promise.resolve()
   })
 }
@@ -110,8 +111,29 @@ describe('ProceduresPage activation', () => {
     await openVersions(host)
     expect(host.textContent).toContain('2.0.0')
     expect(buttonNamed(host, 'Kích hoạt')).toBeTruthy()
-    expect(host.textContent).toMatch(/seed|ACTIVE/)
-    expect(host.textContent).toContain('Phiên bản đang ACTIVE.')
+    expect(host.textContent).toContain('dữ liệu mẫu')
+    expect(host.textContent).toContain('Phiên bản này đang được dùng.')
+  })
+
+  it('names the failed document instead of SOURCE jargon', async () => {
+    api.listProcedureVersions.mockResolvedValue({
+      items: [{
+        id: 'v2',
+        version: '2.2.2',
+        status: 'APPROVED',
+        documents: [
+          { document_id: 'd1', title: 'hi', index_status: 'READY' },
+          { document_id: 'd2', title: 'Test nè', index_status: 'FAILED' },
+        ],
+        eligibility: { can_activate: false, reasons: ['DOCUMENT_INDEX_FAILED', 'PARTIAL_SOURCE_INDEX'] },
+      }],
+    })
+    const host = await renderPage()
+    await openVersions(host)
+    expect(host.textContent).toContain('«Test nè» lỗi')
+    expect(host.textContent).toContain('hi · Sẵn sàng')
+    expect(host.textContent).not.toContain('SOURCE')
+    expect(host.textContent).not.toContain('DOCUMENT_INDEX_FAILED')
   })
 
   it('confirms activate once and blocks double click', async () => {
@@ -123,10 +145,11 @@ describe('ProceduresPage activation', () => {
     )
     const host = await renderPage()
     await openConfirm(host)
-    expect(host.textContent).toContain('Xác nhận kích hoạt')
+    expect(host.textContent).toContain('Chuyển phiên bản đang dùng?')
+    expect(host.textContent).not.toContain('X-Request-ID')
     await act(async () => {
-      buttonNamed(host, 'Xác nhận kích hoạt').click()
-      buttonNamed(host, 'Xác nhận kích hoạt')?.click()
+      buttonNamed(host, 'Xác nhận').click()
+      buttonNamed(host, 'Xác nhận')?.click()
       await Promise.resolve()
     })
     expect(api.activateProcedureVersion).toHaveBeenCalledTimes(1)
@@ -154,10 +177,10 @@ describe('ProceduresPage activation', () => {
     const host = await renderPage()
     await openConfirm(host)
     await confirm(host)
-    expect(host.textContent).toContain('Đã kích hoạt phiên bản mới')
+    expect(host.textContent).toContain('Đã chuyển sang phiên bản mới')
     expect(host.textContent).not.toContain('Kích hoạt thất bại')
     expect(host.textContent).toContain('2.0.0')
-    expect(host.textContent).toContain('ACTIVE')
+    expect(host.textContent).toContain('Đang dùng')
     expect(host.querySelector('[role="dialog"]')).toBeNull()
   })
 
@@ -171,7 +194,7 @@ describe('ProceduresPage activation', () => {
     const host = await renderPage()
     await openConfirm(host)
     await confirm(host)
-    expect(host.textContent).toContain('Đã kích hoạt phiên bản mới')
+    expect(host.textContent).toContain('Đã chuyển sang phiên bản mới')
     expect(host.textContent).toContain('chưa tải lại được dữ liệu mới')
     expect(host.textContent).not.toContain('Kích hoạt thất bại')
   })
@@ -192,7 +215,7 @@ describe('ProceduresPage activation', () => {
     const host = await renderPage()
     await openConfirm(host)
     await confirm(host)
-    expect(host.textContent).toContain('Đã kích hoạt phiên bản mới')
+    expect(host.textContent).toContain('Đã chuyển sang phiên bản mới')
     expect(host.textContent).toContain('chưa tải lại được lịch sử')
     expect(host.textContent).not.toContain('Kích hoạt thất bại')
   })
@@ -205,8 +228,8 @@ describe('ProceduresPage activation', () => {
     const host = await renderPage()
     await openConfirm(host)
     await confirm(host)
-    expect(host.textContent).toContain('Phiên bản ACTIVE đã đổi')
-    expect(host.textContent).not.toContain('Đã kích hoạt phiên bản mới')
+    expect(host.textContent).toContain('Phiên bản đang dùng đã đổi')
+    expect(host.textContent).not.toContain('Đã chuyển sang phiên bản mới')
   })
 
   it('shows 422 identity mismatch in Vietnamese', async () => {
@@ -217,8 +240,8 @@ describe('ProceduresPage activation', () => {
     const host = await renderPage()
     await openConfirm(host)
     await confirm(host)
-    expect(host.textContent).toContain('Definition không khớp mã thủ tục')
-    expect(host.textContent).not.toContain('Đã kích hoạt phiên bản mới')
+    expect(host.textContent).toContain('Nội dung hướng dẫn không khớp thủ tục')
+    expect(host.textContent).not.toContain('Đã chuyển sang phiên bản mới')
   })
 
   it('treats activate timeout as unknown and retries the same request id', async () => {
@@ -235,14 +258,15 @@ describe('ProceduresPage activation', () => {
     const host = await renderPage()
     await openConfirm(host)
     await confirm(host)
-    expect(host.textContent).toContain('Chưa xác định được kết quả kích hoạt')
+    expect(host.textContent).toContain('Chưa rõ đã kích hoạt thành công chưa')
+    expect(host.textContent).not.toContain('X-Request-ID')
     expect(host.textContent).not.toContain('Kích hoạt thất bại')
     expect(host.querySelector('[role="dialog"]')).toBeTruthy()
     const firstKey = api.activateProcedureVersion.mock.calls[0][3]
     await confirm(host)
     expect(api.activateProcedureVersion).toHaveBeenCalledTimes(2)
     expect(api.activateProcedureVersion.mock.calls[1][3]).toBe(firstKey)
-    expect(host.textContent).toContain('Đã kích hoạt phiên bản mới')
+    expect(host.textContent).toContain('Đã chuyển sang phiên bản mới')
   })
 
   it('explains that creating a candidate requires an ACTIVE version', async () => {
@@ -264,7 +288,7 @@ describe('ProceduresPage activation', () => {
       await Promise.resolve()
     })
     expect(api.createProcedureVersion).not.toHaveBeenCalled()
-    expect(host.textContent).toContain('chưa có phiên bản ACTIVE')
+    expect(host.textContent).toContain('chưa có phiên bản đang dùng')
   })
 
   it('shows a user-facing version error inside the create dialog', async () => {
@@ -285,7 +309,7 @@ describe('ProceduresPage activation', () => {
       await Promise.resolve()
     })
     await act(async () => {
-      buttonNamed(host, 'Tạo candidate').click()
+      buttonNamed(host, 'Tạo phiên bản').click()
       await Promise.resolve()
     })
     expect(api.createProcedureVersion).not.toHaveBeenCalled()
@@ -306,7 +330,7 @@ describe('ProceduresPage activation', () => {
       await Promise.resolve()
     })
     await act(async () => {
-      buttonNamed(host, 'Tạo candidate').click()
+      buttonNamed(host, 'Tạo phiên bản').click()
       await Promise.resolve()
     })
     const alert = host.querySelector('[role="alert"]')

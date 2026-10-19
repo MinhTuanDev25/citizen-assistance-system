@@ -1,0 +1,27 @@
+{
+  "schema": "cas.verified-support.v1",
+  "locked_sha256": "b71ac8133ec6d67e9df1ac00ea14488f5eade64e2ccb19f57c1c0377b703fb20",
+  "notes": "1.0.3 checklist item 2 is entailed by G3 chunk 17 (pages 12–12). Rows exist for G3 and the 1.0.3 clone generation. Other checklist wording stays fail-closed.",
+  "entries": [
+    {
+      "xa_id": "xa_chu_se",
+      "procedure_code": "dk_khai_sinh",
+      "document_id": "60b677df-acc0-4198-a3b6-a919c01482a1",
+      "generation_id": "e2ad49da-4db7-4e18-90e3-c2f0bb358940",
+      "page_start": 12,
+      "page_end": 12,
+      "text_sha256": "410276e9993151a4f2ff17e5e8a3ea7b5cdc6abd42faf6ded0ac07cf57e8b17c",
+      "statement": "Giấy chứng sinh; nếu không có Giấy chứng sinh thì văn bản người làm chứng xác nhận việc sinh; nếu không có người làm chứng thì giấy cam đoan về việc sinh"
+    },
+    {
+      "xa_id": "xa_chu_se",
+      "procedure_code": "dk_khai_sinh",
+      "document_id": "60b677df-acc0-4198-a3b6-a919c01482a1",
+      "generation_id": "21125806-0a32-4e84-a866-d497859be2fe",
+      "page_start": 12,
+      "page_end": 12,
+      "text_sha256": "410276e9993151a4f2ff17e5e8a3ea7b5cdc6abd42faf6ded0ac07cf57e8b17c",
+      "statement": "Giấy chứng sinh; nếu không có Giấy chứng sinh thì văn bản người làm chứng xác nhận việc sinh; nếu không có người làm chứng thì giấy cam đoan về việc sinh"
+    }
+  ]
+}

@@ -1,12 +1,16 @@
 import { createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react'
+import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   buildUploadForm,
+  reindexSettledReady,
+  requestReindex,
   uploadErrorMessage,
   validateUpload,
 } from './documents.js'
+import { apiRequest } from './client.js'
 import DocumentsPage from '../pages/admin/DocumentsPage.jsx'
 
 vi.mock('./catalog.js', () => ({
@@ -89,12 +93,13 @@ describe('DocumentsPage', () => {
     document.body.appendChild(host)
     const root = createRoot(host)
     await act(async () => {
-      root.render(createElement(DocumentsPage))
+      root.render(createElement(MemoryRouter, null, createElement(DocumentsPage)))
     })
     await act(async () => {})
     expect(host.textContent).toContain('Giấy khai sinh')
-    expect(host.textContent).toContain('UPLOADED')
-    expect(host.textContent).toContain('PENDING')
+    expect(host.textContent).toContain('Đã tải')
+    expect(host.textContent).not.toContain('Chưa xác nhận')
+    expect(host.textContent).not.toContain('Hiệu lực')
     expect(host.textContent).not.toContain('Extract')
     const detail = [...host.querySelectorAll('button')].find((el) => el.textContent === 'Chi tiết')
     await act(async () => {
@@ -136,7 +141,7 @@ describe('DocumentsPage', () => {
     document.body.appendChild(host)
     const root = createRoot(host)
     await act(async () => {
-      root.render(createElement(DocumentsPage))
+      root.render(createElement(MemoryRouter, null, createElement(DocumentsPage)))
     })
     await act(async () => {})
     const button = [...host.querySelectorAll('button')].find((el) => el.textContent === 'Tải PDF')
@@ -146,5 +151,28 @@ describe('DocumentsPage', () => {
     expect(host.querySelector('.form-error').textContent).toContain('Không tải được PDF.')
     root.unmount()
     host.remove()
+  })
+})
+
+describe('reindexSettledReady', () => {
+  it('treats an in-flight CLAIMED replay as not finished', () => {
+    expect(reindexSettledReady({ link_status: 'READY', job_status: 'CLAIMED' })).toBe(false)
+    expect(reindexSettledReady({ link_status: 'READY', job_status: 'SUCCEEDED' })).toBe(true)
+    expect(reindexSettledReady({ link_status: 'READY', error_code: 'worker_failed', job_status: 'FAILED' })).toBe(false)
+  })
+})
+
+describe('requestReindex', () => {
+  it('omits a body when page_range is empty, sends all as clear, and sends a set range', async () => {
+    await requestReindex('doc-1', 'ver-1')
+    const empty = apiRequest.mock.calls.at(-1)
+    expect(empty[0]).toContain('/links/ver-1/index/reindex')
+    expect(empty[1].body).toBeUndefined()
+    await requestReindex('doc-1', 'ver-1', 'all')
+    const cleared = apiRequest.mock.calls.at(-1)
+    expect(cleared[1].body).toBe(JSON.stringify({ page_range: '' }))
+    await requestReindex('doc-1', 'ver-1', '10-21')
+    const ranged = apiRequest.mock.calls.at(-1)
+    expect(ranged[1].body).toBe(JSON.stringify({ page_range: '10-21' }))
   })
 })

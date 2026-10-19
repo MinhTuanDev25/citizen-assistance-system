@@ -16,14 +16,14 @@ const STEPS = [
     to: '/admin/documents',
     step: '2',
     title: 'Gắn và lập chỉ mục',
-    text: 'Nối PDF với phiên bản thủ tục, chờ READY.',
+    text: 'Nối PDF với phiên bản thủ tục, chờ sẵn sàng.',
     bg: '#dcfce7',
   },
   {
     to: '/admin/procedures',
     step: '3',
     title: 'Kích hoạt phiên bản',
-    text: 'Công dân hỏi đáp theo phiên ACTIVE.',
+    text: 'Công dân hỏi đáp theo phiên đang dùng.',
     bg: '#ffedd5',
   },
 ]
@@ -57,7 +57,7 @@ export default function AdminDashboardPage() {
         const data = await listProcedures({ xaId, citizen: false })
         if (!cancelled) setActive(data?.count ?? 0)
       } catch (err) {
-        if (!cancelled) setApiError(err.message || 'API procedures lỗi')
+        if (!cancelled) setApiError(err.message || 'Không tải được thủ tục')
       }
     })()
     return () => {
@@ -68,10 +68,10 @@ export default function AdminDashboardPage() {
   return (
     <div className="admin-page">
       <header className="admin-page-head">
-        <h1>Tổng quan</h1>
-        <p>
-          Xã {commune?.name || '…'}. Số liệu lấy từ API thật. Bản nháp OCR chưa triển khai.
-        </p>
+        <div>
+          <h1>Tổng quan</h1>
+          <p>Xã {commune?.name || '…'}</p>
+        </div>
       </header>
 
       {apiError ? <p className="form-error">{apiError}</p> : null}
@@ -83,7 +83,7 @@ export default function AdminDashboardPage() {
           <Link to="/admin/documents">Mở tài liệu</Link>
         </div>
         <div className="stat-card accent-teal">
-          <span>Thủ tục ACTIVE</span>
+          <span>Thủ tục đang dùng</span>
           <strong>{active == null ? '…' : active}</strong>
           <Link to="/admin/procedures">Mở thủ tục</Link>
         </div>

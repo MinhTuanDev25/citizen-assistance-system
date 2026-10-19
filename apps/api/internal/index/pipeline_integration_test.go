@@ -139,6 +139,236 @@ func TestPipelinePublishKeepsLastGoodAndRejectsLateToken(t *testing.T) {
 	}
 }
 
+func TestPipelineReindexKeepsGenerationAndPageRange(t *testing.T) {
+	pool := requireDB(t)
+	versionID := insertVersion(t, pool, "xa_chu_se", "ho_tich_chung_thuc", "p5_pipe_range_"+uuid.NewString()[:8])
+	t.Cleanup(func() { cleanupVersion(pool, versionID) })
+	var procedureID string
+	if err := pool.QueryRow(context.Background(), `SELECT procedure_id FROM procedure_versions WHERE id = $1`, versionID).Scan(&procedureID); err != nil {
+		t.Fatal(err)
+	}
+	worker := &scriptWorker{pool: pool, procedureID: procedureID, mode: "ok"}
+	eng, admin := pipelineEngine(t, pool, worker)
+	docID := uploadDoc(t, eng, admin, "%PDF-1.4\n%pipeline-range-"+uuid.NewString()+"\n")
+	t.Cleanup(func() { cleanupDoc(pool, docID) })
+	linked := call(t, eng, http.MethodPost, "/api/v1/admin/documents/"+docID+"/links", admin, uuid.New(), map[string]string{
+		"procedure_version_id": versionID, "relationship_type": "SOURCE", "page_range": "10-21",
+	})
+	if linked.Code != http.StatusCreated {
+		t.Fatalf("link %d %s", linked.Code, linked.Body.String())
+	}
+	indexed := call(t, eng, http.MethodPost, "/api/v1/admin/documents/"+docID+"/links/"+versionID+"/index", admin, uuid.New(), nil)
+	if indexed.Code != http.StatusOK || !bytesContains(indexed.Body.String(), `"link_status":"READY"`) {
+		t.Fatalf("index %d %s", indexed.Code, indexed.Body.String())
+	}
+	if got := linkPageRange(t, pool, docID, versionID); got != "10-21" {
+		t.Fatalf("after index page_range=%q", got)
+	}
+	if got := latestJobPageRange(t, pool, docID); got != "10-21" {
+		t.Fatalf("first job snapshot=%q", got)
+	}
+	gen := activeGeneration(t, pool, docID, versionID)
+	if gen == "" {
+		t.Fatal("missing active generation")
+	}
+	if worker.lastRange != "10-21" {
+		t.Fatalf("index worker range %q", worker.lastRange)
+	}
+
+	worker.mode = "late"
+	late := call(t, eng, http.MethodPost, "/api/v1/admin/documents/"+docID+"/links/"+versionID+"/index/reindex", admin, uuid.New(), map[string]string{
+		"page_range": "20-30",
+	})
+	if late.Code != http.StatusConflict {
+		t.Fatalf("late token %d %s", late.Code, late.Body.String())
+	}
+	if got := linkPageRange(t, pool, docID, versionID); got != "10-21" {
+		t.Fatalf("late publish mutated page_range=%q", got)
+	}
+	if activeGeneration(t, pool, docID, versionID) != gen {
+		t.Fatal("late publish moved generation")
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE document_index_jobs
+		SET claim_expires_at = now() - interval '1 second'
+		WHERE document_id = $1 AND status = 'CLAIMED'`, docID); err != nil {
+		t.Fatal(err)
+	}
+
+	worker.mode = "fail"
+	failID := uuid.New()
+	failed := call(t, eng, http.MethodPost, "/api/v1/admin/documents/"+docID+"/links/"+versionID+"/index/reindex", admin, failID, map[string]string{
+		"page_range": "20-30",
+	})
+	if failed.Code != http.StatusOK || !bytesContains(failed.Body.String(), `"link_status":"READY"`) {
+		t.Fatalf("failed reindex %d %s", failed.Code, failed.Body.String())
+	}
+	if worker.lastRange != "20-30" {
+		t.Fatalf("failed worker range %q", worker.lastRange)
+	}
+	if got := linkPageRange(t, pool, docID, versionID); got != "10-21" {
+		t.Fatalf("failed reindex mutated page_range=%q", got)
+	}
+	if activeGeneration(t, pool, docID, versionID) != gen {
+		t.Fatal("failed reindex replaced generation")
+	}
+
+	replay := call(t, eng, http.MethodPost, "/api/v1/admin/documents/"+docID+"/links/"+versionID+"/index/reindex", admin, failID, map[string]string{
+		"page_range": "20-30",
+	})
+	if replay.Code != http.StatusOK {
+		t.Fatalf("replay %d %s", replay.Code, replay.Body.String())
+	}
+	if !bytesContains(replay.Body.String(), `"link_status":"READY"`) {
+		t.Fatalf("failed-job replay hid READY link: %s", replay.Body.String())
+	}
+	if bytesContains(replay.Body.String(), `"link_status":"FAILED"`) {
+		t.Fatalf("failed-job replay returned FAILED: %s", replay.Body.String())
+	}
+	if got := linkPageRange(t, pool, docID, versionID); got != "10-21" {
+		t.Fatalf("replay mutated page_range=%q", got)
+	}
+	if activeGeneration(t, pool, docID, versionID) != gen {
+		t.Fatal("replay moved generation")
+	}
+
+	worker.mode = "ok"
+	ok := call(t, eng, http.MethodPost, "/api/v1/admin/documents/"+docID+"/links/"+versionID+"/index/reindex", admin, uuid.New(), map[string]string{
+		"page_range": "20-30",
+	})
+	if ok.Code != http.StatusOK || !bytesContains(ok.Body.String(), `"link_status":"READY"`) {
+		t.Fatalf("publish reindex %d %s", ok.Code, ok.Body.String())
+	}
+	if got := linkPageRange(t, pool, docID, versionID); got != "20-30" {
+		t.Fatalf("published page_range=%q", got)
+	}
+	if activeGeneration(t, pool, docID, versionID) == gen {
+		t.Fatal("successful reindex did not move generation")
+	}
+}
+
+func TestPipelineRejectsChunksOutsideJobPageRange(t *testing.T) {
+	pool := requireDB(t)
+	versionID := insertVersion(t, pool, "xa_chu_se", "ho_tich_chung_thuc", "p5_pipe_pages_"+uuid.NewString()[:8])
+	t.Cleanup(func() { cleanupVersion(pool, versionID) })
+	var procedureID string
+	if err := pool.QueryRow(context.Background(), `SELECT procedure_id FROM procedure_versions WHERE id = $1`, versionID).Scan(&procedureID); err != nil {
+		t.Fatal(err)
+	}
+	worker := &scriptWorker{pool: pool, procedureID: procedureID, mode: "ok"}
+	eng, admin := pipelineEngine(t, pool, worker)
+	docID := uploadDoc(t, eng, admin, "%PDF-1.4\n%pipeline-pages-"+uuid.NewString()+"\n")
+	t.Cleanup(func() { cleanupDoc(pool, docID) })
+	linked := call(t, eng, http.MethodPost, "/api/v1/admin/documents/"+docID+"/links", admin, uuid.New(), map[string]string{
+		"procedure_version_id": versionID, "relationship_type": "SOURCE", "page_range": "10-21",
+	})
+	if linked.Code != http.StatusCreated {
+		t.Fatalf("link %d %s", linked.Code, linked.Body.String())
+	}
+	indexed := call(t, eng, http.MethodPost, "/api/v1/admin/documents/"+docID+"/links/"+versionID+"/index", admin, uuid.New(), nil)
+	if indexed.Code != http.StatusOK || !bytesContains(indexed.Body.String(), `"link_status":"READY"`) {
+		t.Fatalf("index %d %s", indexed.Code, indexed.Body.String())
+	}
+	gen := activeGeneration(t, pool, docID, versionID)
+	worker.mode = "wrong_pages"
+	mismatch := call(t, eng, http.MethodPost, "/api/v1/admin/documents/"+docID+"/links/"+versionID+"/index/reindex", admin, uuid.New(), map[string]string{
+		"page_range": "20-30",
+	})
+	if mismatch.Code != http.StatusOK || !bytesContains(mismatch.Body.String(), `"link_status":"READY"`) {
+		t.Fatalf("wrong pages %d %s", mismatch.Code, mismatch.Body.String())
+	}
+	if !bytesContains(mismatch.Body.String(), `"error_code":"publish_mismatch"`) {
+		t.Fatalf("expected publish_mismatch %s", mismatch.Body.String())
+	}
+	if got := linkPageRange(t, pool, docID, versionID); got != "10-21" {
+		t.Fatalf("wrong pages mutated page_range=%q", got)
+	}
+	if activeGeneration(t, pool, docID, versionID) != gen {
+		t.Fatal("wrong pages replaced generation")
+	}
+}
+
+func TestPipelineClaimedReplayKeepsServingLinkStatus(t *testing.T) {
+	pool := requireDB(t)
+	versionID := insertVersion(t, pool, "xa_chu_se", "ho_tich_chung_thuc", "p5_pipe_claim_"+uuid.NewString()[:8])
+	t.Cleanup(func() { cleanupVersion(pool, versionID) })
+	var procedureID string
+	if err := pool.QueryRow(context.Background(), `SELECT procedure_id FROM procedure_versions WHERE id = $1`, versionID).Scan(&procedureID); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	worker := &scriptWorker{pool: pool, procedureID: procedureID, mode: "ok", entered: entered, release: release}
+	eng, admin := pipelineEngine(t, pool, worker)
+	docID := uploadDoc(t, eng, admin, "%PDF-1.4\n%pipeline-claim-"+uuid.NewString()+"\n")
+	t.Cleanup(func() { cleanupDoc(pool, docID) })
+	linked := call(t, eng, http.MethodPost, "/api/v1/admin/documents/"+docID+"/links", admin, uuid.New(), map[string]string{
+		"procedure_version_id": versionID, "relationship_type": "SOURCE", "page_range": "10-21",
+	})
+	if linked.Code != http.StatusCreated {
+		t.Fatalf("link %d %s", linked.Code, linked.Body.String())
+	}
+	close(release)
+	indexed := call(t, eng, http.MethodPost, "/api/v1/admin/documents/"+docID+"/links/"+versionID+"/index", admin, uuid.New(), nil)
+	if indexed.Code != http.StatusOK {
+		t.Fatalf("index %d %s", indexed.Code, indexed.Body.String())
+	}
+	select {
+	case <-entered:
+	default:
+	}
+	entered = make(chan struct{})
+	release = make(chan struct{})
+	worker.entered = entered
+	worker.release = release
+	reqID := uuid.New()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- call(t, eng, http.MethodPost, "/api/v1/admin/documents/"+docID+"/links/"+versionID+"/index/reindex", admin, reqID, map[string]string{
+			"page_range": "20-30",
+		})
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reindex did not start")
+	}
+	if got := linkPageRange(t, pool, docID, versionID); got != "10-21" {
+		t.Fatalf("in-flight mutated page_range=%q", got)
+	}
+	replay := call(t, eng, http.MethodPost, "/api/v1/admin/documents/"+docID+"/links/"+versionID+"/index/reindex", admin, reqID, map[string]string{
+		"page_range": "20-30",
+	})
+	if replay.Code != http.StatusOK {
+		t.Fatalf("claimed replay %d %s", replay.Code, replay.Body.String())
+	}
+	if !bytesContains(replay.Body.String(), `"link_status":"READY"`) {
+		t.Fatalf("claimed replay hid READY link: %s", replay.Body.String())
+	}
+	if bytesContains(replay.Body.String(), `"link_status":"PROCESSING"`) {
+		t.Fatalf("claimed replay used PROCESSING: %s", replay.Body.String())
+	}
+	if !bytesContains(replay.Body.String(), `"job_status":"CLAIMED"`) {
+		t.Fatalf("claimed replay missing job_status: %s", replay.Body.String())
+	}
+	close(release)
+	first := <-done
+	if first.Code != http.StatusOK || !bytesContains(first.Body.String(), `"link_status":"READY"`) {
+		t.Fatalf("held reindex %d %s", first.Code, first.Body.String())
+	}
+}
+
+func scriptChunkPages(req index.Request, forceFirst bool) (int, int) {
+	if forceFirst {
+		return 1, 1
+	}
+	start, _, unconstrained, ok := index.PageRangeBounds(req.PageRange)
+	if !ok || unconstrained || start < 1 {
+		return 1, 1
+	}
+	return start, start
+}
+
 func bytesContains(body, needle string) bool {
 	return len(body) >= len(needle) && (body == needle || len(needle) > 0 && stringIndex(body, needle))
 }
@@ -159,9 +389,15 @@ type scriptWorker struct {
 	decoy       uuid.UUID
 	entered     chan struct{}
 	release     chan struct{}
+	lastRange   string
 }
 
 func (w *scriptWorker) Index(ctx context.Context, req index.Request) (index.Response, error) {
+	if req.PageRange != nil {
+		w.lastRange = *req.PageRange
+	} else {
+		w.lastRange = ""
+	}
 	if w.entered != nil {
 		close(w.entered)
 		w.entered = nil
@@ -198,7 +434,8 @@ func (w *scriptWorker) Index(ctx context.Context, req index.Request) (index.Resp
 	text := "xin chao"
 	sum := sha256.Sum256([]byte(text))
 	textSHA := hex.EncodeToString(sum[:])
-	line := "0|1|1|" + textSHA + "|2|native"
+	pageStart, pageEnd := scriptChunkPages(req, w.mode == "wrong_pages")
+	line := fmt.Sprintf("0|%d|%d|%s|2|native", pageStart, pageEnd, textSHA)
 	manifestSum := sha256.Sum256([]byte(line))
 	manifest := hex.EncodeToString(manifestSum[:])
 	source := req.Checksum
@@ -219,8 +456,8 @@ func (w *scriptWorker) Index(ctx context.Context, req index.Request) (index.Resp
 		INSERT INTO knowledge_chunks (
 			id, xa_id, procedure_id, procedure_version_id, document_id, chunk_index, content,
 			generation_id, page_start, page_end, text_sha256, token_count, extraction_source
-		) VALUES ($1,$2,$3,$4,$5,0,$6,$7,1,1,$8,2,'native')`,
-		chunkID, req.XAID, w.procedureID, req.ProcedureVersionID, req.DocumentID, text, req.GenerationID, textSHA)
+		) VALUES ($1,$2,$3,$4,$5,0,$6,$7,$8,$9,$10,2,'native')`,
+		chunkID, req.XAID, w.procedureID, req.ProcedureVersionID, req.DocumentID, text, req.GenerationID, pageStart, pageEnd, textSHA)
 	if err != nil {
 		return index.Response{}, err
 	}

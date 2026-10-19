@@ -43,7 +43,7 @@ class ChunkConfig:
 
 
 def chunk_pages(pages: list[tuple[int, str, str]], config: ChunkConfig) -> list[Chunk]:
-    """pages are (page_number, normalized_text, source native|ocr)."""
+    """pages are (page_number, normalized_text, source native|ocr|verified)."""
     config.validate()
     units: list[tuple[str, int, str]] = []
     for number, text, source in pages:

@@ -15,6 +15,7 @@ from app.indexing.embed import (
     FAKE_MODEL_ID,
     FAKE_REVISION,
     PASSAGE_PREFIX,
+    QUERY_PREFIX,
     WordTokenCounter,
     fake_checksum,
     fake_embed,
@@ -23,15 +24,32 @@ from app.indexing.embed import (
 from app.indexing.ocr import DEFAULT_DPI, FakeRenderer
 from app.indexing.deadline import Deadline
 from app.indexing.errors import IndexFailure
-from app.indexing.pdf import NATIVE_TEXT_MIN_CHARS, read_selected_pages
+from app.indexing.pdf import (
+    NATIVE_TEXT_MIN_CHARS,
+    native_text_usable,
+    ocr_text_usable,
+    page_looks_blank,
+    page_requires_recovery,
+    read_selected_pages,
+    recovered_text_usable,
+)
 from app.indexing.qdrant import point_id
 from app.indexing.text import normalize_text, sha256_text
+from app.indexing.verified import (
+    APPROVED_BUNDLES,
+    VERIFIED_EXTRACTION_VERSION,
+    VerifiedSpec,
+    assert_pdf_covers_spec,
+    load_verified_pages,
+    sidecar_object_key,
+    spec_for,
+)
 
 log = logging.getLogger("cas.index")
 
 CLEANUP_BUDGET_S = 2.0
 PIPELINE_VERSION = "p4b.1"
-EXTRACTION_VERSION = "pypdf-native-nfc-1"
+EXTRACTION_VERSION = "pypdf-native-nfc-gate-6"
 OBJECT_KEY = "{xa}/documents/{document}/{checksum}.pdf"
 
 
@@ -96,15 +114,27 @@ class MemoryObjects:
     def __init__(self, data: bytes = b"", fail: str | None = None) -> None:
         self.data = data
         self.fail = fail
+        self.extra: dict[str, bytes] = {}
 
-    def get(self, _bucket: str, _key: str, max_bytes: int | None = None, timeout_s: float | None = None, deadline=None) -> bytes:
+    def put(self, key: str, blob: bytes) -> None:
+        self.extra[key] = blob
+
+    def get(self, _bucket: str, key: str, max_bytes: int | None = None, timeout_s: float | None = None, deadline=None) -> bytes:
         if self.fail == "timeout":
             raise IndexFailure("source_timeout")
         if self.fail == "missing":
             raise IndexFailure("source_not_found")
-        if max_bytes is not None and len(self.data) > max_bytes:
+        if key.endswith(".verified.json"):
+            blob = self.extra.get(key)
+            if blob is None:
+                raise IndexFailure("source_not_found")
+        elif key in self.extra:
+            blob = self.extra[key]
+        else:
+            blob = self.data
+        if max_bytes is not None and len(blob) > max_bytes:
             raise IndexFailure("pdf_oversized")
-        return self.data
+        return blob
 
 
 class MemoryChunks:
@@ -139,6 +169,7 @@ def run_pipeline(
     ocr_timeout_s: float = 30,
     deadline_s: float | None = None,
     deadline: Deadline | None = None,
+    approved_bundles: tuple[VerifiedSpec, ...] | None = None,
 ) -> PipelineResult:
     clock = deadline if deadline is not None else (Deadline(deadline_s) if deadline_s is not None else None)
     started = time.perf_counter()
@@ -156,34 +187,64 @@ def run_pipeline(
     source_sha = hashlib.sha256(data).hexdigest()
     if source_sha != job.checksum:
         raise IndexFailure("checksum_mismatch")
-    pages = read_selected_pages(data, max_bytes, max_pages, job.page_range)
-    _check(clock)
-    stage["extract"] = _ms(mark)
-    mark = time.perf_counter()
+    bundles = approved_bundles if approved_bundles is not None else APPROVED_BUNDLES
+    spec = spec_for(job.document_id, source_sha, bundles)
+    extraction_version = EXTRACTION_VERSION
+    ocr_version = deps.ocr.version
     prepared: list[PageRecord] = []
-    renderer = getattr(deps, "renderer", None) or FakeRenderer()
-    ocr_used = 0
-    for number, native in pages:
+    selected_count = 0
+    if spec is not None:
+        if spec.xa_id != job.xa_id:
+            raise IndexFailure("verified_mismatch")
+        prepared = _verified_prepare(job, deps, spec, data, max_bytes, max_pages, clock)
+        selected_count = len(prepared)
+        extraction_version = VERIFIED_EXTRACTION_VERSION
+        ocr_version = f"transcription-proof-1:{spec.locked_sha256}"
+        stage["extract"] = _ms(mark)
+        stage["ocr"] = 0
+    else:
+        pages = read_selected_pages(data, max_bytes, max_pages, job.page_range)
+        selected_count = len(pages)
         _check(clock)
-        if len(native) >= native_min_chars:
-            prepared.append(PageRecord(number, native, "native"))
-            continue
-        if ocr_used >= max_ocr_pages:
-            raise IndexFailure("page_limit")
-        ocr_used += 1
-        _check(clock)
-        image = renderer.render(data, number, dpi)
-        _check(clock)
-        ocr_budget = ocr_timeout_s if clock is None else clock.timeout_for_io(ocr_timeout_s)
-        try:
-            raw = deps.ocr.read_page(image, number, timeout_s=ocr_budget, deadline=clock)
-        except TimeoutError as exc:
-            raise IndexFailure("ocr_timeout") from exc
-        text = normalize_text(raw)
-        if not text:
-            continue
-        prepared.append(PageRecord(number, text, "ocr"))
-    stage["ocr"] = _ms(mark)
+        stage["extract"] = _ms(mark)
+        mark = time.perf_counter()
+        renderer = getattr(deps, "renderer", None) or FakeRenderer()
+        ocr_used = 0
+        for number, native in pages:
+            _check(clock)
+            if native_text_usable(native, native_min_chars):
+                prepared.append(PageRecord(number, native, "native"))
+                continue
+            required = page_requires_recovery(native, native_min_chars)
+            if ocr_used >= max_ocr_pages:
+                raise IndexFailure("page_limit")
+            ocr_used += 1
+            _check(clock)
+            image = renderer.render(data, number, dpi)
+            if not required and page_looks_blank(image):
+                continue
+            if not getattr(deps.ocr, "vietnamese_capable", False):
+                log.warning("extract_unusable page=%s reason=ocr_charset_incomplete", number)
+                raise IndexFailure("extract_unusable")
+            _check(clock)
+            ocr_budget = ocr_timeout_s if clock is None else clock.timeout_for_io(ocr_timeout_s)
+            try:
+                raw = deps.ocr.read_page(image, number, timeout_s=ocr_budget, deadline=clock)
+            except TimeoutError as exc:
+                raise IndexFailure("ocr_timeout") from exc
+            text = normalize_text(raw)
+            if required:
+                if not recovered_text_usable(text, native, native_min_chars):
+                    log.warning("extract_unusable page=%s reason=recovery_failed", number)
+                    raise IndexFailure("extract_unusable")
+                prepared.append(PageRecord(number, text, "ocr"))
+                continue
+            # Scan page with ink: charset + Vietnamese letters, not length alone.
+            if not ocr_text_usable(text, native_min_chars):
+                log.warning("extract_unusable page=%s reason=ocr_unusable", number)
+                raise IndexFailure("extract_unusable")
+            prepared.append(PageRecord(number, text, "ocr"))
+        stage["ocr"] = _ms(mark)
     if not prepared:
         raise IndexFailure("no_extractable_text")
     mark = time.perf_counter()
@@ -237,8 +298,8 @@ def run_pipeline(
             raise IndexFailure("qdrant_failed")
         meta = {
             "pipeline_version": PIPELINE_VERSION,
-            "extraction_version": EXTRACTION_VERSION,
-            "ocr_version": deps.ocr.version,
+            "extraction_version": extraction_version,
+            "ocr_version": ocr_version,
             "chunk_config_hash": chunk_config.hash(),
             "embedding_model_id": model_id,
             "embedding_revision": revision,
@@ -247,7 +308,7 @@ def run_pipeline(
             "source_sha256": source_sha,
             "content_sha256": content_sha,
             "manifest_hash": digest,
-            "page_count": len(pages),
+            "page_count": selected_count,
             "native_page_count": sum(1 for item in prepared if item.source == "native"),
             "ocr_page_count": sum(1 for item in prepared if item.source == "ocr"),
             "chunk_count": len(saved),
@@ -284,8 +345,8 @@ def run_pipeline(
         vector_count=written,
         manifest_hash=digest,
         pipeline_version=PIPELINE_VERSION,
-        extraction_version=EXTRACTION_VERSION,
-        ocr_version=deps.ocr.version,
+        extraction_version=extraction_version,
+        ocr_version=ocr_version,
         embedding_model_id=model_id,
         embedding_revision=revision,
         embedding_checksum=checksum,
@@ -294,11 +355,32 @@ def run_pipeline(
     )
 
 
+def _verified_prepare(job: IndexJob, deps, spec: VerifiedSpec, data: bytes, max_bytes: int, max_pages: int, clock) -> list[PageRecord]:
+    _check(clock)
+    assert_pdf_covers_spec(data, spec, job.page_range, max_bytes, max_pages)
+    key = sidecar_object_key(job.object_key)
+    try:
+        raw = deps.objects.get(job.bucket, key, max_bytes, deadline=clock)
+    except IndexFailure as exc:
+        if exc.code == "source_not_found":
+            raise IndexFailure("verified_required") from exc
+        raise
+    _check(clock)
+    pages = load_verified_pages(raw, spec, job.page_range)
+    return [PageRecord(number, normalize_text(text), "verified") for number, text in pages]
+
+
 def _embed_all(deps, texts: list[str], deadline=None) -> list[list[float]]:
     _check(deadline)
     embedder = deps.embedder
     if hasattr(embedder, "embed_batch"):
-        vectors = embedder.embed_batch(texts, deadline=deadline)
+        size = int(getattr(embedder, "batch_size", 0) or 0)
+        if size < 1:
+            size = len(texts) or 1
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), size):
+            _check(deadline)
+            vectors.extend(embedder.embed_batch(texts[start : start + size], deadline=deadline))
     else:
         vectors = [embedder.embed(PASSAGE_PREFIX + text) for text in texts]
     out = []
@@ -388,6 +470,10 @@ class FakeEmbedder:
 
     def embed(self, text: str) -> list[float]:
         return self.embed_batch([text])[0]
+
+    def embed_query(self, text: str, deadline=None) -> list[float]:
+        _check(deadline)
+        return fake_embed(QUERY_PREFIX + text, self.dimension)
 
     def embed_batch(self, texts: list[str], deadline=None) -> list[list[float]]:
         _check(deadline)

@@ -72,12 +72,25 @@ type Guidance struct {
 }
 
 type Citation struct {
-	DocID         string `json:"doc_id"`
-	Title         string `json:"title"`
-	SourceType    string `json:"source_type"`
-	EffectiveDate string `json:"effective_date,omitempty"`
-	Issuer        string `json:"issuer,omitempty"`
-	PageHint      string `json:"page_hint,omitempty"`
+	DocID            string   `json:"doc_id"`
+	Title            string   `json:"title"`
+	SourceType       string   `json:"source_type"`
+	EffectiveDate    string   `json:"effective_date,omitempty"`
+	Issuer           string   `json:"issuer,omitempty"`
+	PageHint         string   `json:"page_hint,omitempty"`
+	Excerpt          string   `json:"excerpt,omitempty"`
+	EvidenceStatus   string   `json:"evidence_status,omitempty"`
+	GenerationID     string   `json:"generation_id,omitempty"`
+	ChunkID          string   `json:"chunk_id,omitempty"`
+	DocumentID       string   `json:"document_id,omitempty"`
+	DocumentNumber   string   `json:"document_number,omitempty"`
+	Availability     string   `json:"availability,omitempty"`
+	RetrievalScore   *float64 `json:"retrieval_score,omitempty"`
+	PageStart        int      `json:"page_start,omitempty"`
+	PageEnd          int      `json:"page_end,omitempty"`
+	ExcerptSHA256    string   `json:"excerpt_sha256,omitempty"`
+	ContentSHA256    string   `json:"content_sha256,omitempty"`
+	ProcedureVersion string   `json:"procedure_version_id,omitempty"`
 }
 
 type Question struct {

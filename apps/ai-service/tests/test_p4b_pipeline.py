@@ -13,14 +13,16 @@ from pypdf import PdfReader, PdfWriter
 from app.indexing.chunk import ChunkConfig, chunk_pages, manifest_hash
 from app.indexing.embed import fake_embed, load_manifest, normalize
 from app.indexing.errors import IndexFailure
-from app.indexing.ocr import FakeOCR, FakeRenderer, PaddleOCR
-from app.indexing.pdf import extract_native
+from app.indexing.ocr import FakeOCR, FakeRenderer, PaddleOCR, rec_dict_supports_vietnamese
+from app.indexing.pdf import extract_native, native_text_usable, ocr_text_usable, page_looks_blank, recovered_text_usable
 from app.indexing.pipeline import (
+    EXTRACTION_VERSION,
     PIPELINE_VERSION,
     FakeEmbedder,
     IndexJob,
     MemoryChunks,
     MemoryObjects,
+    _embed_all,
     run_pipeline,
 )
 from app.indexing.qdrant import MemoryVectors, point_id
@@ -181,7 +183,7 @@ def _job(**overrides) -> IndexJob:
     return job
 
 
-def _run(data: bytes, ocr: FakeOCR | None = None, vectors: MemoryVectors | None = None, page_range: str | None = None, max_pages: int = 50):
+def _prepare(data: bytes, ocr: FakeOCR | None = None, vectors: MemoryVectors | None = None, page_range: str | None = None, renderer=None):
     _write_fixtures()
     job = _job(_data=data, page_range=page_range)
     deps = type("Deps", (), {})()
@@ -190,12 +192,20 @@ def _run(data: bytes, ocr: FakeOCR | None = None, vectors: MemoryVectors | None 
     deps.embedder = FakeEmbedder()
     deps.vectors = vectors or MemoryVectors()
     deps.chunks = MemoryChunks()
-    deps.renderer = FakeRenderer()
-    result = run_pipeline(
+    deps.renderer = renderer or FakeRenderer()
+    return job, deps
+
+
+def _index(job, deps, max_pages: int = 50):
+    return run_pipeline(
         job, deps, max_bytes=200_000, chunk_config=ChunkConfig(32, 40, 4), bucket="cas-documents",
         native_min_chars=24, max_pages=max_pages,
     )
-    return result, deps
+
+
+def _run(data: bytes, ocr: FakeOCR | None = None, vectors: MemoryVectors | None = None, page_range: str | None = None, max_pages: int = 50, renderer=None):
+    job, deps = _prepare(data, ocr=ocr, vectors=vectors, page_range=page_range, renderer=renderer)
+    return _index(job, deps, max_pages=max_pages), deps
 
 
 def test_fixtures_cover_required_shapes(tmp_path):
@@ -226,12 +236,13 @@ def test_native_page_does_not_call_ocr_and_keeps_jrai_when_normalized():
 
 
 def test_scanned_page_calls_ocr_and_mixed_skips_native_page():
-    ocr = FakeOCR("Noi dung OCR du dai de qua nguong trang.")
-    result, _ = _run((FIXTURES / "scanned.pdf").read_bytes(), ocr)
+    ocr = FakeOCR(CLEAN_OCR, vietnamese_capable=True)
+    ink = FakeRenderer(blank=False)
+    result, _ = _run((FIXTURES / "scanned.pdf").read_bytes(), ocr, renderer=ink)
     assert ocr.calls == [1]
     assert result.ocr_pages == 1
     ocr.calls.clear()
-    mixed, _ = _run((FIXTURES / "mixed.pdf").read_bytes(), ocr)
+    mixed, _ = _run((FIXTURES / "mixed.pdf").read_bytes(), ocr, renderer=FakeRenderer(blank=False))
     assert ocr.calls == [2]
     assert mixed.native_pages == 1
     assert mixed.ocr_pages == 1
@@ -329,15 +340,16 @@ def test_blank_stripe_page_does_not_invent_administrative_text():
     result, deps = _run((FIXTURES / "mixed.pdf").read_bytes(), ocr)
     assert result.ocr_pages == 0
     assert result.native_pages == 1
-    assert ocr.calls == [2]
+    assert ocr.calls == []
+    assert deps.renderer.calls == [2]
     saved = " ".join(item.text for item in deps.chunks.saved)
     assert "GIAY KHAI SINH" not in saved
     assert "123" not in saved
 
 
 def test_renderer_receives_only_the_weak_page():
-    ocr = FakeOCR("Noi dung OCR du dai de qua nguong trang.")
-    _, deps = _run((FIXTURES / "mixed.pdf").read_bytes(), ocr)
+    ocr = FakeOCR(CLEAN_OCR, vietnamese_capable=True)
+    _, deps = _run((FIXTURES / "mixed.pdf").read_bytes(), ocr, renderer=FakeRenderer(blank=False))
     assert ocr.calls == [2]
     assert ocr.images[0]["page"] == 2
     assert deps.renderer.calls == [2]
@@ -361,9 +373,469 @@ def test_passage_prefix_and_tokenizer_hard_limit():
     assert result.chunk_count == len(deps.chunks.saved) > 1
 
 
+def test_embed_all_honors_embedder_batch_size():
+    calls = []
+
+    class Emb:
+        batch_size = 2
+
+        def embed_batch(self, texts, deadline=None):
+            calls.append(list(texts))
+            return [[0.1] * 384 for _ in texts]
+
+    vectors = _embed_all(type("D", (), {"embedder": Emb()})(), ["a", "b", "c"])
+    assert calls == [["a", "b"], ["c"]]
+    assert len(vectors) == 3
+
+
 def test_page_limit_stops_before_ocr():
     ocr = FakeOCR("Noi dung OCR du dai de qua nguong trang.")
     with pytest.raises(IndexFailure) as raised:
         _run((FIXTURES / "mixed.pdf").read_bytes(), ocr, max_pages=1)
     assert raised.value.code == "page_limit"
     assert ocr.calls == []
+
+
+# Native extract of the official BTP PDF (page 10). ToUnicode maps live CIDs to space.
+GARBLED_NATIVE = (
+    "10 PHẦN II. NỘI DUNG CỤ THỂ CỦA TỪNG THỦ TỤC HÀNH CHÍNH "
+    "A. THỦ TỤC HÀNH CHÍNH CẤP XÃ 1. Thủ tục đ ng ký khai sinh "
+    "Trình tự thực hiện: Nếu lựa chọn hình thức n p hồ s trực tiếp, "
+    "ng ời yêu cầu ăng ký khai sinh n p hồ s ăng ký khai sinh t i "
+    "Trung tâm Ph c v hành chính công có thẩm quy n; n p l phí nếu thu "
+    "tr ờng hợp ph i n p l h ăng ký khai sinh; n p phí cấp b n sao "
+    "Giấy khai sinh nếu có yêu cầu cấp b n sao Giấy khai sinh. "
+    "Nếu lựa chọn hình thức n p hồ s trực tuyến, ng ời yêu cầu ăng ký "
+    "khai sinh truy cập C ng dịch v công quố gia h Ứ đị h h ố. "
+    "Ng ời yêu cầu ăng ký khai sinh trực tuyến cung cấp thông tin theo mẫu "
+    "h tị h i n t t ng t ăng ký khai sinh, nh kè n ch p ho c b n sa "
+    "các giấy tờ, tài li u the u ịnh; n p phí, l phí thông qua chứ năng thanh toán."
+)
+
+# Visual transcription of the same span, used only as FakeOCR output in tests.
+CLEAN_OCR = (
+    "10 PHẦN II. NỘI DUNG CỤ THỂ CỦA TỪNG THỦ TỤC HÀNH CHÍNH "
+    "A. THỦ TỤC HÀNH CHÍNH CẤP XÃ 1. Thủ tục đăng ký khai sinh "
+    "Trình tự thực hiện: Nếu lựa chọn hình thức nộp hồ sơ trực tiếp, "
+    "người yêu cầu đăng ký khai sinh nộp hồ sơ đăng ký khai sinh tại "
+    "Trung tâm Phục vụ hành chính công có thẩm quyền; nộp lệ phí nếu thuộc "
+    "trường hợp phải nộp lệ phí đăng ký khai sinh; nộp phí cấp bản sao "
+    "Giấy khai sinh nếu có yêu cầu cấp bản sao Giấy khai sinh. "
+    "Nếu lựa chọn hình thức nộp hồ sơ trực tuyến, người yêu cầu đăng ký "
+    "khai sinh truy cập Cổng dịch vụ công quốc gia hoặc Ứng dụng định danh quốc gia."
+)
+
+
+LATIN_OCR = (
+    "10 PHAN II. NOI DUNG CU THE CUA TUNG THU TUC HANH CHINH "
+    "A. THU TUC HANH CHINH CAP XA 1. Thu tuc dang ky khai sinh "
+    "Trinh tu thuc hien: Neu lua chon hinh thuc nop ho so truc tiep, "
+    "nguoi yeu cau dang ky khai sinh nop ho so dang ky khai sinh tai "
+    "Trung tam Phuc vu hanh chinh cong co tham quyen; nop le phi neu thuoc "
+    "truong hop phai nop le phi dang ky khai sinh; nop phi cap ban sao "
+    "Giay khai sinh neu co yeu cau cap ban sao Giay khai sinh. "
+    "Neu lua chon hinh thuc nop ho so truc tuyen, nguoi yeu cau dang ky "
+    "khai sinh truy cap Cong dich vu cong quoc gia hoac Ung dung dinh danh quoc gia."
+)
+
+
+def test_native_text_usable_rejects_tounicode_space_substitution():
+    assert native_text_usable(GARBLED_NATIVE) is False
+    assert native_text_usable(CLEAN_OCR) is True
+    assert native_text_usable(NATIVE_TEXT) is True
+    assert native_text_usable("đ ng ký khai sinh") is False  # below min_chars
+    assert native_text_usable("Thủ tục đ ng ký khai sinh tại xã") is False
+    assert native_text_usable("A. THỦ TỤC HÀNH CHÍNH CẤP XÃ") is True
+    assert native_text_usable("Bơngai Jrai kơnâm pơlei xa Chu Se Gia Lai Viet Nam.") is True
+
+
+def test_valid_vietnamese_particles_are_not_cid_errors():
+    assert native_text_usable("Hồ sơ ở xã cần giấy chứng sinh của trẻ.") is True
+    assert native_text_usable("Ý kiến của cha mẹ là cần làm thủ tục khai sinh.") is True
+    assert native_text_usable("Người yêu cầu đăng ký khai sinh ở nơi cư trú.") is True
+    assert native_text_usable("a) Thành phần hồ sơ bao gồm tờ khai đăng ký khai sinh và giấy chứng sinh.") is True
+    assert native_text_usable("b) Giấy chứng sinh của trẻ em vừa sinh ra.") is True
+    assert native_text_usable("c) Tờ khai đăng ký khai sinh theo mẫu quy định.") is True
+    assert native_text_usable("đ) Giấy chứng sinh của trẻ em trong trường hợp được yêu cầu.") is True
+    assert native_text_usable("đ ng ký khai sinh") is False
+
+
+def test_valid_vietnamese_native_is_kept_without_ocr(monkeypatch):
+    text = "Người yêu cầu đăng ký khai sinh ở nơi cư trú."
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, text)],
+    )
+    ocr = FakeOCR("khong duoc goi")
+    result, deps = _run((FIXTURES / "native.pdf").read_bytes(), ocr)
+    assert ocr.calls == []
+    assert result.native_pages == 1
+    assert "ở nơi cư trú" in deps.chunks.saved[0].text
+
+
+def test_recovered_text_usable_rejects_latin_stripped_copy():
+    assert recovered_text_usable(CLEAN_OCR, GARBLED_NATIVE) is True
+    assert recovered_text_usable(LATIN_OCR, GARBLED_NATIVE) is False
+    assert recovered_text_usable(GARBLED_NATIVE, GARBLED_NATIVE) is False
+    assert native_text_usable(LATIN_OCR) is True
+    assert ocr_text_usable(CLEAN_OCR) is True
+    assert ocr_text_usable(LATIN_OCR) is False
+
+
+def test_latin_rec_dict_does_not_count_as_vietnamese(tmp_path):
+    keys = tmp_path / "ppocr_keys_v1.txt"
+    keys.write_text("a\nb\nâ\nê\nô\nđ\ná\nà\nã\n", encoding="utf-8")
+    assert rec_dict_supports_vietnamese(str(tmp_path)) is False
+    keys.write_text("ă\nơ\nư\nđăng\n", encoding="utf-8")
+    assert rec_dict_supports_vietnamese(str(tmp_path)) is True
+
+
+def test_good_native_is_kept_without_ocr():
+    ocr = FakeOCR("khong duoc goi")
+    result, deps = _run((FIXTURES / "native.pdf").read_bytes(), ocr)
+    assert ocr.calls == []
+    assert result.native_pages == 1
+    assert result.ocr_pages == 0
+    assert result.extraction_version == EXTRACTION_VERSION
+    assert deps.chunks.saved[0].text.startswith("Dang ky khai sinh")
+
+
+def test_fragmented_native_fails_when_ocr_charset_incomplete(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, GARBLED_NATIVE)],
+    )
+    data = (FIXTURES / "native.pdf").read_bytes()
+    ocr = FakeOCR(CLEAN_OCR)
+    job, deps = _prepare(data, ocr)
+    with pytest.raises(IndexFailure) as raised:
+        _index(job, deps)
+    assert raised.value.code == "extract_unusable"
+    assert ocr.calls == []
+    assert deps.chunks.saved == []
+    assert deps.vectors.points == []
+
+
+def test_fragmented_native_falls_back_to_vietnamese_ocr(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, GARBLED_NATIVE)],
+    )
+    ocr = FakeOCR(CLEAN_OCR, vietnamese_capable=True)
+    result, deps = _run((FIXTURES / "native.pdf").read_bytes(), ocr)
+    assert ocr.calls == [1]
+    assert result.ocr_pages == 1
+    assert result.native_pages == 0
+    assert result.extraction_version == EXTRACTION_VERSION
+    saved = " ".join(item.text for item in deps.chunks.saved)
+    assert "đăng ký khai sinh" in saved
+    assert "đ ng ký" not in saved
+
+
+def test_fragmented_native_fails_when_vietnamese_ocr_empty(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, GARBLED_NATIVE)],
+    )
+    data = (FIXTURES / "native.pdf").read_bytes()
+    ocr = FakeOCR("", vietnamese_capable=True)
+    job, deps = _prepare(data, ocr)
+    with pytest.raises(IndexFailure) as raised:
+        _index(job, deps)
+    assert raised.value.code == "extract_unusable"
+    assert ocr.calls == [1]
+    assert deps.chunks.saved == []
+    assert deps.vectors.points == []
+
+
+def test_fragmented_native_fails_when_ocr_still_wrong(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, GARBLED_NATIVE)],
+    )
+    data = (FIXTURES / "native.pdf").read_bytes()
+    ocr = FakeOCR(LATIN_OCR, vietnamese_capable=True)
+    job, deps = _prepare(data, ocr)
+    with pytest.raises(IndexFailure) as raised:
+        _index(job, deps)
+    assert raised.value.code == "extract_unusable"
+    assert ocr.calls == [1]
+    assert deps.chunks.saved == []
+    assert deps.vectors.points == []
+
+
+def test_required_page_failure_blocks_ready_generation(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, NATIVE_TEXT), (2, GARBLED_NATIVE)],
+    )
+    data = (FIXTURES / "multipage.pdf").read_bytes()
+    ocr = FakeOCR(LATIN_OCR, vietnamese_capable=True)
+    job, deps = _prepare(data, ocr)
+    with pytest.raises(IndexFailure) as raised:
+        _index(job, deps)
+    assert raised.value.code == "extract_unusable"
+    assert ocr.calls == [2]
+    assert deps.chunks.saved == []
+    assert deps.vectors.points == []
+
+
+SHORT_GARBLED = "đ ng ký khai sinh"
+SHORT_HEADING = "Thủ tục đ ng ký khai sinh tại xã"
+
+
+def test_short_garbled_native_fails_when_ocr_empty(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, SHORT_GARBLED)],
+    )
+    data = (FIXTURES / "native.pdf").read_bytes()
+    ocr = FakeOCR("", vietnamese_capable=True)
+    job, deps = _prepare(data, ocr)
+    with pytest.raises(IndexFailure) as raised:
+        _index(job, deps)
+    assert raised.value.code == "extract_unusable"
+    assert ocr.calls == [1]
+    assert deps.chunks.saved == []
+    assert deps.vectors.points == []
+
+
+def test_short_garbled_native_rejects_nonempty_ocr_stub(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, SHORT_GARBLED)],
+    )
+    data = (FIXTURES / "native.pdf").read_bytes()
+    ocr = FakeOCR("xyz", vietnamese_capable=True)
+    job, deps = _prepare(data, ocr)
+    with pytest.raises(IndexFailure) as raised:
+        _index(job, deps)
+    assert raised.value.code == "extract_unusable"
+    assert ocr.calls == [1]
+    assert deps.chunks.saved == []
+    assert deps.vectors.points == []
+
+
+def test_short_heading_with_cid_space_is_not_treated_as_usable(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, SHORT_HEADING)],
+    )
+    data = (FIXTURES / "native.pdf").read_bytes()
+    ocr = FakeOCR("xyz")
+    job, deps = _prepare(data, ocr)
+    with pytest.raises(IndexFailure) as raised:
+        _index(job, deps)
+    assert raised.value.code == "extract_unusable"
+    assert ocr.calls == []
+    assert deps.chunks.saved == []
+    assert deps.vectors.points == []
+
+
+def test_verified_blank_second_page_may_be_skipped(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, NATIVE_TEXT), (2, "")],
+    )
+    ocr = FakeOCR("")
+    result, deps = _run((FIXTURES / "multipage.pdf").read_bytes(), ocr)
+    assert result.native_pages == 1
+    assert result.ocr_pages == 0
+    assert deps.chunks.saved
+    assert all(item.page_start == 1 for item in deps.chunks.saved)
+
+
+def test_ink_page_with_failed_ocr_fails_generation(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, NATIVE_TEXT), (2, "")],
+    )
+    data = (FIXTURES / "multipage.pdf").read_bytes()
+    ocr = FakeOCR("", vietnamese_capable=True)
+    job, deps = _prepare(data, ocr)
+
+    class InkRenderer:
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+
+        def render(self, _data, page_number: int, dpi: int):
+            self.calls.append(page_number)
+            return {"page": page_number, "dpi": dpi, "blank": False}
+
+    deps.renderer = InkRenderer()
+    with pytest.raises(IndexFailure) as raised:
+        _index(job, deps)
+    assert raised.value.code == "extract_unusable"
+    assert ocr.calls == [2]
+    assert deps.chunks.saved == []
+    assert deps.vectors.points == []
+
+
+def test_page_looks_blank_honors_explicit_flag_and_ink():
+    assert page_looks_blank({"page": 1, "dpi": 150}) is True
+    assert page_looks_blank({"page": 1, "blank": False}) is False
+    white = [[[255, 255, 255] for _ in range(8)] for _ in range(8)]
+    ink = [[[0, 0, 0] for _ in range(8)] for _ in range(8)]
+
+    class _Grid:
+        def __init__(self, rows):
+            self._rows = rows
+            self.shape = (len(rows), len(rows[0]), 3)
+
+        def __getitem__(self, y):
+            return self._rows[y]
+
+    assert page_looks_blank(_Grid(white)) is True
+    assert page_looks_blank(_Grid(ink)) is False
+    assert page_looks_blank(object()) is False
+    thin = [[[255, 255, 255] for _ in range(32)] for _ in range(32)]
+    for x in range(32):
+        thin[7][x] = [0, 0, 0]
+    assert page_looks_blank(_Grid(thin)) is False
+    sparse = [[[255, 255, 255] for _ in range(128)] for _ in range(128)]
+    for x in range(128):
+        sparse[64][x] = [0, 0, 0]
+    assert (128 / (128 * 128)) < 0.008
+    assert page_looks_blank(_Grid(sparse)) is False
+    specks = [[[255, 255, 255] for _ in range(128)] for _ in range(128)]
+    for x, y in ((3, 3), (40, 90), (100, 20), (110, 70), (50, 10)):
+        specks[y][x] = [0, 0, 0]
+    assert page_looks_blank(_Grid(specks)) is True
+    large = [[[255, 255, 255] for _ in range(256)] for _ in range(256)]
+    for x in range(256):
+        large[1][x] = [0, 0, 0]
+    assert page_looks_blank(_Grid(large)) is False
+
+
+def test_ocr_text_usable_is_not_legal_certification():
+    # Page-12 Tesseract errors still pass the structural filter.
+    text = (
+        "Sau khi lập biên bản, Ủy ban nhân dân cấp xã tiền hành niêm yết tại trụ sở "
+        "Ủy ban nhân dân trong 07 ngày liên tục về việc trẻ bị bỏ rơi. "
+        "Phần ghi về cha của trẻ để trồng nếu chưa xác định được cha."
+    )
+    assert ocr_text_usable(text) is True
+    assert "tiến hành" not in text
+    assert "để trống" not in text
+
+
+def test_scan_latin_ocr_fails_without_vietnamese_charset(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, "")],
+    )
+    data = (FIXTURES / "native.pdf").read_bytes()
+    ocr = FakeOCR(LATIN_OCR, vietnamese_capable=False)
+    job, deps = _prepare(data, ocr, renderer=FakeRenderer(blank=False))
+    with pytest.raises(IndexFailure) as raised:
+        _index(job, deps)
+    assert raised.value.code == "extract_unusable"
+    assert ocr.calls == []
+    assert deps.chunks.saved == []
+    assert deps.vectors.points == []
+
+
+def test_scan_latin_ocr_fails_even_when_charset_claims_vietnamese(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, "")],
+    )
+    data = (FIXTURES / "native.pdf").read_bytes()
+    ocr = FakeOCR(LATIN_OCR, vietnamese_capable=True)
+    job, deps = _prepare(data, ocr, renderer=FakeRenderer(blank=False))
+    with pytest.raises(IndexFailure) as raised:
+        _index(job, deps)
+    assert raised.value.code == "extract_unusable"
+    assert ocr.calls == [1]
+    assert deps.chunks.saved == []
+    assert deps.vectors.points == []
+
+
+def test_scan_vietnamese_ocr_is_indexed(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, "")],
+    )
+    ocr = FakeOCR(CLEAN_OCR, vietnamese_capable=True)
+    result, deps = _run((FIXTURES / "native.pdf").read_bytes(), ocr, renderer=FakeRenderer(blank=False))
+    assert ocr.calls == [1]
+    assert result.ocr_pages == 1
+    assert "đăng ký khai sinh" in deps.chunks.saved[0].text
+
+
+def test_sparse_ink_empty_ocr_fails_generation(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, NATIVE_TEXT), (2, "")],
+    )
+    data = (FIXTURES / "multipage.pdf").read_bytes()
+    ocr = FakeOCR("", vietnamese_capable=True)
+    job, deps = _prepare(data, ocr)
+
+    class SparseInk:
+        def render(self, _data, page_number: int, dpi: int):
+            if page_number == 1:
+                return {"page": page_number, "dpi": dpi, "blank": True}
+            rows = [[[255, 255, 255] for _ in range(128)] for _ in range(128)]
+            for x in range(128):
+                rows[64][x] = [0, 0, 0]
+
+            class _Grid:
+                def __init__(self, grid):
+                    self._rows = grid
+                    self.shape = (len(grid), len(grid[0]), 3)
+
+                def __getitem__(self, y):
+                    return self._rows[y]
+
+            return _Grid(rows)
+
+    deps.renderer = SparseInk()
+    with pytest.raises(IndexFailure) as raised:
+        _index(job, deps)
+    assert raised.value.code == "extract_unusable"
+    assert ocr.calls == [2]
+    assert deps.chunks.saved == []
+    assert deps.vectors.points == []
+
+
+def test_large_image_thin_stroke_empty_ocr_fails_generation(monkeypatch):
+    monkeypatch.setattr(
+        "app.indexing.pipeline.read_selected_pages",
+        lambda *_a, **_k: [(1, NATIVE_TEXT), (2, "")],
+    )
+    data = (FIXTURES / "multipage.pdf").read_bytes()
+    ocr = FakeOCR("", vietnamese_capable=True)
+    job, deps = _prepare(data, ocr)
+
+    class LargeThinStroke:
+        def render(self, _data, page_number: int, dpi: int):
+            if page_number == 1:
+                return {"page": page_number, "dpi": dpi, "blank": True}
+            rows = [[[255, 255, 255] for _ in range(256)] for _ in range(256)]
+            for x in range(256):
+                rows[1][x] = [0, 0, 0]
+
+            class _Grid:
+                def __init__(self, grid):
+                    self._rows = grid
+                    self.shape = (len(grid), len(grid[0]), 3)
+
+                def __getitem__(self, y):
+                    return self._rows[y]
+
+            return _Grid(rows)
+
+    deps.renderer = LargeThinStroke()
+    with pytest.raises(IndexFailure) as raised:
+        _index(job, deps)
+    assert raised.value.code == "extract_unusable"
+    assert ocr.calls == [2]
+    assert deps.chunks.saved == []
+    assert deps.vectors.points == []
+
+
+def test_list_mark_d_is_kept_and_cid_fragment_is_not():
+    assert native_text_usable("đ) Giấy chứng sinh của trẻ em trong trường hợp được yêu cầu.") is True
+    assert native_text_usable("Thủ tục đ ng ký khai sinh tại xã") is False
+    assert native_text_usable(GARBLED_NATIVE) is False

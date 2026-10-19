@@ -304,6 +304,62 @@ func TestActivateArchivesLiveActiveWhenPointerIsStale(t *testing.T) {
 	}
 }
 
+func TestActivateAlreadyActiveVersionIsNoop(t *testing.T) {
+	pool := requireP4DB(t)
+	fx := newFixture(t, pool, true)
+	out, err := fx.svc.Activate(context.Background(), actor(), uuid.New(), fx.ProcedureID, fx.V1, &fx.V1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Noop || out.ActiveVersionID != fx.V1 {
+		t.Fatalf("%+v", out)
+	}
+	assertOneActive(t, pool, fx.ProcedureID, fx.V1)
+	assertAudit(t, pool, fx.ProcedureID, 0)
+}
+
+func TestActivateActiveVersionWithMismatchedPointerConflicts(t *testing.T) {
+	pool := requireP4DB(t)
+	fx := newFixture(t, pool, true)
+	stale := uuid.New()
+	admin := actor()
+	var code, name string
+	if err := pool.QueryRow(context.Background(), `SELECT procedure_code, name FROM procedures WHERE id=$1`, fx.ProcedureID).Scan(&code, &name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO procedure_versions (id, procedure_id, version, status, definition, created_by, approved_by, approved_at)
+		VALUES ($1,$2,'0.9.0-stale','ARCHIVED',$3::jsonb,$4,$4,now())`,
+		stale, fx.ProcedureID, validDef(code, name, "0.9.0-stale"), admin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `UPDATE procedures SET active_version_id=$2 WHERE id=$1`, fx.ProcedureID, stale); err != nil {
+		t.Fatal(err)
+	}
+	_, err := fx.svc.Activate(context.Background(), admin, uuid.New(), fx.ProcedureID, fx.V1, &stale)
+	if !errors.Is(err, activation.ErrConflict) {
+		t.Fatalf("want ACTIVE_POINTER_MISMATCH conflict, got %v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "ACTIVE_POINTER_MISMATCH") {
+		t.Fatalf("want ACTIVE_POINTER_MISMATCH, got %v", err)
+	}
+	var pointer uuid.UUID
+	if err := pool.QueryRow(context.Background(), `SELECT active_version_id FROM procedures WHERE id=$1`, fx.ProcedureID).Scan(&pointer); err != nil {
+		t.Fatal(err)
+	}
+	if pointer != stale {
+		t.Fatalf("must not silently rewrite pointer, got %s", pointer)
+	}
+	assertAudit(t, pool, fx.ProcedureID, 0)
+	var v1Status string
+	if err := pool.QueryRow(context.Background(), `SELECT status FROM procedure_versions WHERE id=$1`, fx.V1).Scan(&v1Status); err != nil {
+		t.Fatal(err)
+	}
+	if v1Status != "ACTIVE" {
+		t.Fatalf("V1 status=%s", v1Status)
+	}
+}
+
 func TestCConcurrentActivation(t *testing.T) {
 	pool := requireP4DB(t)
 	fx := newFixture(t, pool, true)

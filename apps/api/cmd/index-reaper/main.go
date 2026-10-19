@@ -46,6 +46,14 @@ const (
 				SELECT 1 FROM document_index_jobs job
 				WHERE job.id = g.job_id AND job.status = 'CLAIMED' AND job.claim_expires_at > now()
 			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM session_source_pins pin
+				WHERE pin.generation_id = g.id
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM message_citations cite
+				WHERE cite.generation_id = g.id
+			  )
 			ORDER BY g.updated_at
 			LIMIT $5
 			FOR UPDATE OF g SKIP LOCKED

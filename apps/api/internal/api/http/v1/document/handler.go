@@ -1,6 +1,7 @@
 package documentapi
 
 import (
+	"context"
 	"errors"
 	"io"
 	"mime/multipart"
@@ -17,8 +18,9 @@ import (
 )
 
 type Handler struct {
-	Svc   *document.Service
-	Index *index.Service
+	Svc       *document.Service
+	Index     *index.Service
+	Published func(ctx context.Context, xaID string, documentID uuid.UUID) (bool, error)
 }
 
 func NewHandler(svc *document.Service) *Handler {
@@ -265,15 +267,62 @@ func (h *Handler) Content(c *gin.Context) {
 		response.Fail(c, http.StatusInternalServerError, "INTERNAL", "failed to read document")
 		return
 	}
+	writePDF(c, doc, rc, false)
+}
+
+// CitizenContent godoc
+//
+//	@Summary	Open a published PDF for citizen/guest citation viewing
+//	@Tags		documents
+//	@Produce	application/pdf
+//	@Param		id	path		string	true	"Document id"
+//	@Success	200	{file}		file
+//	@Failure	404	{object}	response.Envelope
+//	@Failure	500	{object}	response.Envelope
+//	@Router		/api/v1/documents/{id}/content [get]
+func (h *Handler) CitizenContent(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		response.Fail(c, http.StatusNotFound, "NOT_FOUND", "document not found")
+		return
+	}
+	if h.Published == nil {
+		response.Fail(c, http.StatusNotFound, "NOT_FOUND", "document not found")
+		return
+	}
+	ok, err := h.Published(c.Request.Context(), h.Svc.XAID, id)
+	if err != nil {
+		response.Fail(c, http.StatusInternalServerError, "INTERNAL", "failed to read document")
+		return
+	}
+	if !ok {
+		response.Fail(c, http.StatusNotFound, "NOT_FOUND", "document not found")
+		return
+	}
+	doc, rc, err := h.Svc.Open(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, document.ErrNotFound) || errors.Is(err, document.ErrObjectMissing) {
+			response.Fail(c, http.StatusNotFound, "NOT_FOUND", "document content unavailable")
+			return
+		}
+		response.Fail(c, http.StatusInternalServerError, "INTERNAL", "failed to read document")
+		return
+	}
+	writePDF(c, doc, rc, true)
+}
+
+func writePDF(c *gin.Context, doc document.Document, rc io.ReadCloser, inline bool) {
 	defer rc.Close()
 	name := strings.ReplaceAll(doc.Filename, `"`, "")
 	c.Header("Content-Type", document.MimePDF)
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.Header("Content-Disposition", `attachment; filename="`+name+`"`)
-	c.Status(http.StatusOK)
-	if _, err := io.Copy(c.Writer, rc); err != nil {
-		return
+	disp := "attachment"
+	if inline {
+		disp = "inline"
 	}
+	c.Header("Content-Disposition", disp+`; filename="`+name+`"`)
+	c.Status(http.StatusOK)
+	_, _ = io.Copy(c.Writer, rc)
 }
 
 func writeUploadErr(c *gin.Context, err error) {

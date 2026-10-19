@@ -74,8 +74,17 @@ export function listLinkTargets() {
   return apiRequest('/api/v1/admin/documents/link-targets')
 }
 
+const documentLinksInflight = new Map()
+
 export function listDocumentLinks(id) {
-  return apiRequest(`/api/v1/admin/documents/${id}/links`)
+  const path = `/api/v1/admin/documents/${id}/links`
+  const pending = documentLinksInflight.get(path)
+  if (pending) return pending
+  const request = apiRequest(path).finally(() => {
+    documentLinksInflight.delete(path)
+  })
+  documentLinksInflight.set(path, request)
+  return request
 }
 
 export function linkDocument(id, body) {
@@ -101,11 +110,22 @@ export function requestIndexing(id, versionId, retry = false) {
   })
 }
 
-export function requestReindex(id, versionId) {
-  return apiRequest(`/api/v1/admin/documents/${id}/links/${versionId}/index/reindex`, {
+export function requestReindex(id, versionId, pageRange) {
+  const range = String(pageRange || '').trim()
+  const options = {
     method: 'POST',
     headers: { 'X-Request-ID': crypto.randomUUID() },
-  })
+  }
+  if (range.toLowerCase() === 'all') {
+    options.body = JSON.stringify({ page_range: '' })
+  } else if (range) {
+    options.body = JSON.stringify({ page_range: range })
+  }
+  return apiRequest(`/api/v1/admin/documents/${id}/links/${versionId}/index/reindex`, options)
+}
+
+export function reindexSettledReady(result) {
+  return Boolean(result) && result.link_status === 'READY' && !result.error_code && result.job_status !== 'CLAIMED'
 }
 
 export async function downloadDocument(id, filename) {

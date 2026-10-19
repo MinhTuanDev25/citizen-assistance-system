@@ -2,6 +2,7 @@ import { Link, NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { useCommune } from '../commune/CommuneContext.jsx'
 import { adminIngestionEnabled } from '../config/features.js'
+import AdminSearch from './AdminSearch.jsx'
 
 const ingestionOn = adminIngestionEnabled()
 
@@ -51,7 +52,7 @@ export function AdminShell() {
       </aside>
       <div className="cas-body">
         <header className="cas-top">
-          <div className="cas-search">Tìm tài liệu, thủ tục…</div>
+          <AdminSearch />
           <div className="cas-userchip">
             <span className="cas-avatar">{initial}</span>
             {user?.name || 'Cán bộ'}

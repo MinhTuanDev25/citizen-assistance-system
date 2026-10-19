@@ -186,12 +186,8 @@ func (s *Service) Activate(ctx context.Context, actor, requestID, procedureID, v
 		return ActivateResult{}, ErrNotFound
 	}
 	if row.Status == "ACTIVE" {
-		if currentID == nil || *currentID != row.ID {
-			if _, err := tx.Exec(ctx, `
-				UPDATE procedures SET active_version_id = $2, updated_at = now()
-				WHERE id = $1 AND xa_id = $3`, procedureID, row.ID, s.XAID); err != nil {
-				return ActivateResult{}, err
-			}
+		if activePointerMismatch(currentID, row.ID) {
+			return ActivateResult{}, fmt.Errorf("%w: ACTIVE_POINTER_MISMATCH", ErrConflict)
 		}
 		out := ActivateResult{
 			ProcedureID: procedureID, PreviousActiveVersionID: currentID, ActiveVersionID: row.ID,
@@ -280,6 +276,10 @@ func (s *Service) Activate(ctx context.Context, actor, requestID, procedureID, v
 		return ActivateResult{}, err
 	}
 	return out, nil
+}
+
+func activePointerMismatch(current *uuid.UUID, versionID uuid.UUID) bool {
+	return current == nil || *current != versionID
 }
 
 func checkExpected(current *uuid.UUID, expected *uuid.UUID) error {

@@ -57,6 +57,12 @@ type Target struct {
 	Status             string    `json:"status"`
 }
 
+const (
+	RangeKeep = "keep"
+	RangeAll  = "all"
+	RangeSet  = "set"
+)
+
 type Store interface {
 	ListTargets(ctx context.Context, xaID string) ([]Target, error)
 	ListLinks(ctx context.Context, xaID string, documentID uuid.UUID) ([]Link, error)
@@ -78,6 +84,8 @@ type ClaimInput struct {
 	Reindex            bool
 	AuditAction        string
 	TTL                time.Duration
+	RangeMode          string
+	RangeValue         string
 }
 
 type ClaimResult struct {
@@ -85,6 +93,7 @@ type ClaimResult struct {
 	ClaimToken     uuid.UUID
 	RunWorker      bool
 	LinkStatus     string
+	JobStatus      string
 	DocumentStatus string
 	ErrorCode      string
 	WorkerRequest  Request
@@ -126,6 +135,8 @@ type FinishResult struct {
 	Applied        bool
 	LinkStatus     string
 	DocumentStatus string
+	JobStatus      string
+	ErrorCode      string
 }
 
 type GenerationMetrics struct {
@@ -196,29 +207,36 @@ func (s *Service) Unlink(ctx context.Context, documentID, versionID, actor, requ
 }
 
 func (s *Service) Request(ctx context.Context, documentID, versionID, actor, requestID uuid.UUID, retry bool) (Result, error) {
-	return s.dispatch(ctx, documentID, versionID, actor, requestID, retry, false)
+	return s.dispatch(ctx, documentID, versionID, actor, requestID, retry, false, "", "", "")
 }
 
-func (s *Service) Reindex(ctx context.Context, documentID, versionID, actor, requestID uuid.UUID) (Result, error) {
-	return s.dispatch(ctx, documentID, versionID, actor, requestID, false, true)
+func (s *Service) Reindex(ctx context.Context, documentID, versionID, actor, requestID uuid.UUID, pageRange *string) (Result, error) {
+	mode, value, key, err := parseReindexPageRange(pageRange)
+	if err != nil {
+		return Result{}, err
+	}
+	return s.dispatch(ctx, documentID, versionID, actor, requestID, false, true, mode, value, key)
 }
 
-func (s *Service) dispatch(ctx context.Context, documentID, versionID, actor, requestID uuid.UUID, retry, reindex bool) (Result, error) {
+func (s *Service) dispatch(ctx context.Context, documentID, versionID, actor, requestID uuid.UUID, retry, reindex bool, rangeMode, rangeValue, rangeHash string) (Result, error) {
 	kind := "index"
 	action := "DOCUMENT_INDEX_REQUESTED"
 	if retry {
 		kind = "retry"
 		action = "DOCUMENT_INDEX_RETRY"
 	}
+	pageHash := ""
 	if reindex {
 		kind = "reindex"
 		action = "DOCUMENT_REINDEX_REQUESTED"
+		pageHash = rangeHash
 	}
 	claim, err := s.Store.Claim(ctx, ClaimInput{
 		DocumentID: documentID, ProcedureVersionID: versionID, XAID: s.XAID,
 		RequestID: requestID, ActorUserID: actor,
-		PayloadHash: hashPayload(kind, documentID, versionID, "", ""),
+		PayloadHash: hashPayload(kind, documentID, versionID, "", pageHash),
 		Retry:       retry, Reindex: reindex, AuditAction: action, TTL: s.ClaimTTL,
+		RangeMode: rangeMode, RangeValue: rangeValue,
 	})
 	if err != nil {
 		return Result{}, err
@@ -227,7 +245,7 @@ func (s *Service) dispatch(ctx context.Context, documentID, versionID, actor, re
 		return Result{
 			DocumentID: documentID, ProcedureVersionID: versionID,
 			LinkStatus: claim.LinkStatus, ProcessingStatus: claim.DocumentStatus,
-			JobID: claim.JobID, ErrorCode: claim.ErrorCode, Replay: true,
+			JobID: claim.JobID, JobStatus: claim.JobStatus, ErrorCode: claim.ErrorCode, Replay: true,
 		}, nil
 	}
 	var staged StagedObject
@@ -253,7 +271,9 @@ func (s *Service) dispatch(ctx context.Context, documentID, versionID, actor, re
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
-	wctx, cancel := context.WithTimeout(ctx, timeout)
+	// Detach from the HTTP request context. Nginx/browser disconnect must not
+	// cancel a claimed pipeline job; finishDetached already uses Background.
+	wctx, cancel := context.WithTimeout(context.Background(), timeout)
 	resp, callErr := s.Worker.Index(wctx, claim.WorkerRequest)
 	cancel()
 	code := ""
@@ -288,10 +308,21 @@ func (s *Service) dispatch(ctx context.Context, documentID, versionID, actor, re
 		return Result{}, ErrConflict
 	}
 	log.Printf("index_finish outcome=%s error_code=%s chunks=%d vectors=%d", outcome, code, resp.ChunkCount, resp.VectorCount)
+	jobStatus := finished.JobStatus
+	if jobStatus == "" {
+		jobStatus = "FAILED"
+		if outcome == OutcomeReady {
+			jobStatus = "SUCCEEDED"
+		}
+	}
+	errCode := code
+	if finished.ErrorCode != "" {
+		errCode = finished.ErrorCode
+	}
 	return Result{
 		DocumentID: documentID, ProcedureVersionID: versionID,
 		LinkStatus: finished.LinkStatus, ProcessingStatus: finished.DocumentStatus,
-		JobID: claim.JobID, ErrorCode: code,
+		JobID: claim.JobID, JobStatus: jobStatus, ErrorCode: errCode,
 	}, nil
 }
 
@@ -321,6 +352,45 @@ func cleanRelationship(v string) (string, error) {
 		return "", ErrValidation
 	}
 	return v, nil
+}
+
+func PageRangeBounds(pageRange *string) (start, end int, unconstrained bool, ok bool) {
+	if pageRange == nil || strings.TrimSpace(*pageRange) == "" {
+		return 0, 0, true, true
+	}
+	cleaned, err := cleanPageRange(*pageRange)
+	if err != nil || cleaned == "" {
+		return 0, 0, false, false
+	}
+	dash := strings.IndexByte(cleaned, '-')
+	if dash < 0 {
+		n, convErr := strconv.Atoi(cleaned)
+		if convErr != nil {
+			return 0, 0, false, false
+		}
+		return n, n, false, true
+	}
+	start, errStart := strconv.Atoi(cleaned[:dash])
+	end, errEnd := strconv.Atoi(cleaned[dash+1:])
+	if errStart != nil || errEnd != nil {
+		return 0, 0, false, false
+	}
+	return start, end, false, true
+}
+
+func parseReindexPageRange(pageRange *string) (mode, value, hashKey string, err error) {
+	if pageRange == nil {
+		return RangeKeep, "", RangeKeep, nil
+	}
+	v := strings.TrimSpace(*pageRange)
+	if v == "" || strings.EqualFold(v, "all") {
+		return RangeAll, "", RangeAll, nil
+	}
+	cleaned, err := cleanPageRange(v)
+	if err != nil || cleaned == "" {
+		return "", "", "", ErrValidation
+	}
+	return RangeSet, cleaned, cleaned, nil
 }
 
 func cleanPageRange(v string) (string, error) {

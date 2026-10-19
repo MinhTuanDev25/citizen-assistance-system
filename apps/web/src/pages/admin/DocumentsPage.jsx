@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { listDomains } from '../../api/catalog.js'
 import {
   downloadDocument,
@@ -7,6 +8,7 @@ import {
   listDocuments,
   listLinkTargets,
   requestIndexing,
+  reindexSettledReady,
   requestReindex,
   unlinkDocument,
   uploadDocument,
@@ -25,14 +27,67 @@ function formatSize(n) {
 
 function pillClass(status) {
   const u = String(status || '').toUpperCase()
-  if (['READY', 'ACTIVE', 'PROCESSED'].includes(u)) return 'pill ok'
+  if (['READY', 'ACTIVE', 'PROCESSED', 'VALID'].includes(u)) return 'pill ok'
   if (['FAILED', 'EXPIRED', 'SUPERSEDED'].includes(u)) return 'pill bad'
-  if (['PROCESSING', 'UPLOADED', 'PENDING', 'APPROVED', 'INDEXING'].includes(u)) return 'pill warn'
-  if (u === 'ARCHIVED') return 'pill mute'
+  if (['PROCESSING', 'UPLOADED', 'APPROVED', 'INDEXING'].includes(u)) return 'pill warn'
+  if (['PENDING', 'ARCHIVED'].includes(u)) return 'pill mute'
   return 'pill'
 }
 
+const PROCESS_LABEL = {
+  UPLOADED: 'Đã tải',
+  PROCESSING: 'Đang xử lý',
+  PROCESSED: 'Đã xử lý',
+  READY: 'Sẵn sàng',
+  FAILED: 'Lỗi',
+}
+
+function statusLabel(map, status) {
+  const code = String(status || '').toUpperCase()
+  return map[code] || status || '—'
+}
+
+function displayFilename(name) {
+  if (!name) return ''
+  try {
+    return decodeURIComponent(String(name).replace(/\+/g, ' '))
+  } catch {
+    return name
+  }
+}
+
+function linkHeading(link, targets) {
+  const target = targets.find((item) => item.procedure_version_id === link.procedure_version_id)
+  const name = target?.procedure_name || link.procedure_name || link.procedure_code
+  return `${name} · ${link.version}`
+}
+
+function linkNote(link, targets) {
+  const status = String(link.index_status || '').toUpperCase()
+  if (status === 'FAILED') {
+    if (link.last_error_code === 'page_limit') {
+      return 'PDF vượt giới hạn số trang khi lập chỉ mục. Thử lại sau khi tăng hạn mức, hoặc dùng bản rút gọn.'
+    }
+    if (link.last_error_code === 'timeout') {
+      return 'Lập chỉ mục quá thời gian (PDF nhiều trang). Bấm Thử lại một lần và đợi — có thể mất tới 15 phút.'
+    }
+    return 'Lập chỉ mục thất bại. Thử lại hoặc bỏ liên kết.'
+  }
+  if (status !== 'READY') return ''
+  const target = targets.find((item) => item.procedure_version_id === link.procedure_version_id)
+  if (target?.status && target.status !== 'ACTIVE') {
+    return `Phiên ${link.version} chưa đang dùng. Công dân vẫn hỏi phiên đang kích hoạt.`
+  }
+  const pages = link.page_count
+  const chunks = link.chunk_count
+  if (pages == null && chunks == null) return ''
+  return `${pages ?? 0} trang · ${chunks ?? 0} đoạn`
+}
+
 export default function DocumentsPage() {
+  const [params] = useSearchParams()
+  const focusDoc = params.get('doc')
+  const focusApplied = useRef('')
   const [rows, setRows] = useState([])
   const [domains, setDomains] = useState([])
   const [file, setFile] = useState(null)
@@ -46,9 +101,11 @@ export default function DocumentsPage() {
   const [msg, setMsg] = useState('')
   const [error, setError] = useState('')
   const [selected, setSelected] = useState(null)
+  const detailRef = useRef(null)
   const [targets, setTargets] = useState([])
   const [links, setLinks] = useState([])
   const [versionId, setVersionId] = useState('')
+  const [pageRange, setPageRange] = useState('')
   const [indexMsg, setIndexMsg] = useState('')
   const [maxBytes, setMaxBytes] = useState(0)
   const [busyVersionIds, setBusyVersionIds] = useState([])
@@ -144,13 +201,50 @@ export default function DocumentsPage() {
     }
   }, [])
 
+  function openDetail(doc) {
+    if (selected?.id === doc.id) {
+      const node = detailRef.current
+      if (node && typeof node.scrollIntoView === 'function') {
+        node.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+      return
+    }
+    setSelected(doc)
+  }
+
+  useEffect(() => {
+    if (!focusDoc || focusApplied.current === focusDoc) return undefined
+    let cancelled = false
+    listDocuments({ limit: 100 })
+      .then((data) => {
+        if (cancelled) return
+        const found = (data?.items || []).find((d) => d.id === focusDoc)
+        if (!found) return
+        focusApplied.current = focusDoc
+        if (found.domain_id) setDomainId(found.domain_id)
+        openDetail(found)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [focusDoc])
+
+  useLayoutEffect(() => {
+    if (!selected) return
+    const node = detailRef.current
+    if (!node || typeof node.scrollIntoView !== 'function') return
+    node.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [selected])
+
   useEffect(() => {
     if (!indexingOn || !selected?.id) {
       setLinks([])
       return undefined
     }
+    const documentId = selected.id
     let cancel = false
-    listDocumentLinks(selected.id)
+    listDocumentLinks(documentId)
       .then((data) => {
         if (!cancel) setLinks(data.items || [])
       })
@@ -160,7 +254,7 @@ export default function DocumentsPage() {
     return () => {
       cancel = true
     }
-  }, [selected])
+  }, [selected?.id])
 
   async function onLink(event) {
     event.preventDefault()
@@ -171,7 +265,7 @@ export default function DocumentsPage() {
       await linkDocument(selected.id, {
         procedure_version_id: versionId,
         relationship_type: 'SOURCE',
-        page_range: '',
+        page_range: pageRange.trim(),
       })
       const data = await listDocumentLinks(selected.id)
       setLinks(data.items || [])
@@ -200,9 +294,9 @@ export default function DocumentsPage() {
     setError('')
     setIndexMsg('')
     try {
-      const result = await requestReindex(selected.id, versionId)
+      const result = await requestReindex(selected.id, versionId, pageRange)
       setSelected((prev) => (prev ? { ...prev, processing_status: result.processing_status } : prev))
-      setIndexMsg(result.link_status === 'READY' && !result.error_code ? 'Đã lập lại chỉ mục.' : 'Lập lại chỉ mục chưa thay thế bản đang dùng.')
+      setIndexMsg(reindexSettledReady(result) ? 'Đã lập lại chỉ mục.' : 'Lập lại chỉ mục chưa thay thế bản đang dùng.')
       await reloadLinks(selected.id)
       await refresh()
     } catch (err) {
@@ -259,112 +353,120 @@ export default function DocumentsPage() {
   return (
     <div className="admin-page">
       <header className="admin-page-head">
-        <h1>Tài liệu</h1>
-        <p>Upload và lập chỉ mục PDF. RAG trong hội thoại chưa triển khai.</p>
+        <div>
+          <h1>Tài liệu</h1>
+          <p>PDF đã gắn và Sẵn sàng được trích dẫn khi công dân hỏi phiên đang dùng. Bỏ liên kết thì lượt sau không còn đoạn từ file đó.</p>
+        </div>
       </header>
 
-      <div className="admin-split">
-        <form className="panel form-grid" onSubmit={onUpload}>
-          <h2>Upload PDF</h2>
-          <label>
-            File PDF
-            <input
-              name="file"
-              type="file"
-              accept="application/pdf,.pdf"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-            />
-          </label>
-          {file ? (
-            <p className="cell-muted">
-              Đã chọn {file.name} ({formatSize(file.size)})
-            </p>
-          ) : null}
-          <label>
-            Tiêu đề
-            <input name="title" value={title} onChange={(e) => setTitle(e.target.value)} />
-          </label>
-          <label>
-            Lĩnh vực
-            <select name="domain" value={domainId} onChange={(e) => setDomainId(e.target.value)}>
-              {domains.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Số hiệu
-            <input name="document_number" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />
-          </label>
-          <label>
-            Cơ quan ban hành
-            <input name="issuer" value={issuer} onChange={(e) => setIssuer(e.target.value)} />
-          </label>
+      <form className="panel upload-grid" onSubmit={onUpload}>
+        <h2>Upload PDF</h2>
+        <label>
+          File PDF
+          <input
+            name="file"
+            type="file"
+            accept="application/pdf,.pdf"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+          />
+        </label>
+        <label>
+          Tiêu đề
+          <input name="title" value={title} onChange={(e) => setTitle(e.target.value)} />
+        </label>
+        <label>
+          Lĩnh vực
+          <select name="domain" value={domainId} onChange={(e) => setDomainId(e.target.value)}>
+            {domains.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Số hiệu
+          <input name="document_number" value={documentNumber} onChange={(e) => setDocumentNumber(e.target.value)} />
+        </label>
+        <label>
+          Cơ quan ban hành
+          <input name="issuer" value={issuer} onChange={(e) => setIssuer(e.target.value)} />
+        </label>
+        <div className="upload-submit">
           <button type="submit" className="btn-primary" disabled={busy}>
             {busy ? 'Đang tải lên…' : 'Upload'}
           </button>
-          {error ? <p className="form-error">{error}</p> : null}
-          {msg ? <p className="form-ok">{msg}</p> : null}
-        </form>
-
-        <div className="panel">
-          <div className="panel-head">
-            <h2>Danh sách</h2>
-            <label className="inline-filter">
-              Trạng thái xử lý
-              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-                <option value="">Tất cả</option>
-                <option value="UPLOADED">UPLOADED</option>
-                <option value="PROCESSING">PROCESSING</option>
-                <option value="PROCESSED">PROCESSED</option>
-                <option value="READY">READY</option>
-                <option value="FAILED">FAILED</option>
-              </select>
-            </label>
+        </div>
+        {(file || error || msg) ? (
+          <div className="upload-actions">
+            {file ? (
+              <span className="cell-muted">
+                Đã chọn {displayFilename(file.name)} ({formatSize(file.size)})
+              </span>
+            ) : null}
+            {error ? <p className="form-error">{error}</p> : null}
+            {msg ? <p className="form-ok">{msg}</p> : null}
           </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Tiêu đề</th>
-                  <th>Xử lý</th>
-                  <th>Hiệu lực</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((d) => (
-                  <tr key={d.id} className={selected?.id === d.id ? 'is-selected' : ''}>
-                    <td>
-                      <strong>{d.title}</strong>
-                      <div className="cell-muted">{d.filename}</div>
-                    </td>
-                    <td>
-                      <span className={pillClass(d.processing_status)}>{d.processing_status}</span>
-                    </td>
-                    <td>
-                      <span className={pillClass(d.validity_status)}>{d.validity_status}</span>
-                    </td>
-                    <td className="row-actions">
-                      <button type="button" onClick={() => setSelected(d)}>
+        ) : null}
+      </form>
+
+      <div className="panel">
+        <div className="panel-head">
+          <h2>Danh sách</h2>
+          <label className="inline-filter">
+            Trạng thái xử lý
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="">Tất cả</option>
+              <option value="UPLOADED">Đã tải</option>
+              <option value="PROCESSING">Đang xử lý</option>
+              <option value="PROCESSED">Đã xử lý</option>
+              <option value="READY">Sẵn sàng</option>
+              <option value="FAILED">Lỗi</option>
+            </select>
+          </label>
+        </div>
+        <div className="table-wrap">
+          <table className="doc-table">
+            <thead>
+              <tr>
+                <th>Tiêu đề</th>
+                <th className="col-status">Xử lý</th>
+                <th className="col-actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((d) => (
+                <tr key={d.id} className={selected?.id === d.id ? 'is-selected' : ''}>
+                  <td>
+                    <strong>{d.title}</strong>
+                    <div className="cell-muted file-name" title={displayFilename(d.filename)}>
+                      {displayFilename(d.filename)}
+                    </div>
+                  </td>
+                  <td className="col-status">
+                    <span className={pillClass(d.processing_status)}>
+                      {statusLabel(PROCESS_LABEL, d.processing_status)}
+                    </span>
+                  </td>
+                  <td className="col-actions">
+                    <div className="row-actions">
+                      <button type="button" onClick={() => openDetail(d)}>
                         Chi tiết
                       </button>
                       <button type="button" onClick={() => { void onDownload(d) }}>
                         Tải PDF
                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 
       {selected ? (
-        <div className="panel">
+        <div className="panel anchor-target" ref={detailRef}>
           <div className="panel-head">
             <h2>{selected.title}</h2>
             <button type="button" className="linkish dark" onClick={() => setSelected(null)}>
@@ -372,13 +474,14 @@ export default function DocumentsPage() {
             </button>
           </div>
           <div className="meta-row">
-            <span className={pillClass(selected.processing_status)}>{selected.processing_status}</span>
-            <span className={pillClass(selected.validity_status)}>{selected.validity_status}</span>
+            <span className={pillClass(selected.processing_status)}>
+              {statusLabel(PROCESS_LABEL, selected.processing_status)}
+            </span>
             <span className="cell-muted">{formatSize(selected.file_size_bytes || 0)}</span>
           </div>
-          <p className="cell-muted">Checksum: {selected.checksum}</p>
+          <p className="cell-muted file-name">{displayFilename(selected.filename)}</p>
           {indexingOn ? (
-            <form className="form-grid" onSubmit={onLink}>
+            <form className="link-form" onSubmit={onLink}>
               <label>
                 Thủ tục / phiên bản
                 <select name="procedure_version_id" value={versionId} onChange={(e) => setVersionId(e.target.value)}>
@@ -390,19 +493,29 @@ export default function DocumentsPage() {
                   ))}
                 </select>
               </label>
+              <label>
+                Phạm vi trang
+                <input
+                  name="page_range"
+                  value={pageRange}
+                  onChange={(e) => setPageRange(e.target.value)}
+                  placeholder="10-21 · trống = giữ khi lập lại · all = toàn bộ"
+                />
+              </label>
               <button type="submit" className="btn-primary">Gắn thủ tục</button>
               <ul className="link-list">
-                {links.map((link) => (
+                {links.map((link) => {
+                  const note = linkNote(link, targets)
+                  return (
                   <li key={link.procedure_version_id}>
                     <div>
-                      <strong>
-                        {link.procedure_code} · {link.version} · {link.index_status}
-                      </strong>
+                      <strong>{linkHeading(link, targets)}</strong>
                       <div className="cell-muted">
-                        <span className={pillClass(link.index_status)}>{link.index_status}</span>
-                        {link.last_error_code ? ` · ${link.last_error_code}` : ''}
-                        {link.reindex_error_code ? ` · reindex ${link.reindex_error_code}` : ''}
-                        {link.pipeline_version ? ` · ${link.page_count ?? 0} trang · ${link.chunk_count ?? 0} đoạn · OCR ${link.ocr_page_count ?? 0} · ${link.pipeline_version}${link.embedding_model_id ? ` · ${link.embedding_model_id}` : ''}` : ''}
+                        <span className={pillClass(link.index_status)}>
+                          {statusLabel(PROCESS_LABEL, link.index_status)}
+                        </span>
+                        {` · trang ${link.page_range || 'toàn bộ'}`}
+                        {note ? ` · ${note}` : ''}
                       </div>
                     </div>
                     <div className="row-actions">
@@ -428,7 +541,8 @@ export default function DocumentsPage() {
                       ) : null}
                     </div>
                   </li>
-                ))}
+                  )
+                })}
               </ul>
               {indexMsg ? <p className="form-ok">{indexMsg}</p> : null}
             </form>

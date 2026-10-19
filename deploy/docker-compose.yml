@@ -29,7 +29,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cas}
       POSTGRES_DB: ${POSTGRES_DB:-citizen_assistance}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -76,6 +76,8 @@ services:
       AI_INTENT_SELECT_MIN: ${AI_INTENT_SELECT_MIN:-0.82}
       AI_INTENT_CONFIRM_MIN: ${AI_INTENT_CONFIRM_MIN:-0.55}
       AI_SLOT_CONFIDENCE_MIN: ${AI_SLOT_CONFIDENCE_MIN:-0.6}
+      AI_RETRIEVE_ENABLED: ${AI_RETRIEVE_ENABLED:-false}
+      AI_RETRIEVE_TIMEOUT_MS: ${AI_RETRIEVE_TIMEOUT_MS:-3000}
       ADMIN_INGESTION_ENABLED: ${ADMIN_INGESTION_ENABLED:-false}
       OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:-minio:9000}
       OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:-minioadmin}
@@ -92,7 +94,7 @@ services:
       INDEX_PIPELINE_TIMEOUT_SECONDS: ${INDEX_PIPELINE_TIMEOUT_SECONDS:-120}
       INDEX_PUBLISH_TIMEOUT_MS: ${INDEX_PUBLISH_TIMEOUT_MS:-10000}
     ports:
-      - "${API_PORT:-8080}:8080"
+      - "127.0.0.1:${API_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -151,6 +153,7 @@ services:
       INDEX_PIPELINE_TIMEOUT_SECONDS: ${INDEX_PIPELINE_TIMEOUT_SECONDS:-120}
       INDEX_MAX_PDF_PAGES: ${INDEX_MAX_PDF_PAGES:-50}
       INDEX_MAX_OCR_PAGES: ${INDEX_MAX_OCR_PAGES:-20}
+      EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-8}
     volumes:
       - ${EMBEDDING_MODEL_DIR_HOST:-../models/embedding}:/models/embedding:ro
       - ${OCR_MODEL_DIR_HOST:-../models/ocr}:/models/ocr:ro
@@ -171,7 +174,7 @@ services:
         VITE_ADMIN_INGESTION: ${VITE_ADMIN_INGESTION:-false}
         VITE_ADMIN_INDEXING: ${VITE_ADMIN_INDEXING:-false}
     ports:
-      - "${WEB_PORT:-5173}:80"
+      - "127.0.0.1:${WEB_PORT:-5173}:80"
     depends_on:
       api:
         condition: service_healthy
@@ -182,7 +185,8 @@ services:
   minio:
     # Official Docker Hub minio/minio is not anonymously pullable. This pin is.
     # The API creates the private bucket on startup when ingestion is enabled.
-    # Explicit 0.0.0.0 so other Compose services can reach the API port.
+    # Process listen stays 0.0.0.0 inside the container for Compose DNS.
+    # Host publish is loopback-only.
     image: bitnamilegacy/minio:2024.12.18
     entrypoint: ["/opt/bitnami/minio/bin/minio"]
     command: ["server", "--address", "0.0.0.0:9000", "--console-address", "0.0.0.0:9001", "/bitnami/minio/data"]
@@ -190,8 +194,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - miniodata:/bitnami/minio/data
     healthcheck:
@@ -206,7 +210,7 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.13.4
     ports:
-      - "${QDRANT_PORT:-6333}:6333"
+      - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
     volumes:
       - qdrantdata:/qdrant/storage
     profiles:

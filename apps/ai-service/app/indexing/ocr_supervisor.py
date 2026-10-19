@@ -70,6 +70,9 @@ class OcrSupervisor:
     def __init__(self, slots: int, spec: dict, replace_timeout_s: float | None = None) -> None:
         self.slots = max(1, slots)
         self.spec = spec
+        from app.indexing.ocr import rec_dict_supports_vietnamese
+
+        self.vietnamese_capable = rec_dict_supports_vietnamese(str(spec.get("model_dir") or ""))
         self.status = "initializing"
         configured = spec.get("replace_timeout_s", spec.get("init_timeout_s", 30))
         self.replace_timeout_s = float(replace_timeout_s if replace_timeout_s is not None else configured)

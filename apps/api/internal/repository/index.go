@@ -326,6 +326,36 @@ func (r *IndexRepo) Unlink(ctx context.Context, xaID string, documentID, version
 	return false, tx.Commit(ctx)
 }
 
+func applyJobPageRange(req *index.Request, jobRange *string) {
+	if jobRange == nil {
+		return
+	}
+	if strings.TrimSpace(*jobRange) == "" {
+		req.PageRange = nil
+		return
+	}
+	copied := strings.TrimSpace(*jobRange)
+	req.PageRange = &copied
+}
+
+func snapshotJobPageRange(mode, value string, linkPage *string) *string {
+	switch mode {
+	case index.RangeAll:
+		empty := ""
+		return &empty
+	case index.RangeSet:
+		copied := strings.TrimSpace(value)
+		return &copied
+	default:
+		if linkPage == nil || strings.TrimSpace(*linkPage) == "" {
+			empty := ""
+			return &empty
+		}
+		copied := strings.TrimSpace(*linkPage)
+		return &copied
+	}
+}
+
 func (r *IndexRepo) Claim(ctx context.Context, in index.ClaimInput) (index.ClaimResult, error) {
 	tx, err := r.Pool.Begin(ctx)
 	if err != nil {
@@ -372,12 +402,13 @@ func (r *IndexRepo) Claim(ctx context.Context, in index.ClaimInput) (index.Claim
 	var jobID, token, jobDoc, jobVer uuid.UUID
 	var status, hash, errCode string
 	var expires *time.Time
+	var jobPage *string
 	err = tx.QueryRow(ctx, `
 		SELECT id, claim_token, status, payload_hash, coalesce(error_code, ''), claim_expires_at,
-			document_id, procedure_version_id
+			document_id, procedure_version_id, page_range
 		FROM document_index_jobs
 		WHERE xa_id = $1 AND request_id = $2
-		FOR UPDATE`, in.XAID, in.RequestID).Scan(&jobID, &token, &status, &hash, &errCode, &expires, &jobDoc, &jobVer)
+		FOR UPDATE`, in.XAID, in.RequestID).Scan(&jobID, &token, &status, &hash, &errCode, &expires, &jobDoc, &jobVer, &jobPage)
 	if err == nil {
 		if hash != in.PayloadHash || jobDoc != in.DocumentID || jobVer != in.ProcedureVersionID {
 			return index.ClaimResult{}, index.ErrIdempotency
@@ -388,12 +419,12 @@ func (r *IndexRepo) Claim(ctx context.Context, in index.ClaimInput) (index.Claim
 		}
 		switch status {
 		case "SUCCEEDED":
-			return index.ClaimResult{JobID: jobID, ClaimToken: token, LinkStatus: "READY", DocumentStatus: docStatus}, tx.Commit(ctx)
+			return index.ClaimResult{JobID: jobID, ClaimToken: token, LinkStatus: linkStatus, JobStatus: status, DocumentStatus: docStatus}, tx.Commit(ctx)
 		case "FAILED":
-			return index.ClaimResult{JobID: jobID, ClaimToken: token, LinkStatus: "FAILED", DocumentStatus: docStatus, ErrorCode: errCode}, tx.Commit(ctx)
+			return index.ClaimResult{JobID: jobID, ClaimToken: token, LinkStatus: linkStatus, JobStatus: status, DocumentStatus: docStatus, ErrorCode: errCode}, tx.Commit(ctx)
 		case "CLAIMED":
 			if expires != nil && expires.After(time.Now()) {
-				return index.ClaimResult{JobID: jobID, ClaimToken: token, LinkStatus: "PROCESSING", DocumentStatus: docStatus}, tx.Commit(ctx)
+				return index.ClaimResult{JobID: jobID, ClaimToken: token, LinkStatus: linkStatus, JobStatus: status, DocumentStatus: docStatus}, tx.Commit(ctx)
 			}
 			token = uuid.New()
 			lease := time.Now().Add(in.TTL)
@@ -406,6 +437,7 @@ func (r *IndexRepo) Claim(ctx context.Context, in index.ClaimInput) (index.Claim
 			if err := tx.Commit(ctx); err != nil {
 				return index.ClaimResult{}, err
 			}
+			applyJobPageRange(&workerReq, jobPage)
 			return index.ClaimResult{JobID: jobID, ClaimToken: token, RunWorker: true, WorkerRequest: workerReq}, nil
 		}
 	}
@@ -442,12 +474,14 @@ func (r *IndexRepo) Claim(ctx context.Context, in index.ClaimInput) (index.Claim
 	jobID = uuid.New()
 	token = uuid.New()
 	lease := time.Now().Add(in.TTL)
+	persistRange := snapshotJobPageRange(in.RangeMode, in.RangeValue, page)
+	applyJobPageRange(&workerReq, persistRange)
 	_, err = tx.Exec(ctx, `
 		INSERT INTO document_index_jobs (
 			id, document_id, procedure_version_id, xa_id, request_id, payload_hash,
-			status, claim_token, claimed_at, claim_expires_at
-		) VALUES ($1,$2,$3,$4,$5,$6,'CLAIMED',$7,$8,$9)`,
-		jobID, in.DocumentID, in.ProcedureVersionID, in.XAID, in.RequestID, in.PayloadHash, token, time.Now(), lease)
+			status, claim_token, claimed_at, claim_expires_at, page_range
+		) VALUES ($1,$2,$3,$4,$5,$6,'CLAIMED',$7,$8,$9,$10)`,
+		jobID, in.DocumentID, in.ProcedureVersionID, in.XAID, in.RequestID, in.PayloadHash, token, time.Now(), lease, persistRange)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -575,12 +609,12 @@ func (r *IndexRepo) Finish(ctx context.Context, in index.FinishInput) (index.Fin
 		}
 		return index.FinishResult{Applied: false}, tx.Commit(ctx)
 	}
-	var tokenOK bool
+	var jobPageRange *string
 	err = tx.QueryRow(ctx, `
-		SELECT true FROM document_index_jobs
+		SELECT page_range FROM document_index_jobs
 		WHERE id = $1 AND claim_token = $2 AND xa_id = $3 AND status = 'CLAIMED'
 		  AND document_id = $4 AND procedure_version_id = $5
-		FOR UPDATE`, in.JobID, in.ClaimToken, in.XAID, in.DocumentID, in.ProcedureVersionID).Scan(&tokenOK)
+		FOR UPDATE`, in.JobID, in.ClaimToken, in.XAID, in.DocumentID, in.ProcedureVersionID).Scan(&jobPageRange)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return index.FinishResult{}, tx.Commit(ctx)
 	}
@@ -588,7 +622,7 @@ func (r *IndexRepo) Finish(ctx context.Context, in index.FinishInput) (index.Fin
 		return index.FinishResult{}, err
 	}
 	if in.GenerationID != uuid.Nil && in.Outcome == index.OutcomeReady {
-		ready, err := generationMatches(ctx, tx, in)
+		ready, err := generationMatches(ctx, tx, in, jobPageRange)
 		if err != nil {
 			return index.FinishResult{}, err
 		}
@@ -636,14 +670,20 @@ func (r *IndexRepo) Finish(ctx context.Context, in index.FinishInput) (index.Fin
 	if tag.RowsAffected() == 0 {
 		return index.FinishResult{}, tx.Commit(ctx)
 	}
+	publishRange := in.Outcome == index.OutcomeReady && jobPageRange != nil
+	rangeVal := ""
+	if jobPageRange != nil {
+		rangeVal = *jobPageRange
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE procedure_version_documents
 		SET index_status = $4,
 			last_error_code = CASE WHEN $6 THEN last_error_code ELSE NULLIF($5, '') END,
 			reindex_error_code = CASE WHEN $6 THEN NULLIF($5, '') WHEN $4 = 'READY' THEN NULL ELSE reindex_error_code END,
+			page_range = CASE WHEN $7 THEN NULLIF($8, '') ELSE page_range END,
 			updated_at = now()
 		WHERE document_id = $1 AND procedure_version_id = $2 AND xa_id = $3`,
-		in.DocumentID, in.ProcedureVersionID, in.XAID, linkStatus, code, keepReady); err != nil {
+		in.DocumentID, in.ProcedureVersionID, in.XAID, linkStatus, code, keepReady, publishRange, rangeVal); err != nil {
 		return index.FinishResult{}, err
 	}
 	if in.GenerationID != uuid.Nil {
@@ -666,10 +706,14 @@ func (r *IndexRepo) Finish(ctx context.Context, in index.FinishInput) (index.Fin
 	if err := tx.Commit(ctx); err != nil {
 		return index.FinishResult{}, err
 	}
-	return index.FinishResult{Applied: true, LinkStatus: linkStatus, DocumentStatus: docStatus}, nil
+	jobStatus := "FAILED"
+	if in.Outcome == index.OutcomeReady {
+		jobStatus = "SUCCEEDED"
+	}
+	return index.FinishResult{Applied: true, LinkStatus: linkStatus, DocumentStatus: docStatus, JobStatus: jobStatus, ErrorCode: code}, nil
 }
 
-func generationMatches(ctx context.Context, tx pgx.Tx, in index.FinishInput) (bool, error) {
+func generationMatches(ctx context.Context, tx pgx.Tx, in index.FinishInput, jobPageRange *string) (bool, error) {
 	var status, manifest, source string
 	var chunks, vectors int
 	err := tx.QueryRow(ctx, `
@@ -703,6 +747,22 @@ func generationMatches(ctx context.Context, tx pgx.Tx, in index.FinishInput) (bo
 	}
 	if count != chunks {
 		return false, nil
+	}
+	start, end, unconstrained, ok := index.PageRangeBounds(jobPageRange)
+	if !ok {
+		return false, nil
+	}
+	if !unconstrained {
+		var outside int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM knowledge_chunks
+			WHERE generation_id = $1 AND xa_id = $2
+			  AND (page_start < $3 OR page_end > $4)`, in.GenerationID, in.XAID, start, end).Scan(&outside); err != nil {
+			return false, err
+		}
+		if outside > 0 {
+			return false, nil
+		}
 	}
 	sum := sha256.Sum256([]byte(line))
 	return hex.EncodeToString(sum[:]) == manifest, nil
@@ -915,6 +975,45 @@ func claimIdempotency(ctx context.Context, tx pgx.Tx, xaID string, requestID uui
 		return nil, false, index.ErrIdempotency
 	}
 	return raw, true, nil
+}
+
+// CitizenPublishedDocument is true when the PDF is linked to an ACTIVE
+// citizen-domain procedure with a READY generation. Unpublished or unlinked
+// documents stay closed to guests.
+func (r *IndexRepo) CitizenPublishedDocument(ctx context.Context, xaID string, documentID uuid.UUID, citizenDomains []string) (bool, error) {
+	if xaID == "" || documentID == uuid.Nil {
+		return false, nil
+	}
+	if len(citizenDomains) == 0 {
+		citizenDomains = []string{"ho_tich_chung_thuc"}
+	}
+	var ok bool
+	err := r.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM documents d
+			JOIN procedure_version_documents pvd
+			  ON pvd.document_id = d.id
+			 AND pvd.xa_id = d.xa_id
+			 AND pvd.unlinked_at IS NULL
+			 AND pvd.index_status = 'READY'
+			 AND pvd.active_generation_id IS NOT NULL
+			JOIN procedure_versions pv
+			  ON pv.id = pvd.procedure_version_id
+			 AND pv.status = 'ACTIVE'
+			JOIN procedures p
+			  ON p.id = pv.procedure_id
+			 AND p.active_version_id = pv.id
+			 AND p.xa_id = d.xa_id
+			JOIN document_index_generations g
+			  ON g.id = pvd.active_generation_id
+			 AND g.document_id = d.id
+			 AND g.status = 'READY'
+			WHERE d.id = $1
+			  AND d.xa_id = $2
+			  AND p.domain_id = ANY($3)
+		)`, documentID, xaID, citizenDomains).Scan(&ok)
+	return ok, err
 }
 
 func storeIdempotency(ctx context.Context, tx pgx.Tx, xaID string, requestID uuid.UUID, action, hash string, status int, body []byte) error {

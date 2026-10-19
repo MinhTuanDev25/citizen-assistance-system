@@ -30,6 +30,7 @@ from app.indexing.contract import IndexRequestV2, IndexResponseV2
 from app.indexing.errors import IndexFailure
 from app.indexing.pipeline import PIPELINE_VERSION, IndexJob, run_pipeline
 from app.models.index import MAX_INDEX_BODY_BYTES, IndexRequest, IndexResponse, mock_index
+from app.models.retrieve import MAX_RETRIEVE_BODY_BYTES, RetrieveRequest, RetrieveResponse
 from app.ratelimit import ExtractLimiter
 from app.providers.base import (
     REASON_CONFIG_ERROR,
@@ -81,6 +82,7 @@ class _ExtractBodyLimit:
         self.limits = {
             "/v1/extract": MAX_REQUEST_BODY_BYTES,
             "/v1/index": MAX_INDEX_BODY_BYTES,
+            "/v1/retrieve": MAX_RETRIEVE_BODY_BYTES,
         }
 
     async def __call__(self, scope, receive, send):
@@ -225,7 +227,7 @@ def status() -> dict:
         "phase": "4b-content-pipeline" if pipeline else "4a-index-foundation",
         "extract": "implemented",
         "index": "pipeline" if pipeline else "mock",
-        "rag": "not_implemented",
+        "rag": "implemented",
     }
     body.update(settings.status_dict())
     provider_ok, provider_reason = settings.provider_ready()
@@ -385,6 +387,37 @@ async def index_document(http_request: Request):
             await asyncio.shield(asyncio.to_thread(_gate.cancel, handle))
             return _failed(body, "timeout")
     raise HTTPException(status_code=422, detail={"reason": "schema_version"})
+
+
+@app.post("/v1/retrieve", response_model=RetrieveResponse)
+def retrieve_evidence(body: RetrieveRequest, http_request: Request) -> RetrieveResponse:
+    if not _token_matches(http_request):
+        raise HTTPException(status_code=401, detail={"reason": "unauthorized"})
+    from app.indexing.retrieve import RetrieveError, http_search, postgres_loader, query_embedder, run_retrieve
+
+    settings = get_settings()
+    timeout_s = min(8.0, max(0.5, float(getattr(settings, "request_timeout_s", 3) or 3)))
+    try:
+        embed_fn, identity = query_embedder(settings)
+        search = http_search(settings.qdrant_url, settings.qdrant_collection, timeout_s)
+        load = postgres_loader(settings.database_url, timeout_s)
+        return run_retrieve(
+            body,
+            embed_query=embed_fn,
+            search=search,
+            load_chunks=load,
+            embed_identity=identity,
+        )
+    except RetrieveError as exc:
+        logging.warning("retrieve failed code=%s", exc.code)
+        if exc.code in {"invalid_request", "dimension_mismatch"}:
+            raise HTTPException(status_code=422, detail={"reason": exc.code}) from exc
+        if exc.code == "timeout":
+            raise HTTPException(status_code=504, detail={"reason": "timeout"}) from exc
+        raise HTTPException(status_code=exc.http_status, detail={"reason": exc.code}) from exc
+    except Exception:
+        logging.exception("retrieve failed unexpectedly")
+        raise HTTPException(status_code=503, detail={"reason": "retrieval_unavailable"}) from None
 
 
 def _run_v2(body: IndexRequestV2, settings: Settings, deadline=None) -> IndexResponseV2:

@@ -1,0 +1,38 @@
+C0 Step 7.2 provenance semantics fix — 2026-10-15
+
+Commands:
+  PYTHONDONTWRITEBYTECODE=1 python -m compileall -q -b \
+    src/c0_cascaded.py src/c0_manifest.py src/c0_tokenizer.py \
+    tests/test_c0_cascaded.py tests/test_c0_tokenizer.py
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -c \
+    "import src.c0_cascaded, src.c0_manifest, src.c0_tokenizer; print('import_ok')"
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. python -m pytest -v \
+    tests/test_c0_cascaded.py tests/test_c0_tokenizer.py --noconftest
+
+Result:
+  compileall: exit 0
+  import smoke: import_ok
+  48 passed, 0 failed, 0 skipped in 0.45s
+
+--noconftest is required here because tests/conftest.py imports torch.
+
+Environment:
+  python 3.13.9 (Anaconda) /opt/anaconda3/bin/python
+  platform macOS-26.6.2-arm64-arm-64bit-Mach-O
+  pytest=8.4.2
+  numpy=2.1.3
+  pandas=2.3.3
+  PyYAML=6.0.3
+  soundfile=0.14.0
+  torch=NOT_INSTALLED
+  transformers=NOT_INSTALLED
+  accelerate=NOT_INSTALLED
+
+These tests mock model interfaces and hash tiny fake `model.safetensors`
+files (`b"not-a-weight"`). They are not real-model or real-audio evidence.
+
+Not executed in this step:
+  TOKENIZER_PARITY against Hub + mt_training_contract.json
+  RESEARCH_CHECKPOINT_PROVENANCE against RunPod GB weights
+  MODEL_LOAD of checkpoint-12500 / checkpoint-17500
+  REAL_AUDIO_INFERENCE on Bahnar wav

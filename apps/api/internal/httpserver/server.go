@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"log/slog"
 	"time"
 
@@ -22,8 +23,10 @@ import (
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/index"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/middleware"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/repository"
+	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/retrieve"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/storage"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -78,6 +81,12 @@ func NewWithIndexWorker(logger *slog.Logger, pool *pgxpool.Pool, cfg config.Conf
 		client.ServiceToken = cfg.AIServiceToken
 		extractor = client
 	}
+	var retriever retrieve.Retriever
+	if cfg.AIRetrieveEnabled && cfg.AIServiceURL != "" {
+		client := retrieve.NewClient(cfg.AIServiceURL, time.Duration(cfg.AIRetrieveTimeoutMS)*time.Millisecond)
+		client.ServiceToken = cfg.AIServiceToken
+		retriever = client
+	}
 	sessionHandler := session.NewHandler(sessionRepo, communeRepo, &chat.Service{
 		Pool:                pool,
 		Sessions:            sessionRepo,
@@ -87,6 +96,7 @@ func NewWithIndexWorker(logger *slog.Logger, pool *pgxpool.Pool, cfg config.Conf
 		AIPolicy:            decision.Policy{SelectMin: cfg.AIIntentSelectMin, ConfirmMin: cfg.AIIntentConfirmMin},
 		AIPolicySet:         true,
 		AISlotConfidenceMin: cfg.AISlotConfidenceMin,
+		Retriever:           retriever,
 	})
 	authHandler := authapi.NewHandler(userRepo, tokens)
 
@@ -100,6 +110,11 @@ func NewWithIndexWorker(logger *slog.Logger, pool *pgxpool.Pool, cfg config.Conf
 			MaxBytes: cfg.DocumentMaxBytes,
 			Logger:   logger,
 		})
+		indexStore := &repository.IndexRepo{Pool: pool}
+		domains := append([]string{}, cfg.CitizenDomainIDs...)
+		handler.Published = func(ctx context.Context, xaID string, documentID uuid.UUID) (bool, error) {
+			return indexStore.CitizenPublishedDocument(ctx, xaID, documentID, domains)
+		}
 		if cfg.AdminIndexingEnabled {
 			if worker == nil {
 				worker = index.HTTPWorker{BaseURL: cfg.AIServiceURL, Token: cfg.AIServiceToken, Timeout: workerTimeout(cfg)}

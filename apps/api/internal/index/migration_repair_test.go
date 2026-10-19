@@ -40,7 +40,7 @@ func TestUpgradeFromV10RepairsUnlinkedReadyDocument(t *testing.T) {
 	if status != "UPLOADED" {
 		t.Fatalf("unlinked document status %s", status)
 	}
-	assertVersion(t, pool, 16)
+	assertVersion(t, pool, 18)
 	_ = name
 }
 
@@ -328,7 +328,7 @@ func TestMigration16RoundTripKeepsGenerationRows(t *testing.T) {
 	pool.Close()
 	migrateUp(t, dsn)
 	pool = openScratch(t, dsn)
-	assertVersion(t, pool, 16)
+	assertVersion(t, pool, 18)
 	var dirty bool
 	if err := pool.QueryRow(context.Background(), `SELECT dirty FROM schema_migrations`).Scan(&dirty); err != nil {
 		t.Fatal(err)
@@ -356,12 +356,12 @@ func TestMigration16RoundTripKeepsGenerationRows(t *testing.T) {
 	}
 	m.Close()
 	pool = openScratch(t, dsn)
-	assertVersion(t, pool, 15)
+	assertVersion(t, pool, 17)
 	pool.Close()
 	migrateUp(t, dsn)
 	pool = openScratch(t, dsn)
 	defer pool.Close()
-	assertVersion(t, pool, 16)
+	assertVersion(t, pool, 18)
 	if err := pool.QueryRow(context.Background(), `SELECT dirty FROM schema_migrations`).Scan(&dirty); err != nil {
 		t.Fatal(err)
 	}

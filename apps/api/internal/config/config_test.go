@@ -103,6 +103,9 @@ func TestLoadRejectsBadAIConfig(t *testing.T) {
 		{"AI_INTENT_SELECT_MIN", "+Inf"},
 		{"AI_INTENT_CONFIRM_MIN", "-Inf"},
 		{"AI_EXTRACT_ENABLED", "maybe"},
+		{"AI_RETRIEVE_ENABLED", "maybe"},
+		{"AI_RETRIEVE_TIMEOUT_MS", "0"},
+		{"AI_RETRIEVE_TIMEOUT_MS", "11000"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.key+"="+tc.val, func(t *testing.T) {
@@ -118,6 +121,30 @@ func TestLoadRejectsBadAIConfig(t *testing.T) {
 				t.Fatalf("error echoed config value %q: %v", tc.val, err)
 			}
 		})
+	}
+}
+
+func TestLoadAcceptsRetrieveTimeoutTenSeconds(t *testing.T) {
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("CONFIG_FILE", filepath.Join("..", "..", "configs", "local", "config.yaml"))
+	t.Setenv("AI_RETRIEVE_TIMEOUT_MS", "10000")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AIRetrieveTimeoutMS != 10000 {
+		t.Fatalf("AIRetrieveTimeoutMS=%d", cfg.AIRetrieveTimeoutMS)
+	}
+}
+
+func TestLoadRequiresTokenWhenRetrieveEnabled(t *testing.T) {
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("CONFIG_FILE", filepath.Join("..", "..", "configs", "local", "config.yaml"))
+	t.Setenv("AI_RETRIEVE_ENABLED", "true")
+	t.Setenv("AI_SERVICE_URL", "http://ai-service:8001")
+	t.Setenv("AI_SERVICE_TOKEN", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected missing token error")
 	}
 }
 

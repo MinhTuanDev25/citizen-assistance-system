@@ -49,3 +49,10 @@ deploy/volumes/
 
 # Local validation logs. Never commit secrets or model weights.
 /artifacts/
+
+# Local G3/Qdrant/MinIO snapshots. Not source.
+/backups/
+
+# Phase 5 local evidence (zips, unpacked reports). Not product source.
+/phase5_*.zip
+/reports/

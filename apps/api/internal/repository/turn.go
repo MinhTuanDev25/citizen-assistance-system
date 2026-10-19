@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/procedurecatalog"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -138,6 +139,9 @@ func (r *SessionRepo) LockTurn(ctx context.Context, tx pgx.Tx, sessionID uuid.UU
 		); err != nil {
 			return nil, err
 		}
+		if procedurecatalog.HiddenFromCitizen(row.ProcedureCode) {
+			continue
+		}
 		snap.Catalog = append(snap.Catalog, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -266,6 +270,13 @@ func (r *SessionRepo) SaveTurn(ctx context.Context, tx pgx.Tx, sessionID uuid.UU
 		); err != nil {
 			return nil, nil, err
 		}
+		var xaID string
+		if err := tx.QueryRow(ctx, `SELECT xa_id FROM conversation_sessions WHERE id=$1`, sessionID).Scan(&xaID); err != nil {
+			return nil, nil, err
+		}
+		if _, err := r.EnsureSourcePins(ctx, tx, sessionID, xaID, *in.ProcedureID, *in.VersionID); err != nil {
+			return nil, nil, err
+		}
 	} else if _, err := tx.Exec(ctx, `
 		UPDATE conversation_sessions SET updated_at = now() WHERE id = $1`, sessionID,
 	); err != nil {
@@ -308,12 +319,85 @@ func insertCitation(ctx context.Context, tx pgx.Tx, messageID uuid.UUID, cite ma
 	eff, _ := cite["effective_date"].(string)
 	issuer, _ := cite["issuer"].(string)
 	page, _ := cite["page_range"].(string)
+	excerpt, _ := cite["excerpt"].(string)
+	excerptHash, _ := cite["excerpt_sha256"].(string)
+	generationID, _ := cite["generation_id"].(string)
+	versionID, _ := cite["procedure_version_id"].(string)
+	evidence, _ := cite["evidence_status"].(string)
+	contentHash, _ := cite["content_sha256"].(string)
+	availability, _ := cite["availability"].(string)
+	documentID, _ := cite["document_id"].(string)
+	chunkID, _ := cite["knowledge_chunk_id"].(string)
+	pageStart := intFromCite(cite["page_start"])
+	pageEnd := intFromCite(cite["page_end"])
+	score := floatFromCite(cite["retrieval_score"])
 	_, err := tx.Exec(ctx, `
-		INSERT INTO message_citations (message_id, title, source_type, doc_id, effective_date, issuer, page_range)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		INSERT INTO message_citations (
+			message_id, title, source_type, doc_id, effective_date, issuer, page_range,
+			excerpt, excerpt_sha256, generation_id, procedure_version_id, evidence_status,
+			retrieval_score, content_sha256, page_start, page_end, availability,
+			document_id, knowledge_chunk_id
+		)
+		VALUES (
+			$1, $2, $3, $4, $5, $6, $7,
+			$8, $9, $10, $11, $12,
+			$13, $14, $15, $16, $17,
+			$18, $19
+		)`,
 		messageID, nullIfEmpty(title), nullIfEmpty(sourceType), nullIfEmpty(docID), nullIfEmpty(eff), nullIfEmpty(issuer), nullIfEmpty(page),
+		nullIfEmpty(excerpt), nullIfEmpty(excerptHash), parseUUID(generationID), parseUUID(versionID), nullIfEmpty(evidence),
+		score, nullIfEmpty(contentHash), pageStart, pageEnd, nullIfEmpty(availability),
+		parseUUID(documentID), parseUUID(chunkID),
 	)
 	return err
+}
+
+func parseUUID(raw string) any {
+	id, err := uuid.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return nil
+	}
+	return id
+}
+
+func intFromCite(v any) any {
+	switch n := v.(type) {
+	case int:
+		if n == 0 {
+			return nil
+		}
+		return n
+	case int32:
+		if n == 0 {
+			return nil
+		}
+		return int(n)
+	case int64:
+		if n == 0 {
+			return nil
+		}
+		return int(n)
+	case float64:
+		if n == 0 {
+			return nil
+		}
+		return int(n)
+	default:
+		return nil
+	}
+}
+
+func floatFromCite(v any) any {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	default:
+		return nil
+	}
 }
 
 func nullIfEmpty(s string) any {

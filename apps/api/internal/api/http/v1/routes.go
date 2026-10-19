@@ -80,6 +80,10 @@ func MapRoutes(
 		}
 
 		if documentHandler != nil {
+			published := v1.Group("/documents")
+			{
+				published.GET("/:id/content", documentHandler.CitizenContent)
+			}
 			docs := v1.Group("/admin/documents")
 			docs.Use(requireAdmin)
 			{

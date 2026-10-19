@@ -13,6 +13,7 @@ import (
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/aiextract"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/decision"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/repository"
+	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/retrieve"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -41,6 +42,7 @@ type Service struct {
 	AIPolicy            decision.Policy
 	AIPolicySet         bool
 	AISlotConfidenceMin float64
+	Retriever           retrieve.Retriever
 	// ClaimLease is how long a PENDING extractor claim stays owned before
 	// another request with the same payload may take it over. Zero uses
 	// DefaultClaimLease. The lease is not a database lock: it is released
@@ -83,6 +85,8 @@ type TurnResult struct {
 	UserMessage      *repository.Message           `json:"user_message,omitempty"`
 	AssistantMessage *repository.Message           `json:"assistant_message,omitempty"`
 	IdempotentReplay bool                          `json:"idempotent_replay,omitempty"`
+	RetrievalStatus  string                        `json:"retrieval_status,omitempty"`
+	RetrievalReason  string                        `json:"retrieval_reason,omitempty"`
 }
 
 // PendingCandidate is a confirm option pinned to an exact procedure version.
@@ -195,6 +199,8 @@ func (s *Service) finishPlan(
 	plan *planned,
 ) (*TurnResult, error) {
 	plan.save.RequestID = requestID
+	attachLiveSources(ctx, tx, s.Sessions, s.Retriever, sessionID, snap.Session.XaID, message, plan)
+
 	plan.save.ActorUserID = snap.Session.UserID
 	if plan.save.AuditPayload == nil {
 		plan.save.AuditPayload = map[string]any{}
@@ -317,6 +323,8 @@ func (s *Service) replayLegacyTurn(
 		FilledSlots:      anyMapFromMeta(meta["filled_slots"]),
 		ProcedureCode:    stringFromMeta(meta["procedure_code"]),
 		ProcedureVersion: stringFromMeta(meta["procedure_version"]),
+		RetrievalStatus:  stringFromMeta(meta["retrieval_status"]),
+		RetrievalReason:  stringFromMeta(meta["retrieval_reason"]),
 	}
 	envelope, err := json.Marshal(replay)
 	if err != nil {
@@ -421,8 +429,9 @@ func slotStateFromMeta(v any) map[string]decision.SlotValue {
 }
 
 type planned struct {
-	result TurnResult
-	save   repository.SaveTurnInput
+	result        TurnResult
+	save          repository.SaveTurnInput
+	procedureName string
 }
 
 func outOfScope(snap *repository.TurnSnapshot, message string, names []string) *planned {
@@ -715,6 +724,7 @@ func buildPlannedFromDecision(
 		slotState[key] = value
 	}
 	return &planned{
+		procedureName: row.Name,
 		result: TurnResult{
 			SessionID:        snap.Session.ID.String(),
 			Action:           decided.Action,

@@ -12,6 +12,15 @@ import {
 import { CitizenLayout } from '../components/CitizenLayout.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { useCommune } from '../commune/CommuneContext.jsx'
+import {
+  citationAvailability,
+  citationExcerpt,
+  citationPage,
+  citationPdfHref,
+  citationTitle,
+  retrievalHint,
+  splitEvidence,
+} from '../lib/citations.js'
 
 function Typing() {
   return (
@@ -20,6 +29,67 @@ function Typing() {
       <i />
       <i />
     </span>
+  )
+}
+
+function EvidenceList({ citations, retrievalStatus, retrievalReason }) {
+  const { supporting, related } = splitEvidence(citations)
+  const hint = retrievalHint(retrievalStatus, retrievalReason)
+  if (!supporting.length && !related.length && !hint) return null
+  return (
+    <div className="cite-block">
+      {supporting.length ? (
+        <section>
+          <p className="cite-heading">Nguồn hỗ trợ nội dung đã xác minh</p>
+          <ol className="cite-evidence">
+            {supporting.map((cite, index) => (
+              <CitationItem key={`s-${index}`} cite={cite} index={index + 1} verified />
+            ))}
+          </ol>
+        </section>
+      ) : null}
+      {related.length ? (
+        <section>
+          <p className="cite-heading">Tài liệu liên quan</p>
+          <ol className="cite-evidence" start={supporting.length + 1}>
+            {related.map((cite, index) => (
+              <CitationItem key={`r-${index}`} cite={cite} index={supporting.length + index + 1} />
+            ))}
+          </ol>
+        </section>
+      ) : null}
+      {hint ? <p className="cite-hint">{hint}</p> : null}
+    </div>
+  )
+}
+
+function CitationItem({ cite, index, verified = false }) {
+  const page = citationPage(cite)
+  const excerpt = citationExcerpt(cite)
+  const availability = citationAvailability(cite)
+  const href = citationPdfHref(cite)
+  const number = cite.document_number || cite.DocumentNumber || ''
+  const label = `[${index}] ${citationTitle(cite)}${number ? ` · ${number}` : ''}${page ? ` — Trang ${page}` : ''}`
+  return (
+    <li>
+      <strong>
+        {href ? (
+          <a className="cite-link" href={href} target="_blank" rel="noopener noreferrer">
+            {label}
+          </a>
+        ) : (
+          label
+        )}
+      </strong>
+      {href ? (
+        <a className="cite-open" href={href} target="_blank" rel="noopener noreferrer">
+          Mở PDF
+        </a>
+      ) : null}
+      {verified ? null : <span className="cite-badge">chưa xác minh checklist</span>}
+      {availability ? <span className="cite-badge">{availability}</span> : null}
+      {excerpt ? <blockquote>{excerpt}</blockquote> : null}
+    </li>
   )
 }
 
@@ -394,6 +464,13 @@ export default function CitizenChatPage() {
                 className={`msg ${m.role === 'user' ? 'user' : 'bot'}`}
               >
                 {m.text}
+                {m.role === 'assistant' ? (
+                  <EvidenceList
+                    citations={m.citations}
+                    retrievalStatus={m.retrievalStatus}
+                    retrievalReason={m.retrievalReason}
+                  />
+                ) : null}
               </div>
             ))}
             {pendingConfirm ? (

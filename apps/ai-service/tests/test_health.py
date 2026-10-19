@@ -32,6 +32,7 @@ def test_status():
     body = r.json()
     assert body["service"] == "cas-ai-service"
     assert body["extract"] == "implemented"
+    assert body["rag"] == "implemented"
     # Default LLM_PROVIDER is mock unless overridden in the environment —
     # mock is always "ready" with no secrets required.
     assert body["provider"] in ("mock", "openai", "gemini")

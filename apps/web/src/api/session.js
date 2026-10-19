@@ -282,6 +282,9 @@ export function mapApiMessage(m) {
     text: m.content,
     action: m.action || null,
     candidates: meta.candidates || null,
+    citations: meta.citations || null,
+    retrievalStatus: meta.retrieval_status || m.retrieval_status || null,
+    retrievalReason: meta.retrieval_reason || m.retrieval_reason || null,
     createdAt: m.created_at,
   }
 }

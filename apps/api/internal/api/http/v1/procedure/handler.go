@@ -8,6 +8,7 @@ import (
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/activation"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/auth"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/middleware"
+	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/procedurecatalog"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/repository"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/response"
 	"github.com/gin-gonic/gin"
@@ -109,6 +110,9 @@ func (h *Handler) List(c *gin.Context) {
 	for _, item := range items {
 		if citizenOnly {
 			if _, ok := allowed[item.DomainID]; !ok {
+				continue
+			}
+			if procedurecatalog.HiddenFromCitizen(item.ProcedureCode) {
 				continue
 			}
 		}

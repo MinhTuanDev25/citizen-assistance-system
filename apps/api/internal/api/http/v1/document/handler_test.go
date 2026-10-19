@@ -561,3 +561,54 @@ func postRaw(t *testing.T, eng http.Handler, token string, body *os.File, conten
 	eng.ServeHTTP(w, req)
 	return w
 }
+
+func TestCitizenContentPublishedInlineNoAuth(t *testing.T) {
+	repo := &stubRepo{}
+	objects := storage.NewMemory()
+	eng, admin, _ := newEngine(t, repo, objects, 1024)
+	payload := pdfBytes("citizen-inline")
+	body, ctype := multipartUpload(t, payload, "a.pdf", "application/pdf", metaFields())
+	created := do(eng, http.MethodPost, "/api/v1/admin/documents", admin, ctype, body, 0)
+	if created.Code != http.StatusCreated {
+		t.Fatal(created.Body.String())
+	}
+
+	h := NewHandler(&document.Service{
+		Repo: repo, Objects: objects, Bucket: "cas-documents", XAID: "xa_chu_se",
+		MaxBytes: 1024, TempDir: t.TempDir(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	h.Published = func(_ context.Context, _ string, _ uuid.UUID) (bool, error) { return true, nil }
+	r := gin.New()
+	r.GET("/api/v1/documents/:id/content", h.CitizenContent)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/documents/"+repo.docs[0].ID.String()+"/content", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("citizen content %d %s", w.Code, w.Body.String())
+	}
+	if !bytes.Equal(w.Body.Bytes(), payload) {
+		t.Fatalf("payload mismatch")
+	}
+	if !strings.Contains(w.Header().Get("Content-Disposition"), "inline") {
+		t.Fatalf("want inline, got %q", w.Header().Get("Content-Disposition"))
+	}
+}
+
+func TestCitizenContentUnpublishedIs404(t *testing.T) {
+	h := NewHandler(&document.Service{
+		Repo: &stubRepo{}, Objects: storage.NewMemory(), Bucket: "cas-documents", XAID: "xa_chu_se",
+		MaxBytes: 1024, TempDir: t.TempDir(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	h.Published = func(_ context.Context, _ string, _ uuid.UUID) (bool, error) { return false, nil }
+	r := gin.New()
+	r.GET("/api/v1/documents/:id/content", h.CitizenContent)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/documents/"+uuid.NewString()+"/content", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unpublished %d %s", w.Code, w.Body.String())
+	}
+	if bytes.Contains(w.Body.Bytes(), []byte("%PDF")) {
+		t.Fatal("must not leak PDF bytes")
+	}
+}

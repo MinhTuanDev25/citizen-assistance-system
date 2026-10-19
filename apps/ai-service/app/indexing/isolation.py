@@ -26,6 +26,7 @@ TEST_COLLECTIONS = frozenset({
     "p4b_missing",
     "p4b_restart",
     "p4b_duplicate",
+    "p4b_e5",
 })
 PUBLISHED_PORTS = (
     "127.0.0.1:5434->5432",

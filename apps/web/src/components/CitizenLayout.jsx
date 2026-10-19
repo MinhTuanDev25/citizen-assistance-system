@@ -1,6 +1,7 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { useCommune } from '../commune/CommuneContext.jsx'
+import CitizenSearch from './CitizenSearch.jsx'
 
 const NAV = [
   { to: '/', end: true, label: 'Trang chủ', icon: '⌂' },
@@ -56,7 +57,7 @@ export function CitizenLayout({ children }) {
       </aside>
       <div className="cas-body">
         <header className="cas-top">
-          <div className="cas-search">Tìm thủ tục, điều kiện…</div>
+          <CitizenSearch />
           <div className="cas-userchip">
             <span className="cas-avatar">{initial}</span>
             {user?.name || 'Khách'}

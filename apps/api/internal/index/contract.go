@@ -92,6 +92,7 @@ type Result struct {
 	LinkStatus         string    `json:"link_status"`
 	ProcessingStatus   string    `json:"processing_status"`
 	JobID              uuid.UUID `json:"job_id,omitempty"`
+	JobStatus          string    `json:"job_status,omitempty"`
 	ErrorCode          string    `json:"error_code,omitempty"`
 	Replay             bool      `json:"idempotent_replay,omitempty"`
 }
