@@ -19,6 +19,18 @@ from __future__ import annotations
 
 import unicodedata
 
+from app.models.draft import (
+    CitationProposal,
+    ConditionalProposal,
+    DefinitionProposal,
+    DraftRequest,
+    EvidenceItem,
+    GuidanceProposal,
+    ModelDraft,
+    SlotProposal,
+    UsageMeta,
+    WhenClause,
+)
 from app.models.extract import (
     Alternative,
     Candidate,
@@ -300,6 +312,7 @@ def _extract_slots(
 class MockProvider:
     name = "mock"
     model = MODEL_NAME
+    draft_model = "mock-draft-v1"
 
     def extract(self, request: ExtractRequest) -> ExtractResponse:
         folded_message = fold(request.message)
@@ -392,3 +405,97 @@ class MockProvider:
             provider=self.name,
             model=self.model,
         )
+
+    def draft_definition(self, request: DraftRequest) -> tuple[ModelDraft, UsageMeta, int]:
+        """Deterministic draft. Uses request.procedure_code, never excerpt instructions."""
+        excerpt = request.excerpts[0]
+        quote = excerpt.content.strip()
+        if len(quote) > 180:
+            quote = quote[:180]
+        definition = DefinitionProposal(
+            procedure_code=request.procedure_code,
+            name=request.procedure_name,
+            intent_examples=[
+                f"Tôi muốn {request.procedure_name}",
+                request.procedure_name,
+            ],
+            slots=[
+                SlotProposal(
+                    key="noi_sinh",
+                    type="string",
+                    question="Nơi sinh của trẻ là ở đâu?",
+                ),
+                SlotProposal(
+                    key="da_ket_hon",
+                    type="boolean",
+                    question="Cha mẹ đã đăng ký kết hôn chưa?",
+                ),
+                SlotProposal(
+                    key="co_giay_chung_sinh",
+                    type="boolean",
+                    question="Có giấy chứng sinh không?",
+                ),
+                SlotProposal(
+                    key="nguoi_di_dang_ky",
+                    type="enum",
+                    question="Ai đi đăng ký khai sinh?",
+                    enum_values=["cha", "me", "ong_ba", "nguoi_duoc_uy_quyen"],
+                ),
+            ],
+            required_slots=["noi_sinh", "da_ket_hon", "co_giay_chung_sinh"],
+            conditional_slots=[
+                ConditionalProposal(
+                    when=WhenClause(slot="co_giay_chung_sinh", equals=False),
+                    require=["nguoi_di_dang_ky"],
+                )
+            ],
+            guidance=GuidanceProposal(
+                summary=f"Hướng dẫn {request.procedure_name} (bản nháp AI, chưa duyệt).",
+                checklist=["Giấy chứng sinh hoặc giấy tờ thay thế", "Giấy tờ tùy thân của người đi đăng ký"],
+                where_to_submit="UBND cấp xã",
+                notes=["Bản nháp từ nguồn đã xác minh; chưa phải thủ tục có hiệu lực."],
+                fee_hint="",
+                processing_time_hint="",
+            ),
+            citations=[
+                CitationProposal(
+                    doc_id=request.document_id,
+                    title=f"Nguồn soạn thảo {request.document_id}",
+                    source_type="ai_draft_unapproved",
+                )
+            ],
+        )
+        ids = [
+            ("slot:noi_sinh", "slot"),
+            ("slot:da_ket_hon", "slot"),
+            ("slot:co_giay_chung_sinh", "slot"),
+            ("slot:nguoi_di_dang_ky", "slot"),
+            ("required:noi_sinh", "required_slot"),
+            ("required:da_ket_hon", "required_slot"),
+            ("required:co_giay_chung_sinh", "required_slot"),
+            ("conditional:0", "conditional"),
+            ("checklist:0", "checklist"),
+            ("checklist:1", "checklist"),
+            ("guidance:summary", "guidance"),
+            ("guidance:where_to_submit", "guidance"),
+        ]
+        evidence = [
+            EvidenceItem(
+                proposal_id=pid,
+                kind=kind,  # type: ignore[arg-type]
+                excerpt_id=excerpt.excerpt_id,
+                page=excerpt.page_start,
+                quotation=quote,
+            )
+            for pid, kind in ids
+        ]
+        draft = ModelDraft(
+            procedure_code=request.procedure_code,
+            definition=definition,
+            evidence=evidence,
+            warnings=["mock draft: semantic approval is not granted"],
+            missing_requirements=[],
+            abstain_reason=None,
+        )
+        usage = UsageMeta(prompt_token_count=0, candidates_token_count=0, total_token_count=0)
+        return draft, usage, 200

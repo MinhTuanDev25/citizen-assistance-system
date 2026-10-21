@@ -43,6 +43,7 @@ type Config struct {
 	AISlotConfidenceMin float64
 	AIRetrieveEnabled   bool
 	AIRetrieveTimeoutMS int
+	AIDraftTimeoutMS    int
 
 	// Admin PDF intake (P3.1). Off by default: the API does not open object storage.
 	AdminIngestionEnabled         bool
@@ -73,6 +74,10 @@ const AIExtractTimeoutHardMaxMS = 8000
 // AIRetrieveTimeoutHardMaxMS is the retrieve ceiling. Local ONNX cold start
 // can exceed 3s; 10000 is a test value, not a production default.
 const AIRetrieveTimeoutHardMaxMS = 10000
+
+// AIDraftTimeoutHardMaxMS is the Admin drafting ceiling. This is independent
+// of the citizen extract 8s cap.
+const AIDraftTimeoutHardMaxMS = 120000
 
 type fileConfig struct {
 	Server struct {
@@ -145,6 +150,7 @@ func Load() (Config, error) {
 		AISlotConfidenceMin:           0.6,
 		AIRetrieveEnabled:             false,
 		AIRetrieveTimeoutMS:           3000,
+		AIDraftTimeoutMS:              45000,
 		IndexMode:                     "mock",
 		IndexClaimTTL:                 30 * time.Second,
 		IndexTimeout:                  3 * time.Second,
@@ -348,6 +354,9 @@ func validateAIConfig(cfg Config) error {
 	if cfg.AIExtractTimeoutMS <= 0 || cfg.AIExtractTimeoutMS > AIExtractTimeoutHardMaxMS {
 		return fmt.Errorf("AI_EXTRACT_TIMEOUT_MS must be in (0, %d]", AIExtractTimeoutHardMaxMS)
 	}
+	if cfg.AIDraftTimeoutMS <= 0 || cfg.AIDraftTimeoutMS > AIDraftTimeoutHardMaxMS {
+		return fmt.Errorf("AI_DRAFT_TIMEOUT_MS must be in (0, %d]", AIDraftTimeoutHardMaxMS)
+	}
 	for _, item := range []struct {
 		name string
 		v    float64
@@ -487,6 +496,13 @@ func applyEnvOverrides(cfg *Config) error {
 			return fmt.Errorf("AI_EXTRACT_TIMEOUT_MS must be an integer")
 		}
 		cfg.AIExtractTimeoutMS = n
+	}
+	if v, ok := os.LookupEnv("AI_DRAFT_TIMEOUT_MS"); ok && strings.TrimSpace(v) != "" {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("AI_DRAFT_TIMEOUT_MS must be an integer")
+		}
+		cfg.AIDraftTimeoutMS = n
 	}
 	if v, ok := os.LookupEnv("AI_INTENT_SELECT_MIN"); ok && strings.TrimSpace(v) != "" {
 		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)

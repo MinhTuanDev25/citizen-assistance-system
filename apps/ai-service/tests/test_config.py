@@ -249,6 +249,8 @@ def test_load_settings_rejects_invalid_model_without_echoing_it(monkeypatch):
     bad = "not a model 0901234567"
     monkeypatch.setenv("LLM_PROVIDER", "mock")
     monkeypatch.setenv("AI_SERVICE_TOKEN", "test-service-token")
+    monkeypatch.delenv("LLM_MODEL_EXTRACTION", raising=False)
+    monkeypatch.delenv("LLM_MODEL_DEFINITION", raising=False)
     monkeypatch.setenv("LLM_MODEL", bad)
     with pytest.raises(ConfigError) as exc:
         load_settings()
@@ -282,6 +284,26 @@ def test_llm_model_extraction_overrides_llm_model(monkeypatch):
     settings = load_settings()
     assert settings.model == "gemini-3.5-flash-lite"
     assert settings.model_definition == "gemini-3.8-flash"
+
+
+def test_draft_timeout_is_independent_of_extract_cap(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    monkeypatch.setenv("AI_SERVICE_TOKEN", "test-service-token")
+    monkeypatch.setenv("LLM_REQUEST_TIMEOUT_S", "8")
+    monkeypatch.setenv("LLM_DRAFT_TIMEOUT_SECONDS", "45")
+    monkeypatch.setenv("LLM_DRAFT_MAX_OUTPUT_TOKENS", "8192")
+    settings = load_settings()
+    assert settings.request_timeout_s == 8.0
+    assert settings.draft_timeout_s == 45.0
+    assert settings.draft_max_output_tokens == 8192
+
+
+def test_draft_timeout_rejects_unbounded_value(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    monkeypatch.setenv("AI_SERVICE_TOKEN", "test-service-token")
+    monkeypatch.setenv("LLM_DRAFT_TIMEOUT_SECONDS", "999")
+    with pytest.raises(ConfigError):
+        load_settings()
 
 
 def test_timeout_alias_llm_timeout_seconds(monkeypatch):

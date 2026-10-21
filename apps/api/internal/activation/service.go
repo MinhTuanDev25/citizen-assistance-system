@@ -70,7 +70,7 @@ func (s *Service) CreateVersion(ctx context.Context, actor, requestID, procedure
 	if !in.Confirm {
 		return CreateVersionResult{}, fmt.Errorf("%w: confirm is required", ErrValidation)
 	}
-	hash := hashPayload(procedureID.String(), strings.TrimSpace(in.Version), string(in.Definition), uuidString(in.CopyFromVersionID))
+	hash := hashPayload(procedureID.String(), strings.TrimSpace(in.Version), string(in.Definition), uuidString(in.CopyFromVersionID), uuidString(in.SourceDraftID))
 	tx, err := s.Store.begin(ctx)
 	if err != nil {
 		return CreateVersionResult{}, err
@@ -121,13 +121,49 @@ func (s *Service) CreateVersion(ctx context.Context, actor, requestID, procedure
 	if err != nil {
 		return CreateVersionResult{}, err
 	}
+	if in.SourceDraftID != nil {
+		var existing CreateVersionResult
+		scanErr := tx.QueryRow(ctx, `
+			SELECT id, procedure_id, version, status
+			FROM procedure_versions WHERE source_draft_id = $1`, *in.SourceDraftID).
+			Scan(&existing.ID, &existing.ProcedureID, &existing.Version, &existing.Status)
+		if scanErr == nil {
+			existing.Replayed = true
+			rawExisting, marshalErr := json.Marshal(existing)
+			if marshalErr != nil {
+				return CreateVersionResult{}, marshalErr
+			}
+			if storeErr := storeIdempotency(ctx, tx, s.XAID, requestID, ActionCreate, hash, 201, rawExisting); storeErr != nil {
+				return CreateVersionResult{}, storeErr
+			}
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				return CreateVersionResult{}, commitErr
+			}
+			return existing, nil
+		}
+		if !errors.Is(scanErr, pgx.ErrNoRows) {
+			return CreateVersionResult{}, scanErr
+		}
+	}
 	var id uuid.UUID
 	err = tx.QueryRow(ctx, `
 		INSERT INTO procedure_versions (
-			procedure_id, version, status, definition, created_by, approved_by, approved_at
-		) VALUES ($1,$2,'APPROVED',$3::jsonb,$4,$4,now())
-		RETURNING id`, procedureID, label, body, actor).Scan(&id)
+			procedure_id, version, status, definition, created_by, approved_by, approved_at, source_draft_id
+		) VALUES ($1,$2,'APPROVED',$3::jsonb,$4,$4,now(),$5)
+		RETURNING id`, procedureID, label, body, actor, in.SourceDraftID).Scan(&id)
 	if isUniqueViolation(err) {
+		_ = tx.Rollback(ctx)
+		if in.SourceDraftID != nil {
+			var existing CreateVersionResult
+			lookupErr := s.Store.Pool.QueryRow(ctx, `
+				SELECT id, procedure_id, version, status
+				FROM procedure_versions WHERE source_draft_id = $1`, *in.SourceDraftID).
+				Scan(&existing.ID, &existing.ProcedureID, &existing.Version, &existing.Status)
+			if lookupErr == nil {
+				existing.Replayed = true
+				return existing, nil
+			}
+		}
 		return CreateVersionResult{}, ErrDuplicateVersion
 	}
 	if err != nil {

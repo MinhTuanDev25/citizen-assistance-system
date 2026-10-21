@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
+import { adminDraftsPath } from '../../routes.js'
 import {
   activateProcedureVersion,
   createProcedureVersion,
@@ -439,6 +440,8 @@ export default function ProceduresPage() {
                   <button type="button" onClick={() => openProcedure(p).catch((err) => setError(err.message))}>
                     Xem phiên bản
                   </button>
+                  {' '}
+                  <Link to={adminDraftsPath(p.id)}>Bản nháp AI</Link>
                 </td>
               </tr>
             ))}

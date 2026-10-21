@@ -14,10 +14,18 @@ import (
 	"github.com/google/uuid"
 )
 
-func (h *Handler) adminRequest(c *gin.Context) (uuid.UUID, uuid.UUID, bool) {
+func (h *Handler) adminActor(c *gin.Context) (uuid.UUID, bool) {
 	actor, ok := middleware.UserID(c)
 	if !ok {
 		response.Fail(c, http.StatusUnauthorized, "UNAUTHORIZED", "admin role required")
+		return uuid.Nil, false
+	}
+	return actor, true
+}
+
+func (h *Handler) adminRequest(c *gin.Context) (uuid.UUID, uuid.UUID, bool) {
+	actor, ok := h.adminActor(c)
+	if !ok {
 		return uuid.Nil, uuid.Nil, false
 	}
 	requestID, err := uuid.Parse(c.GetHeader("X-Request-ID"))

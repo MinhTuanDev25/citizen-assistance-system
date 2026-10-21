@@ -106,6 +106,9 @@ func TestLoadRejectsBadAIConfig(t *testing.T) {
 		{"AI_RETRIEVE_ENABLED", "maybe"},
 		{"AI_RETRIEVE_TIMEOUT_MS", "0"},
 		{"AI_RETRIEVE_TIMEOUT_MS", "11000"},
+		{"AI_DRAFT_TIMEOUT_MS", "0"},
+		{"AI_DRAFT_TIMEOUT_MS", "130000"},
+		{"AI_DRAFT_TIMEOUT_MS", "abc"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.key+"="+tc.val, func(t *testing.T) {

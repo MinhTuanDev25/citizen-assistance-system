@@ -7,6 +7,7 @@ import (
 
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/activation"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/auth"
+	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/drafting"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/middleware"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/procedurecatalog"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/repository"
@@ -18,6 +19,7 @@ import (
 type Handler struct {
 	Repo             *repository.ProcedureRepo
 	Activation       *activation.Service
+	Drafting         *drafting.Service
 	DefaultXaID      string
 	CitizenDomainIDs []string
 }

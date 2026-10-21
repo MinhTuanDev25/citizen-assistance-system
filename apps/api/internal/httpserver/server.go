@@ -19,6 +19,7 @@ import (
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/config"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/decision"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/document"
+	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/drafting"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/handler"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/index"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/middleware"
@@ -71,6 +72,16 @@ func NewWithIndexWorker(logger *slog.Logger, pool *pgxpool.Pool, cfg config.Conf
 	domainHandler := domain.NewHandler(&repository.DomainRepo{Pool: pool})
 	procedureHandler := procedure.NewHandler(&repository.ProcedureRepo{Pool: pool}, cfg.XAID, cfg.CitizenDomainIDs)
 	procedureHandler.Activation = &activation.Service{Store: &activation.Store{Pool: pool}, XAID: cfg.XAID}
+	if cfg.AIServiceURL != "" {
+		draftClient := drafting.NewClient(cfg.AIServiceURL, time.Duration(cfg.AIDraftTimeoutMS)*time.Millisecond)
+		draftClient.ServiceToken = cfg.AIServiceToken
+		procedureHandler.Drafting = &drafting.Service{
+			XAID:   cfg.XAID,
+			Source: &drafting.SourceStore{Pool: pool},
+			Drafts: &repository.DraftRepo{Pool: pool},
+			Client: draftClient,
+		}
+	}
 
 	// AI extraction (P2) is opt-in and off by default. An empty/disabled
 	// config yields a nil Extractor, so chat.Service.Turn runs the exact
@@ -125,8 +136,15 @@ func NewWithIndexWorker(logger *slog.Logger, pool *pgxpool.Pool, cfg config.Conf
 				Pipeline: cfg.IndexMode == "pipeline", Bucket: cfg.ObjectStorageBucket,
 				PublishTimeout: cfg.IndexPublishTimeout,
 			}
+			if procedureHandler.Drafting != nil {
+				procedureHandler.Drafting.Index = handler.Index
+				procedureHandler.Drafting.Activation = procedureHandler.Activation
+			}
 		}
 		documentHandler = handler
+	}
+	if procedureHandler.Drafting != nil && procedureHandler.Drafting.Activation == nil {
+		procedureHandler.Drafting.Activation = procedureHandler.Activation
 	}
 
 	api := r.Group("/api")

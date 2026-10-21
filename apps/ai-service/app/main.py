@@ -6,6 +6,7 @@ GET  /ready        readiness (fails closed if a configured real provider is
                     downgrades to mock)
 GET  /v1/status    non-secret service metadata (provider/model/ready)
 POST /v1/extract   P2 LLM Extract — strict contract, see app/models/extract.py
+POST /v1/draft_definition  Phase 4.5 Definition draft — see app/models/draft.py
 
 No endpoint here ever logs the citizen `message` field or any provider
 Authorization header/API key.
@@ -25,6 +26,11 @@ from pydantic import ValidationError
 from fastapi.responses import JSONResponse
 
 from app.config import ConfigError, Settings, load_settings
+from app.models.draft import (
+    MAX_REQUEST_BODY_BYTES as MAX_DRAFT_BODY_BYTES,
+    DraftRequest,
+    DraftResponse,
+)
 from app.models.extract import MAX_REQUEST_BODY_BYTES, ExtractRequest, ExtractResponse
 from app.indexing.contract import IndexRequestV2, IndexResponseV2
 from app.indexing.errors import IndexFailure
@@ -39,6 +45,7 @@ from app.providers.base import (
     REASON_SCHEMA_VIOLATION,
     REASON_TIMEOUT,
 )
+from app.services.draft_service import DraftService, DraftServiceError
 from app.services.extract_service import ExtractService, ExtractServiceError
 
 logging.basicConfig(level=logging.INFO)
@@ -83,6 +90,7 @@ class _ExtractBodyLimit:
         self.app = app
         self.limits = {
             "/v1/extract": MAX_REQUEST_BODY_BYTES,
+            "/v1/draft_definition": MAX_DRAFT_BODY_BYTES,
             "/v1/index": MAX_INDEX_BODY_BYTES,
             "/v1/retrieve": MAX_RETRIEVE_BODY_BYTES,
         }
@@ -152,6 +160,7 @@ class _ExtractBodyLimit:
 app.add_middleware(_ExtractBodyLimit)
 
 _extract_service = ExtractService(_settings)
+_draft_service = DraftService(_settings)
 _limiter = ExtractLimiter(_settings.rate_per_minute, _settings.max_inflight, _settings.retry_after_s)
 
 
@@ -161,6 +170,10 @@ def get_settings() -> Settings:
 
 def get_extract_service() -> ExtractService:
     return _extract_service
+
+
+def get_draft_service() -> DraftService:
+    return _draft_service
 
 
 def get_limiter() -> ExtractLimiter:
@@ -228,6 +241,7 @@ def status() -> dict:
         "service": "cas-ai-service",
         "phase": "4b-content-pipeline" if pipeline else "4a-index-foundation",
         "extract": "implemented",
+        "draft_definition": "implemented",
         "index": "pipeline" if pipeline else "mock",
         "rag": "implemented",
     }
@@ -305,6 +319,28 @@ def extract(request: ExtractRequest, http_request: Request) -> ExtractResponse:
     try:
         return get_extract_service().extract(request)
     except ExtractServiceError as exc:
+        status_code = _REASON_HTTP_STATUS.get(exc.reason, 502)
+        raise HTTPException(status_code=status_code, detail={"reason": exc.reason}) from exc
+    finally:
+        limiter.release()
+
+
+@app.post("/v1/draft_definition", response_model=DraftResponse)
+def draft_definition(request: DraftRequest, http_request: Request) -> DraftResponse:
+    """Admin Definition drafting. Service-token auth. Does not persist drafts."""
+    if not _token_matches(http_request):
+        raise HTTPException(status_code=401, detail={"reason": "unauthorized"})
+    limiter = get_limiter()
+    allowed, limit_reason = limiter.try_acquire()
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={"reason": limit_reason},
+            headers={"Retry-After": str(limiter.retry_after_s)},
+        )
+    try:
+        return get_draft_service().draft(request)
+    except DraftServiceError as exc:
         status_code = _REASON_HTTP_STATUS.get(exc.reason, 502)
         raise HTTPException(status_code=status_code, detail={"reason": exc.reason}) from exc
     finally:

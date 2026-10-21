@@ -13,6 +13,8 @@ import ProceduresCatalogPage from './pages/ProceduresCatalogPage.jsx'
 import SelectCommunePage from './pages/SelectCommunePage.jsx'
 import DeferredIngestionPage from './pages/admin/DeferredIngestionPage.jsx'
 import ProceduresPage from './pages/admin/ProceduresPage.jsx'
+import DraftsPage from './pages/admin/DraftsPage.jsx'
+import DraftReviewPage from './pages/admin/DraftReviewPage.jsx'
 import { LEGACY_REDIRECTS, ROUTES } from './routes.js'
 
 // Build-time constant so Vite drops admin mock chunks when flag is false.
@@ -107,14 +109,8 @@ export default function App() {
                   )
                 }
               />
-              <Route
-                path="drafts"
-                element={<DeferredIngestionPage title="Bản nháp thủ tục" />}
-              />
-              <Route
-                path="drafts/:draftId"
-                element={<DeferredIngestionPage title="Review bản nháp" />}
-              />
+              <Route path="drafts" element={<DraftsPage />} />
+              <Route path="drafts/:draftId" element={<DraftReviewPage />} />
               <Route path="procedures" element={<ProceduresPage />} />
             </Route>
             <Route path="*" element={<Navigate to={ROUTES.home} replace />} />

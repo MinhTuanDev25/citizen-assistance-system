@@ -86,6 +86,7 @@ type ActivateResult struct {
 type CreateVersionRequest struct {
 	Version           string          `json:"version"`
 	CopyFromVersionID *uuid.UUID      `json:"copy_from_version_id"`
+	SourceDraftID     *uuid.UUID      `json:"source_draft_id,omitempty"`
 	Definition        json.RawMessage `json:"definition"`
 	Confirm           bool            `json:"confirm"`
 }

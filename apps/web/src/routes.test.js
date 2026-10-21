@@ -3,6 +3,8 @@ import {
   LEGACY_REDIRECTS,
   ROUTES,
   adminDocumentPath,
+  adminDraftPath,
+  adminDraftsPath,
   adminProcedurePath,
   isCommuneSelectPath,
   loginPath,
@@ -36,5 +38,7 @@ describe('ROUTES', () => {
     expect(loginPath('citizen')).toBe('/login?as=citizen')
     expect(adminDocumentPath('abc')).toBe('/admin/documents?doc=abc')
     expect(adminProcedurePath('p1')).toBe('/admin/procedures?proc=p1')
+    expect(adminDraftsPath('p1')).toBe('/admin/drafts?proc=p1')
+    expect(adminDraftPath('d1')).toBe('/admin/drafts/d1')
   })
 })

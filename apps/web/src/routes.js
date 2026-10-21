@@ -37,3 +37,12 @@ export function adminDocumentPath(id) {
 export function adminProcedurePath(id) {
   return `${ROUTES.adminProcedures}?proc=${encodeURIComponent(id)}`
 }
+
+export function adminDraftsPath(procedureId) {
+  if (!procedureId) return ROUTES.adminDrafts
+  return `${ROUTES.adminDrafts}?proc=${encodeURIComponent(procedureId)}`
+}
+
+export function adminDraftPath(id) {
+  return `${ROUTES.adminDrafts}/${encodeURIComponent(id)}`
+}

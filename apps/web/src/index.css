@@ -2258,6 +2258,70 @@ td button {
   }
 }
 
+.draft-generate {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.draft-generate label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+
+.draft-generate select,
+.draft-json {
+  width: 100%;
+  font: inherit;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+}
+
+.draft-json {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+}
+
+.draft-proposal {
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  padding: 0.8rem;
+  margin: 0.7rem 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.draft-proposal header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.draft-proposal blockquote {
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  background: var(--mist);
+  border-radius: 0.6rem;
+}
+
+.draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  z-index: 20;
+}
+
 @media (max-width: 640px) {
   .home-grid {
     grid-template-columns: 1fr;

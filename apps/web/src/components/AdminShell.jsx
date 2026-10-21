@@ -11,7 +11,7 @@ const LINKS = [
   { to: ROUTES.admin, end: true, label: 'Tổng quan', icon: '⌂' },
   { to: ROUTES.adminDocuments, label: ingestionOn ? 'Tài liệu' : 'Tài liệu', icon: '📄' },
   { to: ROUTES.adminProcedures, label: 'Thủ tục', icon: '☰' },
-  { to: ROUTES.adminDrafts, label: 'Bản nháp', icon: '✎', soon: true },
+  { to: ROUTES.adminDrafts, label: 'Bản nháp', icon: '✎' },
 ]
 
 export function AdminShell() {

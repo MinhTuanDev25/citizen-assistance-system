@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 from app.models.extract import MAX_MODEL_LEN, MODEL_RE
 from app.providers.prompt import EXTRACT_PROMPT_VERSION
+from app.providers.prompt_draft import DRAFT_PROMPT_VERSION
 
 
 class ConfigError(ValueError):
@@ -34,7 +35,10 @@ DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_GEMINI_DEFINITION_MODEL = "gemini-3.8-flash"
 DEFAULT_MOCK_MODEL = "mock-extract-v1"
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
+DEFAULT_DRAFT_MAX_OUTPUT_TOKENS = 8192
 MAX_OUTPUT_TOKENS_LIMIT = 8192
+DEFAULT_DRAFT_TIMEOUT_S = 45.0
+MAX_DRAFT_TIMEOUT_S = 120.0
 MIN_SERVICE_TOKEN_LEN = 16
 MAX_SERVICE_TOKEN_LEN = 256
 
@@ -125,6 +129,8 @@ class Settings:
     model_extraction: str = ""
     model_definition: str = ""
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
+    draft_timeout_s: float = DEFAULT_DRAFT_TIMEOUT_S
+    draft_max_output_tokens: int = DEFAULT_DRAFT_MAX_OUTPUT_TOKENS
 
     def provider_ready(self) -> tuple[bool, str | None]:
         """Returns (ready, reason_if_not). Used by /ready — fail closed."""
@@ -161,6 +167,9 @@ class Settings:
             "extract_ready": extract_ok,
             "extract_reason": extract_reason,
             "extract_prompt_version": EXTRACT_PROMPT_VERSION,
+            "draft_prompt_version": DRAFT_PROMPT_VERSION,
+            "draft_timeout_s": self.draft_timeout_s,
+            "draft_max_output_tokens": self.draft_max_output_tokens,
             "ready": ready,
             "reason": reason,
             "rate_per_minute": self.rate_per_minute,
@@ -216,8 +225,15 @@ def load_settings() -> Settings:
         _require_model_id(definition_model, "LLM_MODEL_DEFINITION")
 
     timeout_s = _extract_timeout_s()
+    draft_timeout_s = _draft_timeout_s()
     max_output_tokens = _bounded_int(
         "LLM_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS, 1, MAX_OUTPUT_TOKENS_LIMIT
+    )
+    draft_max_output_tokens = _bounded_int(
+        "LLM_DRAFT_MAX_OUTPUT_TOKENS",
+        DEFAULT_DRAFT_MAX_OUTPUT_TOKENS,
+        1,
+        MAX_OUTPUT_TOKENS_LIMIT,
     )
 
     rate_per_minute = _bounded_int("EXTRACT_RATE_PER_MINUTE", 60, 1, 10000)
@@ -261,6 +277,8 @@ def load_settings() -> Settings:
         model_extraction=model,
         model_definition=definition_model,
         max_output_tokens=max_output_tokens,
+        draft_timeout_s=draft_timeout_s,
+        draft_max_output_tokens=draft_max_output_tokens,
     )
 
 
@@ -351,4 +369,14 @@ def _extract_timeout_s() -> float:
         label = "LLM_TIMEOUT_SECONDS" if os.getenv("LLM_TIMEOUT_SECONDS", "").strip() else "LLM_REQUEST_TIMEOUT_S"
     if timeout_s <= 0 or timeout_s > 8:
         raise ConfigError(f"{label} must be in (0, 8]")
+    return timeout_s
+
+
+def _draft_timeout_s() -> float:
+    """Admin drafting timeout. Independent of the citizen extract 8s cap."""
+    timeout_s = _env_float("LLM_DRAFT_TIMEOUT_SECONDS", DEFAULT_DRAFT_TIMEOUT_S)
+    if timeout_s <= 0 or timeout_s > MAX_DRAFT_TIMEOUT_S:
+        raise ConfigError(
+            f"LLM_DRAFT_TIMEOUT_SECONDS must be in (0, {int(MAX_DRAFT_TIMEOUT_S)}]"
+        )
     return timeout_s

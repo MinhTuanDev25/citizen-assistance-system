@@ -77,6 +77,21 @@ func MapRoutes(
 			adminProcs.POST("/:procedureId/versions", procedureHandler.CreateVersion)
 			adminProcs.POST("/:procedureId/versions/:versionId/activate", procedureHandler.Activate)
 			adminProcs.GET("/:procedureId/activation-history", procedureHandler.ActivationHistory)
+			adminProcs.POST("/:procedureId/ai-drafts", procedureHandler.GenerateAIDraft)
+			adminProcs.GET("/:procedureId/drafts", procedureHandler.ListDrafts)
+			adminProcs.GET("/:procedureId/draft-sources", procedureHandler.ListDraftSources)
+		}
+
+		adminDrafts := v1.Group("/admin/procedure-drafts")
+		adminDrafts.Use(requireAdmin)
+		{
+			adminDrafts.GET("", procedureHandler.ListAllDrafts)
+			adminDrafts.GET("/:draftId", procedureHandler.GetDraft)
+			adminDrafts.PATCH("/:draftId", procedureHandler.PatchDraft)
+			adminDrafts.POST("/:draftId/validate", procedureHandler.ValidateDraft)
+			adminDrafts.POST("/:draftId/review", procedureHandler.ReviewDraft)
+			adminDrafts.POST("/:draftId/approve", procedureHandler.ApproveDraft)
+			adminDrafts.POST("/:draftId/activate", procedureHandler.ActivateDraft)
 		}
 
 		if documentHandler != nil {
