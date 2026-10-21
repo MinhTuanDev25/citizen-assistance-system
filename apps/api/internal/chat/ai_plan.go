@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -153,10 +154,11 @@ func (s *Service) finishAIWrite(
 	} else if outcome.fallbackReason == "" && outcome.response != nil {
 		v, verr := aiextract.Validate(
 			outcome.response, extractReq.Candidates, pinnedCode, allowedSlotKeys,
-			s.AISlotConfidenceMin, currentSlotState(snap2),
+			s.AISlotConfidenceMin, currentSlotState(snap2), message,
 		)
 		if verr != nil {
 			meta.fallbackReason = "invalid_contract"
+			slog.Warn("extract_contract_rejected", "err", verr.Error())
 		} else {
 			validated = v
 			// Only the validated allowlisted provider/model are observable.
@@ -303,9 +305,10 @@ func (s *Service) callExtractor(ctx context.Context, req aiextract.Request) extr
 			reason = "timeout"
 		} else if errors.Is(err, aiextract.ErrInvalidResponse) {
 			reason = "invalid_contract"
-		} else if errors.Is(err, aiextract.ErrRateLimited) {
+		} else 		if errors.Is(err, aiextract.ErrRateLimited) {
 			reason = "rate_limited"
 		}
+		slog.Warn("extract_call_failed", "fallback_reason", reason, "err", err.Error())
 		return extractOutcome{latencyMs: latency, fallbackReason: reason}
 	}
 	return extractOutcome{response: resp, latencyMs: latency}
@@ -394,15 +397,8 @@ func buildExtractRequest(snap *repository.TurnSnapshot, requestID uuid.UUID, mes
 				seen[key] = struct{}{}
 				allowedSlotKeys = append(allowedSlotKeys, key)
 			}
-			for _, key := range def.Missing(prior) {
+			for key := range def.Slots {
 				addAllowed(key)
-			}
-			// Also allow correcting an already-answered boolean/enum choice
-			// (mirrors the keyword engine's HasSlotCorrection behavior).
-			for key, slot := range def.Slots {
-				if (slot.Type == "boolean" || slot.Type == "enum") && prior[key].Filled() {
-					addAllowed(key)
-				}
 			}
 
 			state := map[string]aiextract.SlotStateEntry{}

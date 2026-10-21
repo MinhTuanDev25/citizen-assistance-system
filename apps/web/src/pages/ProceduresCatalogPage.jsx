@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { listProcedures } from '../api/catalog.js'
 import { CitizenLayout } from '../components/CitizenLayout.jsx'
 import { useCommune } from '../commune/CommuneContext.jsx'
+import { ROUTES } from '../routes.js'
 
 export default function ProceduresCatalogPage() {
   const { xaId, commune } = useCommune()
@@ -52,7 +53,7 @@ export default function ProceduresCatalogPage() {
                     <button
                       type="button"
                       className="btn-primary catalog-ask"
-                      onClick={() => navigate('/hoi', { state: { ask: `Tôi muốn hỏi về thủ tục ${p.name}` } })}
+                      onClick={() => navigate(ROUTES.chat, { state: { ask: `Tôi muốn hỏi về thủ tục ${p.name}` } })}
                     >
                       Hỏi hướng dẫn
                     </button>

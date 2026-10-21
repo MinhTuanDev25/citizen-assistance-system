@@ -42,6 +42,8 @@ from app.providers.base import (
 from app.services.extract_service import ExtractService, ExtractServiceError
 
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 try:
     _settings: Settings = load_settings()

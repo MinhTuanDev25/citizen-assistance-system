@@ -3,7 +3,10 @@
 LLM_PROVIDER selects the extraction backend:
   mock    — deterministic, no network, safe default for local/test.
   openai  — requires OPENAI_API_KEY (+ optional LLM_MODEL / OPENAI_BASE_URL).
-  gemini  — requires GEMINI_API_KEY (+ optional LLM_MODEL / GEMINI_BASE_URL).
+  gemini  — requires GEMINI_API_KEY (+ optional LLM_MODEL_EXTRACTION / LLM_MODEL / GEMINI_BASE_URL).
+
+Gemini extract default is gemini-3.5-flash-lite (not the retired gemini-1.5-flash).
+Definition-drafting model is stored as LLM_MODEL_DEFINITION (unused until Phase 4.5).
 
 Readiness (`GET /ready`) fails closed when a real provider is selected but its
 required key/model is missing — never silently falls back to mock in that case.
@@ -18,6 +21,7 @@ import os
 from dataclasses import dataclass
 
 from app.models.extract import MAX_MODEL_LEN, MODEL_RE
+from app.providers.prompt import EXTRACT_PROMPT_VERSION
 
 
 class ConfigError(ValueError):
@@ -26,8 +30,11 @@ class ConfigError(ValueError):
 VALID_PROVIDERS = ("mock", "openai", "gemini")
 
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
-DEFAULT_GEMINI_MODEL = "gemini-1.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
+DEFAULT_GEMINI_DEFINITION_MODEL = "gemini-3.8-flash"
 DEFAULT_MOCK_MODEL = "mock-extract-v1"
+DEFAULT_MAX_OUTPUT_TOKENS = 1024
+MAX_OUTPUT_TOKENS_LIMIT = 8192
 MIN_SERVICE_TOKEN_LEN = 16
 MAX_SERVICE_TOKEN_LEN = 256
 
@@ -115,6 +122,9 @@ class Settings:
     termination_grace_s: float = 1.0
     object_region: str = ""
     object_auto_create_bucket: bool = True
+    model_extraction: str = ""
+    model_definition: str = ""
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
 
     def provider_ready(self) -> tuple[bool, str | None]:
         """Returns (ready, reason_if_not). Used by /ready — fail closed."""
@@ -141,9 +151,16 @@ class Settings:
         ready, reason = self.provider_ready()
         if ready and self.index_mode == "pipeline":
             ready, reason = self.index_ready()
+        extract_ok, extract_reason = self.provider_ready()
         return {
             "provider": self.provider,
             "model": self.model or None,
+            "model_extraction": self.model_extraction or self.model or None,
+            "model_definition": self.model_definition or None,
+            "max_output_tokens": self.max_output_tokens,
+            "extract_ready": extract_ok,
+            "extract_reason": extract_reason,
+            "extract_prompt_version": EXTRACT_PROMPT_VERSION,
             "ready": ready,
             "reason": reason,
             "rate_per_minute": self.rate_per_minute,
@@ -187,13 +204,21 @@ def load_settings() -> Settings:
         default_model = DEFAULT_OPENAI_MODEL
     elif provider == "gemini":
         default_model = DEFAULT_GEMINI_MODEL
-    model = os.getenv("LLM_MODEL", "").strip() or default_model
-    if len(model) > MAX_MODEL_LEN or MODEL_RE.fullmatch(model) is None:
-        raise ConfigError("LLM_MODEL must match the response model-id pattern")
+    extraction_override = os.getenv("LLM_MODEL_EXTRACTION", "").strip()
+    legacy_model = os.getenv("LLM_MODEL", "").strip()
+    model = extraction_override or legacy_model or default_model
+    _require_model_id(model, "LLM_MODEL")
 
-    timeout_s = _env_float("LLM_REQUEST_TIMEOUT_S", 8.0)
-    if timeout_s <= 0 or timeout_s > 8:
-        raise ConfigError("LLM_REQUEST_TIMEOUT_S must be in (0, 8]")
+    definition_model = os.getenv("LLM_MODEL_DEFINITION", "").strip()
+    if not definition_model:
+        definition_model = DEFAULT_GEMINI_DEFINITION_MODEL if provider == "gemini" else ""
+    if definition_model:
+        _require_model_id(definition_model, "LLM_MODEL_DEFINITION")
+
+    timeout_s = _extract_timeout_s()
+    max_output_tokens = _bounded_int(
+        "LLM_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS, 1, MAX_OUTPUT_TOKENS_LIMIT
+    )
 
     rate_per_minute = _bounded_int("EXTRACT_RATE_PER_MINUTE", 60, 1, 10000)
     max_inflight = _bounded_int("EXTRACT_MAX_INFLIGHT", 4, 1, 128)
@@ -233,6 +258,9 @@ def load_settings() -> Settings:
         termination_grace_s=_bounded_float("INDEX_TERMINATION_GRACE_SECONDS", 1.0, 0.05, 5.0),
         object_region=os.getenv("OBJECT_STORAGE_REGION", "").strip(),
         object_auto_create_bucket=_auto_create_bucket(os.getenv("OBJECT_STORAGE_ENDPOINT", "")),
+        model_extraction=model,
+        model_definition=definition_model,
+        max_output_tokens=max_output_tokens,
     )
 
 
@@ -301,3 +329,26 @@ def _bounded_int(name: str, default: int, low: int, high: int) -> int:
     if value < low or value > high:
         raise ConfigError(f"{name} is outside the allowed range")
     return value
+
+
+def _require_model_id(model: str, name: str) -> None:
+    if len(model) > MAX_MODEL_LEN or MODEL_RE.fullmatch(model) is None:
+        raise ConfigError(f"{name} must match the response model-id pattern")
+
+
+def _extract_timeout_s() -> float:
+    """Citizen extract timeout. Primary: LLM_REQUEST_TIMEOUT_S. Alias: LLM_TIMEOUT_SECONDS.
+
+    Hard cap remains 8s so a misconfigured alias cannot hang Go's extract client.
+    Phase 4.5 drafting must use a separate timeout later — not this function.
+    """
+    primary = os.getenv("LLM_REQUEST_TIMEOUT_S")
+    if primary is not None and primary.strip() != "":
+        timeout_s = _env_float("LLM_REQUEST_TIMEOUT_S", 8.0)
+        label = "LLM_REQUEST_TIMEOUT_S"
+    else:
+        timeout_s = _env_float("LLM_TIMEOUT_SECONDS", 8.0)
+        label = "LLM_TIMEOUT_SECONDS" if os.getenv("LLM_TIMEOUT_SECONDS", "").strip() else "LLM_REQUEST_TIMEOUT_S"
+    if timeout_s <= 0 or timeout_s > 8:
+        raise ConfigError(f"{label} must be in (0, 8]")
+    return timeout_s

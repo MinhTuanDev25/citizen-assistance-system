@@ -272,6 +272,10 @@ class ExtractResponse(StrictModel):
     abstain_reason: str | None = None
     provider: str = Field(min_length=1, max_length=MAX_PROVIDER_LEN)
     model: str = Field(min_length=1, max_length=MAX_MODEL_LEN)
+    # Server-owned call metadata. Excluded from JSON so the extract.v1 HTTP
+    # contract and Gemini schema stay unchanged. Per-request, never shared.
+    usage: dict[str, int | None] | None = Field(default=None, exclude=True)
+    http_status: int | None = Field(default=None, exclude=True)
 
     @field_validator("provider")
     @classmethod

@@ -13,6 +13,7 @@ from app.config import Settings
 from app.models.extract import ExtractRequest, ExtractResponse
 from app.providers.base import ExtractProvider, ProviderError
 from app.providers.mock import MockProvider
+from app.providers.prompt import EXTRACT_PROMPT_VERSION
 
 logger = logging.getLogger("ai_service.extract")
 
@@ -64,10 +65,18 @@ class ExtractService:
                 self._settings.provider,
             )
             raise ExtractServiceError(exc.reason, str(exc)) from exc
+        usage = getattr(response, "usage", None) or {}
         logger.info(
-            "extract_response request_id=%s procedure_selected=%s slot_count=%d",
+            "extract_response request_id=%s procedure_selected=%s slot_count=%d "
+            "provider=%s model=%s prompt_version=%s prompt_tokens=%s candidate_tokens=%s total_tokens=%s",
             request.request_id,
             bool(response.intent and response.intent.procedure_code),
             len(response.slots),
+            response.provider,
+            response.model,
+            EXTRACT_PROMPT_VERSION,
+            usage.get("prompt_token_count"),
+            usage.get("candidates_token_count"),
+            usage.get("total_token_count"),
         )
         return response

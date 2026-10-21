@@ -120,6 +120,26 @@ func TestClientRejectsUnknownField(t *testing.T) {
 	}
 }
 
+func TestClientAcceptsLiveGeminiExtractShape(t *testing.T) {
+	body := `{"schema_version":"extract.v1","intent":{"procedure_code":"dk_khai_sinh","confidence":0.98,"alternatives":[]},"slots_for_procedure_code":"dk_khai_sinh","slots":[{"key":"co_giay_chung_sinh","value":true,"confidence":0.95,"evidence":"đã có giấy chứng sinh","operation":"set"}],"abstain_reason":null,"provider":"gemini","model":"gemini-3.5-flash-lite"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, time.Second)
+	got, err := c.Extract(context.Background(), Request{SchemaVersion: SchemaVersion, RequestID: "r", Message: "x"})
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if got.Provider != "gemini" || got.Model != "gemini-3.5-flash-lite" {
+		t.Fatalf("observability = %s %s", got.Provider, got.Model)
+	}
+	if len(got.Slots) != 1 || got.Slots[0].Key != "co_giay_chung_sinh" {
+		t.Fatalf("slots = %#v", got.Slots)
+	}
+}
+
 func TestClientRejectsTrailingJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

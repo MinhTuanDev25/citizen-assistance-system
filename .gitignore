@@ -55,4 +55,7 @@ deploy/volumes/
 
 # Phase 5 local evidence (zips, unpacked reports). Not product source.
 /phase5_*.zip
+/phase6_*.zip
+/step02_*.zip
+/llm_phase45*.zip
 /reports/

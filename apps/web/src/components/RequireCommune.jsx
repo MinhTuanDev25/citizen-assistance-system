@@ -1,5 +1,6 @@
 import { Navigate, useLocation } from 'react-router-dom'
 import { useCommune } from '../commune/CommuneContext.jsx'
+import { ROUTES } from '../routes.js'
 
 /** Gate: must pick a commune before chat / login / admin. */
 export function RequireCommune({ children }) {
@@ -8,7 +9,7 @@ export function RequireCommune({ children }) {
 
   if (!commune) {
     return (
-      <Navigate to="/chon-xa" replace state={{ from: location.pathname }} />
+      <Navigate to={ROUTES.commune} replace state={{ from: location.pathname }} />
     )
   }
 

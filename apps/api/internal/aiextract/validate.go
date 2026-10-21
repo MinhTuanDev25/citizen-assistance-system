@@ -2,6 +2,7 @@ package aiextract
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
 	"regexp"
 	"strings"
@@ -66,6 +67,10 @@ type ValidatedProposal struct {
 
 	Provider string
 	Model    string
+
+	// DroppedUngrounded lists slot keys that passed the contract but were
+	// not persisted because the citizen message did not support them.
+	DroppedUngrounded []string
 }
 
 func isFiniteUnitInterval(v float64) bool {
@@ -89,6 +94,7 @@ func Validate(
 	allowedSlotKeys []string,
 	slotConfidenceMin float64,
 	currentState map[string]CurrentSlot,
+	message string,
 ) (*ValidatedProposal, error) {
 	if resp == nil {
 		return nil, fmt.Errorf("aiextract: nil response")
@@ -212,6 +218,11 @@ func Validate(
 		if s.Confidence < slotConfidenceMin {
 			// Below threshold: drop only this slot, not the whole response —
 			// this is a policy filter, not a contract violation.
+			continue
+		}
+		if ok, reason := GroundSlot(message, spec, s.Key, value, s.Evidence); !ok {
+			out.DroppedUngrounded = append(out.DroppedUngrounded, s.Key)
+			slog.Info("extract_slot_ungrounded", "key", s.Key, "reason", string(reason))
 			continue
 		}
 		out.Slots[s.Key] = ValidatedSlot{Value: value, Operation: s.Operation, Confidence: s.Confidence}

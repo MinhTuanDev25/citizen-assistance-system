@@ -123,7 +123,7 @@ func TestHTTPAIExtractFillsSlotEndToEnd(t *testing.T) {
 				SchemaVersion:         aiextract.SchemaVersion,
 				SlotsForProcedureCode: &target,
 				Slots: []aiextract.SlotResult{
-					{Key: "da_ket_hon", Value: false, Confidence: 0.9, Operation: "set"},
+					{Key: "co_giay_chung_sinh", Value: false, Confidence: 0.9, Evidence: "chưa có giấy chứng sinh", Operation: "set"},
 				},
 				Provider: "mock", Model: "fake-1",
 			}, http.StatusOK
@@ -146,24 +146,81 @@ func TestHTTPAIExtractFillsSlotEndToEnd(t *testing.T) {
 	}
 
 	code, env = apiJSON(t, eng, http.MethodPost, "/api/v1/sessions/"+sessionID+"/turns",
-		map[string]any{"message": "chưa đăng ký kết hôn"},
+		map[string]any{"message": "chưa có giấy chứng sinh"},
 		map[string]string{"X-Guest-Token": guest, "X-Request-ID": uuid.NewString()})
 	if code != http.StatusOK {
 		t.Fatalf("turn2: %d %v", code, env)
 	}
 	d2 := dataMap(env)
 	slotState, _ := d2["slot_state"].(map[string]any)
-	daKetHon, _ := slotState["da_ket_hon"].(map[string]any)
-	if daKetHon["value"] != false {
-		t.Fatalf("expected da_ket_hon=false from AI fill, got %v", slotState)
+	birth, _ := slotState["co_giay_chung_sinh"].(map[string]any)
+	if birth["value"] != false {
+		t.Fatalf("co_giay_chung_sinh want false, got %v", slotState)
+	}
+	if married, ok := slotState["da_ket_hon"].(map[string]any); ok && married["value"] != nil {
+		t.Fatalf("da_ket_hon must not be filled from this turn, got %v", married)
 	}
 	if d2["action"] != "ASK_MISSING_SLOTS" {
-		t.Fatalf("expected still ASK_MISSING_SLOTS (noi_sinh/co_giay_chung_sinh remain), got %v", d2["action"])
+		t.Fatalf("expected still ASK_MISSING_SLOTS, got %v", d2["action"])
 	}
 
 	meta := lastAssistantMetadata(t, eng, sessionID, guest)
 	if meta["extract_source"] != "ai" {
 		t.Fatalf("expected extract_source=ai in assistant metadata, got %v", meta)
+	}
+}
+
+func TestHTTPAIHallucinatedMarriageDropped(t *testing.T) {
+	pool := requireIntegrationDB(t)
+	defer pool.Close()
+
+	msg := "Tôi muốn đăng ký khai sinh cho con sinh tại Bệnh viện huyện Chư Sê, đã có giấy chứng sinh, mẹ đi đăng ký."
+	fake := newFakeAIServer(t, func(req aiextract.Request) (aiextract.Response, int) {
+		code := "dk_khai_sinh"
+		slots := []aiextract.SlotResult{
+			{Key: "noi_sinh", Value: "Bệnh viện huyện Chư Sê", Confidence: 0.95, Evidence: "Bệnh viện huyện Chư Sê", Operation: "set"},
+			{Key: "co_giay_chung_sinh", Value: true, Confidence: 0.95, Evidence: "đã có giấy chứng sinh", Operation: "set"},
+			{Key: "nguoi_di_dang_ky", Value: "me", Confidence: 0.95, Evidence: "mẹ đi đăng ký", Operation: "set"},
+			{Key: "da_ket_hon", Value: true, Confidence: 1.0, Evidence: "mẹ đi đăng ký", Operation: "set"},
+		}
+		hasMarriage := false
+		for _, c := range req.Candidates {
+			if _, ok := c.Slots["da_ket_hon"]; ok {
+				hasMarriage = true
+			}
+		}
+		if !hasMarriage {
+			slots = slots[:3]
+		}
+		return aiextract.Response{
+			SchemaVersion:         aiextract.SchemaVersion,
+			Intent:                &aiextract.IntentResult{ProcedureCode: &code, Confidence: 0.95},
+			SlotsForProcedureCode: &code,
+			Slots:                 slots,
+			Provider:              "mock", Model: "fake-1",
+		}, http.StatusOK
+	})
+	eng := testEngineWithAI(t, pool, fake.URL, 2000)
+	sessionID, guest := createGuestSession(t, eng)
+	code, env := apiJSON(t, eng, http.MethodPost, "/api/v1/sessions/"+sessionID+"/turns",
+		map[string]any{"message": msg},
+		map[string]string{"X-Guest-Token": guest, "X-Request-ID": uuid.NewString()})
+	if code != http.StatusOK {
+		t.Fatalf("turn: %d %v", code, env)
+	}
+	d := dataMap(env)
+	if d["procedure_code"] != "dk_khai_sinh" {
+		t.Fatalf("procedure=%v", d["procedure_code"])
+	}
+	slotState, _ := d["slot_state"].(map[string]any)
+	if married, ok := slotState["da_ket_hon"].(map[string]any); ok && married["value"] != nil {
+		t.Fatalf("H1: da_ket_hon must remain unknown, got %v", married)
+	}
+	if birth, _ := slotState["co_giay_chung_sinh"].(map[string]any); birth["value"] != true {
+		t.Fatalf("co_giay_chung_sinh=%v", slotState["co_giay_chung_sinh"])
+	}
+	if loc, _ := slotState["noi_sinh"].(map[string]any); loc["value"] != "Bệnh viện huyện Chư Sê" {
+		t.Fatalf("noi_sinh=%v", slotState["noi_sinh"])
 	}
 }
 
@@ -318,6 +375,59 @@ func TestHTTPAITimeoutFallsBackToKeywordAndStillSucceeds(t *testing.T) {
 	if meta["extract_fallback_reason"] != "timeout" {
 		t.Fatalf("expected extract_fallback_reason=timeout, got %v", meta)
 	}
+	d := dataMap(env)
+	action, _ := d["action"].(string)
+	switch action {
+	case "ASK_MISSING_SLOTS", "CONFIRM_INTENT", "PROVIDE_FINAL_GUIDANCE", "OUT_OF_SCOPE", "DIRECT_ANSWER":
+	default:
+		t.Fatalf("timeout fallback returned invalid DE action %q env=%v", action, d)
+	}
+	// Same fixture as the accepted timeout evidence: first-turn birth-registration
+	// opener with no pin. Keyword fallback must confirm intent, not pick an
+	// arbitrary valid Decision Engine action.
+	if action != "CONFIRM_INTENT" {
+		t.Fatalf("timeout fixture expected CONFIRM_INTENT, got %q env=%v", action, d)
+	}
+	var marriage any
+	if slotState, _ := d["slot_state"].(map[string]any); slotState != nil {
+		if married, ok := slotState["da_ket_hon"].(map[string]any); ok && married["value"] != nil {
+			t.Fatalf("timeout fallback invented da_ket_hon=%v", married)
+		} else if ok {
+			marriage = married["value"]
+		}
+	}
+
+	msgCode, msgEnv := apiJSON(t, eng, http.MethodGet, "/api/v1/sessions/"+sessionID+"/messages", nil,
+		map[string]string{"X-Guest-Token": guest})
+	if msgCode != http.StatusOK {
+		t.Fatalf("list messages after timeout turn: %d %v", msgCode, msgEnv)
+	}
+	items, _ := dataMap(msgEnv)["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 messages after one timeout turn (no duplicate), got %d", len(items))
+	}
+
+	obs := map[string]any{
+		"test":                    "TestHTTPAITimeoutFallsBackToKeywordAndStillSucceeds",
+		"session_id":              sessionID,
+		"action":                  action,
+		"extract_source":          meta["extract_source"],
+		"extract_fallback_reason": meta["extract_fallback_reason"],
+		"http_status":             code,
+		"duplicate_turn":          false,
+		"message_count":           len(items),
+		"persisted":               map[string]any{"da_ket_hon": marriage},
+		"evidence_type":           "controlled_fallback",
+		"storage":                 "postgres_integration",
+		"gemini_live":             false,
+		"unhandled_exception":     false,
+	}
+	raw, err := json.Marshal(obs)
+	if err != nil {
+		t.Fatalf("marshal E2E05_JSON: %v", err)
+	}
+	t.Logf("E2E05_JSON %s", raw)
+	t.Logf("E2E05_OBS session=%s action=%s source=%v reason=%v", sessionID, action, meta["extract_source"], meta["extract_fallback_reason"])
 }
 
 func TestHTTPAIInvalidSlotFallsBackToKeyword(t *testing.T) {

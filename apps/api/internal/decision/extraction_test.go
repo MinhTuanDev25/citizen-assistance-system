@@ -150,6 +150,74 @@ func TestPolicyBandMatchesDefaultThresholds(t *testing.T) {
 	}
 }
 
+func TestDecideWithExtractionKeepsMarriageUnknownWhenNotSeeded(t *testing.T) {
+	def := khaiSinh()
+	msg := "Tôi muốn đăng ký khai sinh cho con sinh tại Bệnh viện huyện Chư Sê, đã có giấy chứng sinh, mẹ đi đăng ký."
+	extraction := &ExtractionProposal{Slots: map[string]ExtractedSlot{
+		"noi_sinh":           {Value: "Bệnh viện huyện Chư Sê", Operation: "set"},
+		"co_giay_chung_sinh": {Value: true, Operation: "set"},
+		"nguoi_di_dang_ky":   {Value: "me", Operation: "set"},
+	}}
+	out, applied := DecideWithExtraction(TurnInput{Definition: def, Message: msg}, extraction)
+	if out.SlotState["da_ket_hon"].Filled() {
+		t.Fatalf("da_ket_hon must remain unknown, got %#v", out.SlotState["da_ket_hon"])
+	}
+	if out.SlotState["noi_sinh"].Value != "Bệnh viện huyện Chư Sê" {
+		t.Fatalf("noi_sinh=%#v", out.SlotState["noi_sinh"])
+	}
+	if out.SlotState["co_giay_chung_sinh"].Value != true {
+		t.Fatalf("co_giay_chung_sinh=%#v", out.SlotState["co_giay_chung_sinh"])
+	}
+	if out.SlotState["nguoi_di_dang_ky"].Value != "me" {
+		t.Fatalf("nguoi_di_dang_ky=%#v", out.SlotState["nguoi_di_dang_ky"])
+	}
+	if len(applied.Accepted) != 3 {
+		t.Fatalf("accepted=%v", applied.Accepted)
+	}
+	if out.Action != ActionAsk {
+		t.Fatalf("action=%s missing=%v (want ASK for da_ket_hon)", out.Action, out.MissingSlots)
+	}
+	if !containsStr(out.MissingSlots, "da_ket_hon") {
+		t.Fatalf("missing=%v want da_ket_hon", out.MissingSlots)
+	}
+}
+
+func TestKeywordDoesNotFillUncertainMarriage(t *testing.T) {
+	def := khaiSinh()
+	prior := map[string]SlotValue{
+		"noi_sinh":           {Value: "Bệnh viện huyện Chư Sê", Status: StatusKnown},
+		"co_giay_chung_sinh": {Value: true, Status: StatusKnown},
+		"nguoi_di_dang_ky":   {Value: "me", Status: StatusKnown},
+	}
+	out := Decide(TurnInput{
+		Definition:    def,
+		Prior:         prior,
+		HadPriorState: true,
+		Message:       "Cha mẹ không biết đã đăng ký kết hôn chưa.",
+	})
+	if out.SlotState["da_ket_hon"].Filled() {
+		t.Fatalf("uncertain message must not fill da_ket_hon, got %#v", out.SlotState["da_ket_hon"])
+	}
+	if out.Action != ActionAsk {
+		t.Fatalf("action=%s want ASK_MISSING_SLOTS", out.Action)
+	}
+}
+
+func TestDecideExplicitUnmarriedFillsOnlyMarriage(t *testing.T) {
+	def := khaiSinh()
+	prior := map[string]SlotValue{
+		"noi_sinh":           {Value: "Bệnh viện huyện Chư Sê", Status: StatusKnown},
+		"co_giay_chung_sinh": {Value: true, Status: StatusKnown},
+	}
+	out := Decide(TurnInput{Definition: def, Prior: prior, HadPriorState: true, Message: "Cha mẹ chưa đăng ký kết hôn."})
+	if out.SlotState["da_ket_hon"].Value != false {
+		t.Fatalf("da_ket_hon=%#v", out.SlotState["da_ket_hon"])
+	}
+	if out.SlotState["co_giay_chung_sinh"].Value != true {
+		t.Fatalf("document slot changed: %#v", out.SlotState["co_giay_chung_sinh"])
+	}
+}
+
 func TestCustomPolicyOverridesThresholds(t *testing.T) {
 	p := Policy{SelectMin: 0.7, ConfirmMin: 0.4}
 	if p.Band(0.75) != IntentSelect {

@@ -9,22 +9,37 @@ from __future__ import annotations
 
 from app.models.extract import ExtractRequest
 
+EXTRACT_PROMPT_VERSION = "extract.prompt.v2"
+
 SYSTEM_PROMPT = (
     "You extract structured intent and slot values for a Vietnamese citizen "
     "administrative-procedure assistant. You MUST only pick procedure_code "
     "from the given candidates and only fill slot keys from the given allowed "
-    "keys. Never invent a procedure or a slot. If unsure, leave fields null "
-    "and set abstain_reason. Output must be a single JSON object matching "
-    "this schema: {schema_version:'extract.v1', intent:{procedure_code, "
-    "confidence 0..1, alternatives:[{procedure_code, confidence}]}, "
-    "slots_for_procedure_code, slots:[{key, value, confidence, evidence, "
-    "operation:'set'|'correct'}], abstain_reason}. Do not emit provider or "
-    "model; the server sets those."
+    "keys. Extract ONLY information explicitly stated or clearly paraphrased "
+    "in the citizen message. Each slot MUST include an evidence span copied "
+    "verbatim from the message. Do not invent evidence. Do not infer civil "
+    "status, document possession, or family relationship from unrelated "
+    "clauses: 'mẹ đi đăng ký' does not mean the parents are married; naming "
+    "a hospital does not establish other eligibility conditions. Boolean "
+    "true/false requires an explicit positive or negative statement "
+    "(đã/có vs chưa/không/không có). Negation applies to the nearest claim: "
+    "'không có giấy chứng sinh' is false, not true. If a slot is not stated, "
+    "omit it. If the request is too vague to pick a procedure, set "
+    "procedure_code null, confidence 0, and abstain_reason. Never guess. "
+    "Output must be a single JSON object matching this schema: "
+    "{schema_version:'extract.v1', intent:{procedure_code, confidence 0..1, "
+    "alternatives:[{procedure_code, confidence}]}, slots_for_procedure_code, "
+    "slots:[{key, value, confidence, evidence, operation:'set'|'correct'}], "
+    "abstain_reason}. Do not emit provider or model; the server sets those."
 )
 
 
 def build_system_prompt() -> str:
     return SYSTEM_PROMPT
+
+
+def prompt_version() -> str:
+    return EXTRACT_PROMPT_VERSION
 
 
 def build_user_payload(request: ExtractRequest) -> dict:

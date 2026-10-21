@@ -13,6 +13,7 @@ import ProceduresCatalogPage from './pages/ProceduresCatalogPage.jsx'
 import SelectCommunePage from './pages/SelectCommunePage.jsx'
 import DeferredIngestionPage from './pages/admin/DeferredIngestionPage.jsx'
 import ProceduresPage from './pages/admin/ProceduresPage.jsx'
+import { LEGACY_REDIRECTS, ROUTES } from './routes.js'
 
 // Build-time constant so Vite drops admin mock chunks when flag is false.
 const ingestionOn = adminIngestionEnabled()
@@ -36,9 +37,12 @@ export default function App() {
       <CommuneProvider>
         <BrowserRouter>
           <Routes>
-            <Route path="/chon-xa" element={<SelectCommunePage />} />
+            <Route path={ROUTES.commune} element={<SelectCommunePage />} />
+            {LEGACY_REDIRECTS.map((row) => (
+              <Route key={row.from} path={row.from} element={<Navigate to={row.to} replace />} />
+            ))}
             <Route
-              path="/"
+              path={ROUTES.home}
               element={
                 <RequireCommune>
                   <HomePage />
@@ -46,7 +50,7 @@ export default function App() {
               }
             />
             <Route
-              path="/hoi"
+              path={ROUTES.chat}
               element={
                 <RequireCommune>
                   <CitizenChatPage />
@@ -54,17 +58,15 @@ export default function App() {
               }
             />
             <Route
-              path="/thu-tuc"
+              path={ROUTES.procedures}
               element={
                 <RequireCommune>
                   <ProceduresCatalogPage />
                 </RequireCommune>
               }
             />
-            <Route path="/ho-so" element={<Navigate to="/" replace />} />
-            <Route path="/giong-noi" element={<Navigate to="/hoi" replace />} />
             <Route
-              path="/login"
+              path={ROUTES.login}
               element={
                 <RequireCommune>
                   <LoginPage />
@@ -72,7 +74,7 @@ export default function App() {
               }
             />
             <Route
-              path="/admin"
+              path={ROUTES.admin}
               element={
                 <RequireCommune>
                   <RequireAdmin>
@@ -115,7 +117,7 @@ export default function App() {
               />
               <Route path="procedures" element={<ProceduresPage />} />
             </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<Navigate to={ROUTES.home} replace />} />
           </Routes>
         </BrowserRouter>
       </CommuneProvider>

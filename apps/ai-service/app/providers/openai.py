@@ -68,13 +68,34 @@ class OpenAIProvider:
             payload = resp.json()
             content = payload["choices"][0]["message"]["content"]
             parsed = json.loads(content)
-        except (KeyError, IndexError, ValueError) as exc:
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ProviderError(REASON_MALFORMED, f"openai returned malformed content: {exc}") from exc
+
+        if not isinstance(parsed, dict):
+            raise ProviderError(
+                REASON_MALFORMED,
+                f"openai returned JSON {type(parsed).__name__}, expected object",
+            )
 
         # The model must not choose these. Overwrite even if the JSON set them.
         parsed["provider"] = self.name
         parsed["model"] = self._settings.model
         try:
-            return ExtractResponse.model_validate(parsed)
+            result = ExtractResponse.model_validate(parsed)
         except ValidationError as exc:
             raise ProviderError(REASON_SCHEMA_VIOLATION, f"openai output failed schema: {exc}") from exc
+        usage_raw = payload.get("usage") if isinstance(payload, dict) else None
+        usage = {"prompt_token_count": None, "candidates_token_count": None, "total_token_count": None}
+        if isinstance(usage_raw, dict):
+            def _int(name: str) -> int | None:
+                raw = usage_raw.get(name)
+                if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                    return None
+                return int(raw)
+
+            usage = {
+                "prompt_token_count": _int("prompt_tokens"),
+                "candidates_token_count": _int("completion_tokens"),
+                "total_token_count": _int("total_tokens"),
+            }
+        return result.model_copy(update={"usage": usage, "http_status": resp.status_code})

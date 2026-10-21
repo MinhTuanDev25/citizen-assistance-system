@@ -3,12 +3,13 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { listCommunes } from '../api/catalog.js'
 import { CommuneScene } from '../components/CommuneScene.jsx'
 import { useCommune } from '../commune/CommuneContext.jsx'
+import { ROUTES, isCommuneSelectPath } from '../routes.js'
 
 export default function SelectCommunePage() {
   const { commune, setCommune } = useCommune()
   const navigate = useNavigate()
   const location = useLocation()
-  const from = location.state?.from || '/'
+  const from = location.state?.from || ROUTES.home
   const changing = Boolean(location.state?.change)
 
   const [items, setItems] = useState([])
@@ -39,7 +40,7 @@ export default function SelectCommunePage() {
   }, [])
 
   if (commune && !changing) {
-    return <Navigate to={from === '/chon-xa' ? '/' : from} replace />
+    return <Navigate to={isCommuneSelectPath(from) ? ROUTES.home : from} replace />
   }
 
   function pick(item) {
@@ -48,7 +49,7 @@ export default function SelectCommunePage() {
       name: item.name,
       description: item.description || null,
     })
-    navigate(from === '/chon-xa' ? '/' : from, { replace: true })
+    navigate(isCommuneSelectPath(from) ? ROUTES.home : from, { replace: true })
   }
 
   return (

@@ -45,7 +45,7 @@ def test_openai_provider_not_ready_without_key():
 def test_gemini_provider_ready_with_key_and_model():
     s = Settings(
         provider="gemini",
-        model="gemini-1.5-flash",
+        model="gemini-3.5-flash-lite",
         openai_api_key=None,
         openai_base_url="",
         gemini_api_key="fake-key-not-real",
@@ -256,6 +256,43 @@ def test_load_settings_rejects_invalid_model_without_echoing_it(monkeypatch):
     assert bad not in str(exc.value)
 
 
+def test_gemini_default_model_is_flash_lite_not_1_5(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("AI_SERVICE_TOKEN", "test-service-token")
+    monkeypatch.setenv("INDEX_MODE", "mock")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key-not-real")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("LLM_MODEL_EXTRACTION", raising=False)
+    settings = load_settings()
+    assert settings.model == "gemini-3.5-flash-lite"
+    assert settings.model_extraction == "gemini-3.5-flash-lite"
+    assert settings.model_definition == "gemini-3.8-flash"
+    assert settings.max_output_tokens == 1024
+    assert "1.5-flash" not in settings.model
+
+
+def test_llm_model_extraction_overrides_llm_model(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("AI_SERVICE_TOKEN", "test-service-token")
+    monkeypatch.setenv("INDEX_MODE", "mock")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key-not-real")
+    monkeypatch.setenv("LLM_MODEL", "gemini-3.8-flash")
+    monkeypatch.setenv("LLM_MODEL_EXTRACTION", "gemini-3.5-flash-lite")
+    monkeypatch.setenv("LLM_MODEL_DEFINITION", "gemini-3.8-flash")
+    settings = load_settings()
+    assert settings.model == "gemini-3.5-flash-lite"
+    assert settings.model_definition == "gemini-3.8-flash"
+
+
+def test_timeout_alias_llm_timeout_seconds(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    monkeypatch.setenv("AI_SERVICE_TOKEN", "test-service-token")
+    monkeypatch.delenv("LLM_REQUEST_TIMEOUT_S", raising=False)
+    monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "4")
+    settings = load_settings()
+    assert settings.request_timeout_s == 4.0
+
+
 def test_status_dict_does_not_include_token():
     s = Settings(
         provider="mock",
@@ -269,3 +306,4 @@ def test_status_dict_does_not_include_token():
     )
     blob = str(s.status_dict())
     assert "test-service-token" not in blob
+    assert s.status_dict()["extract_prompt_version"] == "extract.prompt.v2"

@@ -1,12 +1,13 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { useCommune } from '../commune/CommuneContext.jsx'
+import { ROUTES, loginPath } from '../routes.js'
 import CitizenSearch from './CitizenSearch.jsx'
 
 const NAV = [
-  { to: '/', end: true, label: 'Trang chủ', icon: '⌂' },
-  { to: '/hoi', label: 'Hỏi đáp', icon: '💬' },
-  { to: '/thu-tuc', label: 'Thủ tục hành chính', icon: '☰' },
+  { to: ROUTES.home, end: true, label: 'Trang chủ', icon: '⌂' },
+  { to: ROUTES.chat, label: 'Hỏi đáp', icon: '💬' },
+  { to: ROUTES.procedures, label: 'Thủ tục hành chính', icon: '☰' },
 ]
 
 export function CitizenLayout({ children }) {
@@ -18,7 +19,7 @@ export function CitizenLayout({ children }) {
   return (
     <div className="cas-layout">
       <aside className="cas-side">
-        <Link to="/" className="brand-mark brand-link">
+        <Link to={ROUTES.home} className="brand-mark brand-link">
           <div className="brand-icon" aria-hidden>
             CS
           </div>
@@ -39,9 +40,9 @@ export function CitizenLayout({ children }) {
         </nav>
         <p className="cas-side-section">Tài khoản</p>
         <nav className="cas-side-nav">
-          {user?.role === 'ADMIN' ? <NavLink to="/admin">Cổng cán bộ</NavLink> : null}
-          {!user ? <NavLink to="/login?as=citizen">Đăng nhập</NavLink> : null}
-          <button type="button" onClick={() => navigate('/chon-xa', { state: { change: true, from: '/' } })}>
+          {user?.role === 'ADMIN' ? <NavLink to={ROUTES.admin}>Cổng cán bộ</NavLink> : null}
+          {!user ? <NavLink to={loginPath('citizen')}>Đăng nhập</NavLink> : null}
+          <button type="button" onClick={() => navigate(ROUTES.commune, { state: { change: true, from: ROUTES.home } })}>
             Đổi xã
           </button>
         </nav>

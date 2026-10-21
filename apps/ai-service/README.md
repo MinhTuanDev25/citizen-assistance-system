@@ -37,13 +37,16 @@ the rejected model.
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `LLM_PROVIDER` | `mock` | `mock` \| `openai` \| `gemini` |
-| `LLM_MODEL` | provider default (`mock-extract-v1`, `gpt-4o-mini`, or `gemini-1.5-flash`) | Validated at startup with the same pattern as response `model`: a leading letter, then letters, digits, `.`, `_`, `:`, `/`, `-`, at most 80 characters |
+| `LLM_MODEL` | provider default (`mock-extract-v1`, `gpt-4o-mini`, or `gemini-3.5-flash-lite`) | Optional extract override. Same model-id pattern as the response `model` field |
+| `LLM_MODEL_EXTRACTION` | (empty → `LLM_MODEL` then provider default) | Gemini/OpenAI extract model. Gemini default `gemini-3.5-flash-lite` |
+| `LLM_MODEL_DEFINITION` | `gemini-3.8-flash` when `LLM_PROVIDER=gemini` | Stored for Phase 4.5 drafting; extract does not call it |
+| `LLM_MAX_OUTPUT_TOKENS` | `1024` | Gemini `maxOutputTokens` for extract (1–8192) |
 | `AI_SERVICE_TOKEN` | — | Required. 16–256 characters. Never logged |
 | `OPENAI_API_KEY` | — | Required only when `LLM_PROVIDER=openai` |
 | `GEMINI_API_KEY` | — | Required only when `LLM_PROVIDER=gemini` |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Override for self-hosted/proxy |
 | `GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta` | Override |
-| `LLM_REQUEST_TIMEOUT_S` | `8.0` | Finite timeout in `(0, 8]` |
+| `LLM_REQUEST_TIMEOUT_S` | `8.0` | Finite extract timeout in `(0, 8]`. Alias: `LLM_TIMEOUT_SECONDS` if this is unset |
 | `EXTRACT_RATE_PER_MINUTE` | `60` | Authenticated extract requests per 60s. Excess is 429 |
 | `EXTRACT_MAX_INFLIGHT` | `4` | Concurrent provider calls. Excess is 429 |
 | `EXTRACT_RETRY_AFTER_SECONDS` | `1` | `Retry-After` value on 429 |

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext.jsx'
+import { ROUTES } from '../routes.js'
 
 // Compile-time flag: production builds leave VITE_DEMO_LOGIN unset → dead branch tree-shaken.
 const DEMO_ON =
@@ -37,10 +38,10 @@ export default function LoginPage() {
   }, [mode])
 
   if (user?.role === 'ADMIN') {
-    return <Navigate to="/admin" replace />
+    return <Navigate to={ROUTES.admin} replace />
   }
   if (user?.role === 'CITIZEN') {
-    return <Navigate to="/" replace />
+    return <Navigate to={ROUTES.home} replace />
   }
 
   function switchMode(next) {
@@ -53,7 +54,7 @@ export default function LoginPage() {
     setBusy(true)
     try {
       const next = await login(email, password)
-      navigate(next.role === 'ADMIN' ? '/admin' : '/', { replace: true })
+      navigate(next.role === 'ADMIN' ? ROUTES.admin : ROUTES.home, { replace: true })
     } catch (err) {
       setError(err.message || 'Đăng nhập thất bại')
     } finally {
@@ -142,7 +143,7 @@ export default function LoginPage() {
                 production builds.
               </p>
             ) : null}
-            <Link to="/">Tiếp tục hỏi thủ tục (khách)</Link>
+            <Link to={ROUTES.home}>Tiếp tục hỏi thủ tục (khách)</Link>
           </div>
         </form>
       </main>

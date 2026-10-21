@@ -3,24 +3,25 @@ import { Link } from 'react-router-dom'
 import { listProcedures } from '../../api/catalog.js'
 import { listDocuments } from '../../api/documents.js'
 import { useCommune } from '../../commune/CommuneContext.jsx'
+import { ROUTES } from '../../routes.js'
 
 const STEPS = [
   {
-    to: '/admin/documents',
+    to: ROUTES.adminDocuments,
     step: '1',
     title: 'Tải PDF',
     text: 'Lưu tài liệu nguồn theo lĩnh vực.',
     bg: '#dbeafe',
   },
   {
-    to: '/admin/documents',
+    to: ROUTES.adminDocuments,
     step: '2',
     title: 'Gắn và lập chỉ mục',
     text: 'Nối PDF với phiên bản thủ tục, chờ sẵn sàng.',
     bg: '#dcfce7',
   },
   {
-    to: '/admin/procedures',
+    to: ROUTES.adminProcedures,
     step: '3',
     title: 'Kích hoạt phiên bản',
     text: 'Công dân hỏi đáp theo phiên đang dùng.',
@@ -80,12 +81,12 @@ export default function AdminDashboardPage() {
         <div className="stat-card accent-blue">
           <span>Tài liệu PDF</span>
           <strong>{docs == null ? '…' : docs}</strong>
-          <Link to="/admin/documents">Mở tài liệu</Link>
+          <Link to={ROUTES.adminDocuments}>Mở tài liệu</Link>
         </div>
         <div className="stat-card accent-teal">
           <span>Thủ tục đang dùng</span>
           <strong>{active == null ? '…' : active}</strong>
-          <Link to="/admin/procedures">Mở thủ tục</Link>
+          <Link to={ROUTES.adminProcedures}>Mở thủ tục</Link>
         </div>
       </div>
 

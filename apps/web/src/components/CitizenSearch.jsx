@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { listProcedures } from '../api/catalog.js'
 import { useCommune } from '../commune/CommuneContext.jsx'
 import { matchesQuery } from '../lib/search.js'
+import { ROUTES } from '../routes.js'
 
 export default function CitizenSearch() {
   const navigate = useNavigate()
@@ -46,7 +47,7 @@ export default function CitizenSearch() {
 
   function pick(name) {
     setOpen(false)
-    navigate('/hoi', { state: { ask: `Tôi muốn hỏi về thủ tục ${name}` } })
+    navigate(ROUTES.chat, { state: { ask: `Tôi muốn hỏi về thủ tục ${name}` } })
   }
 
   return (

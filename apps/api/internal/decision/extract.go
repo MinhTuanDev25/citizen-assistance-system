@@ -94,7 +94,10 @@ func extract(def Definition, allowed []string, message string, explicit bool) (m
 			if leftover := leftoverClauses(message, def, found); leftover != "" {
 				found[only] = leftover
 			}
-		} else if len(found) == 0 {
+		} else if len(found) == 0 && slot.Type != "boolean" {
+			// A lone remaining boolean must match a clause with slot cues
+			// (matchBooleanClause). Coercing the whole utterance would treat
+			// unrelated "có"/"đã" (e.g. "đã có giấy chứng sinh") as marriage.
 			if value, ok := coerce(slot, strings.TrimSpace(message)); ok {
 				found[only] = value
 			}
@@ -227,6 +230,9 @@ func matchClause(def Definition, allowed map[string]struct{}, clause string, all
 }
 
 func matchEnumClause(def Definition, allowed map[string]struct{}, folded string) (string, any, bool) {
+	if isUncertainFolded(folded) {
+		return "", nil, false
+	}
 	var hitKey string
 	var hitValue string
 	hits := 0
@@ -286,6 +292,9 @@ func mostlyNumber(folded string) bool {
 }
 
 func matchBooleanClause(def Definition, allowed map[string]struct{}, folded string, allowBare bool) (string, any, bool) {
+	if isUncertainFolded(folded) {
+		return "", nil, false
+	}
 	pol, ok := polarity(folded)
 	if !ok {
 		return "", nil, false
@@ -358,6 +367,30 @@ func keywordScore(question, foldedClause string) int {
 		}
 	}
 	return score
+}
+
+func isUncertainFolded(folded string) bool {
+	for _, p := range []string{
+		"khong xac dinh duoc",
+		"khong biet",
+		"khong ro",
+		"chua ro",
+		"chua biet",
+		"chua chac",
+		"khong chac",
+		"khong nho",
+		"hinh nhu",
+		"co le",
+		"chac la",
+		"co the se",
+		"co the",
+		"khong muon",
+	} {
+		if containsPhrase(folded, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func polarity(folded string) (bool, bool) {

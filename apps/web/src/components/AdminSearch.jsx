@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { listAdminProcedures } from '../api/catalog.js'
 import { listDocuments } from '../api/documents.js'
 import { foldQuery, matchesQuery } from '../lib/search.js'
+import { adminDocumentPath, adminProcedurePath } from '../routes.js'
 
 const LIMIT = 8
 
@@ -47,7 +48,7 @@ export default function AdminSearch() {
         kind: 'Tài liệu',
         label: d.title || d.filename || 'PDF',
         hint: d.filename || '',
-        href: `/admin/documents?doc=${encodeURIComponent(d.id)}`,
+        href: adminDocumentPath(d.id),
       }))
     const procHits = procedures
       .filter((p) => matchesQuery(needle, p.name, p.procedure_code, p.active_version))
@@ -56,7 +57,7 @@ export default function AdminSearch() {
         kind: 'Thủ tục',
         label: p.name || p.procedure_code,
         hint: p.active_version ? `Đang dùng ${p.active_version}` : 'Chưa có phiên đang dùng',
-        href: `/admin/procedures?proc=${encodeURIComponent(p.id)}`,
+        href: adminProcedurePath(p.id),
       }))
     return [...docHits, ...procHits].slice(0, LIMIT)
   }, [query, docs, procedures])

@@ -12,6 +12,7 @@ import {
 import { CitizenLayout } from '../components/CitizenLayout.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { useCommune } from '../commune/CommuneContext.jsx'
+import { ROUTES } from '../routes.js'
 import {
   citationAvailability,
   citationExcerpt,
@@ -402,7 +403,7 @@ export default function CitizenChatPage() {
     if (!ask || !sessionReady || busy) return
     if (askedRef.current === ask) return
     askedRef.current = ask
-    navigate('/hoi', { replace: true, state: {} })
+    navigate(ROUTES.chat, { replace: true, state: {} })
     void submit(ask)
   }, [busy, location.state, navigate, sessionReady])
 
@@ -510,7 +511,7 @@ export default function CitizenChatPage() {
                 listening
                   ? 'Đang nghe… hãy nói câu hỏi'
                   : sessionReady
-                    ? 'Nhập hoặc nói câu hỏi…'
+                    ? 'Nhập câu tự nhiên, ví dụ đăng ký khai sinh cho con…'
                     : 'Đang mở phiên chat…'
               }
               rows={2}

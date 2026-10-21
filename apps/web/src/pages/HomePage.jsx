@@ -4,10 +4,11 @@ import { listProcedures } from '../api/catalog.js'
 import { CitizenLayout } from '../components/CitizenLayout.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { useCommune } from '../commune/CommuneContext.jsx'
+import { ROUTES } from '../routes.js'
 
 const CARDS = [
-  { to: '/hoi', title: 'Hỏi về thủ tục', text: 'Gõ hoặc nói để hỏi giấy tờ, phí, hạn và nơi nộp.', icon: '💬', bg: '#dbeafe' },
-  { to: '/thu-tuc', title: 'Hướng dẫn hồ sơ', text: 'Danh mục thủ tục đang hỗ trợ tại xã.', icon: '📁', bg: '#dcfce7' },
+  { to: ROUTES.chat, title: 'Hỏi về thủ tục', text: 'Gõ hoặc nói để hỏi giấy tờ, phí, hạn và nơi nộp.', icon: '💬', bg: '#dbeafe' },
+  { to: ROUTES.procedures, title: 'Hướng dẫn hồ sơ', text: 'Danh mục thủ tục đang hỗ trợ tại xã.', icon: '📁', bg: '#dcfce7' },
 ]
 
 export default function HomePage() {
@@ -76,12 +77,12 @@ export default function HomePage() {
           <button
             key={p.id}
             type="button"
-            onClick={() => navigate('/hoi', { state: { ask: `Tôi muốn hỏi về thủ tục ${p.name}` } })}
+            onClick={() => navigate(ROUTES.chat, { state: { ask: `Tôi muốn hỏi về thủ tục ${p.name}` } })}
           >
             {p.name}
           </button>
         ))}
-        <Link to="/thu-tuc">Xem thêm</Link>
+        <Link to={ROUTES.procedures}>Xem thêm</Link>
       </div>
     </CitizenLayout>
   )
