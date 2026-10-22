@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +21,9 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
 		t.Skip("DATABASE_URL required")
+	}
+	if !strings.Contains(url, "citizen_assistance_p4b_test") {
+		t.Skip("requires citizen_assistance_p4b_test; refusing CI/shared DATABASE_URL")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

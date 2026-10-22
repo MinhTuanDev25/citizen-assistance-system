@@ -185,7 +185,7 @@ function reasonLabel(code) {
     PARTIAL_SOURCE_INDEX: 'Một số tài liệu gắn vào phiên bản chưa sẵn sàng.',
     DOCUMENT_INDEX_UPLOADED: 'Tài liệu mới gắn, chưa lập chỉ mục.',
     DOCUMENT_INDEX_PROCESSING: 'Tài liệu đang được lập chỉ mục.',
-    DOCUMENT_INDEX_FAILED: 'Lập chỉ mục tài liệu thất bại.',
+    DOCUMENT_INDEX_FAILED: 'Chỉ mục tài liệu thất bại.',
     DOCUMENT_INDEX_NOT_READY: 'Tài liệu chưa sẵn sàng.',
     ACTIVE_GENERATION_MISSING: 'Tài liệu chưa có bản chỉ mục hoàn chỉnh.',
     MOCK_INDEX_NOT_PUBLISHED: 'Chưa có nội dung chỉ mục để trả lời. Không kích hoạt được.',

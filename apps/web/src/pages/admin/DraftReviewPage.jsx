@@ -157,11 +157,11 @@ export default function DraftReviewPage() {
     }, crypto.randomUUID()))
     setConfirmActivate(false)
     if (result?.activated && result?.reconciliation_required) {
-      setNotice('Phiên bản đã ACTIVE. Trạng thái draft PUBLISHED chưa ghi được — bấm Activate để reconcile. Không tạo version mới.')
+      setNotice('Phiên bản đã ACTIVE. Trạng thái draft PUBLISHED chưa ghi được — bấm Kích hoạt để reconcile. Không tạo version mới.')
     } else if (result?.activated) {
       setNotice(`Đã kích hoạt phiên bản ${result.version?.version || ''}.`)
     } else if (result?.indexing_pending) {
-      setNotice(`Đang lập chỉ mục (${result.phase || 'INDEXING_PENDING'}). Bấm Activate lại sau khi generation READY — không tạo generation trùng.`)
+      setNotice(`Đang lập chỉ mục (${result.phase || 'INDEXING_PENDING'}). Bấm Kích hoạt lại sau khi generation READY — không tạo generation trùng.`)
     } else {
       setNotice(`Chưa kích hoạt: ${result?.blocked_reason || (result?.reasons || []).join(', ') || 'chưa đủ điều kiện'}.`)
     }
@@ -275,7 +275,7 @@ export default function DraftReviewPage() {
             Approve Draft
           </button>
           <button type="button" disabled={!!busy || (draft.status !== 'APPROVED' && draft.status !== 'PUBLISHED')} onClick={() => setConfirmActivate(true)}>
-            {busy === 'activate' ? 'Đang kích hoạt…' : 'Activate / Resume'}
+            {busy === 'activate' ? 'Đang kích hoạt…' : 'Kích hoạt / Tiếp tục'}
           </button>
         </div>
         <p className="muted">Nút disable không phải ranh giới bảo mật. Backend từ chối duyệt/kích hoạt khi thiếu điều kiện.</p>

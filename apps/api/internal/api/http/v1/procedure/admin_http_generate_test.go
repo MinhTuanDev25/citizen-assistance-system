@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,9 @@ func TestAdminHTTPGenerateGetUnauthorized(t *testing.T) {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		t.Skip("DATABASE_URL required")
+	}
+	if !strings.Contains(dbURL, "citizen_assistance_p4b_test") {
+		t.Skip("requires citizen_assistance_p4b_test; refusing CI/shared DATABASE_URL")
 	}
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, dbURL)
