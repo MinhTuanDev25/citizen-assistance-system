@@ -1,268 +1,198 @@
-# Implementation Plan A→Z → Production
+# Plan A→Z — artifact trợ lý xã (để review)
 
-**Repo:** `citizen-assistance-system`  
-**Goal:** Từ scaffold hiện tại đến hệ thống chạy trên server thật (1 xã), có DB, storage, CI/CD, monitoring.
+**Nguồn:** capstone proposal §1.6, §4, §5.  
+**Repo:** `citizen-assistance-system` (`apps/`). RQ1/RQ2 nằm ở `bahnar-s2tt-thesis/` và **không** nằm trong plan này.  
+**Ngày:** 2026-09-28.
 
-**Stack đã chốt:** React+JS · Go Gin · Python FastAPI · PostgreSQL+pgvector · MinIO · Docker Compose · Nginx · GitHub Actions
+Mục tiêu artifact: 1 xã, một domain hộ tịch & chứng thực, hỏi tiếng Việt (sau đó giọng Bahnar → chữ Việt), slot deterministic, hướng dẫn có citation từ PDF đã index.
+
+**Không làm:** draft workspace, duyệt nhiều bước, OCR scan, đất đai/BHYT trên UI công dân, TTS Bahnar, nộp hồ sơ, thanh toán, HA, rollback bắt buộc.
 
 ---
 
-## Bản đồ tổng thể
+## 0. Đã có — không làm lại
+
+| Hạng | Việc đã chạy |
+|------|----------------|
+| DB | Postgres + pgvector image, migration `000001`–`000004` (schema, xã, seed thủ tục, user demo) |
+| Go | Gin, JWT, guest session, catalog, `POST /api/v1/sessions/:id/turns` |
+| Decision | `apps/api/internal/decision`: hỏi full slot thiếu, direct, final, out of scope, pin version, đổi thủ tục, sửa slot đã lưu |
+| Nhận câu | **Keyword** trong `intent.go` + `extract.go`, **và** (P2, tùy chọn qua `AI_EXTRACT_ENABLED`) Python `POST /v1/extract` + `internal/aiextract` + `internal/chat/ai_plan.go` — keyword vẫn là fallback duy nhất khi AI tắt/lỗi/timeout |
+| Web | Chat công dân, hội thoại mới, login, catalog chỉ hộ tịch |
+| Admin UI | Upload, list, detail, download PDF khi cả hai cờ ingestion bật. Draft/OCR vẫn là trang “chưa triển khai” |
+| P4A | Migration `000010`–`000013`. Trạng thái indexing trên từng link, mock index, retry. Không embedding, không activate |
+
+Chưa có: embedding, RAG, activate, mic Bahnar, migration citation/speech (`message_citations`, `model_versions`, `speech_translation_requests`).
+
+---
+
+## 1. Luồng một lượt chat (chỗ LLM và RAG cắm vào)
+
+Cửa duy nhất phía công dân: `POST /api/v1/sessions/:sessionId/turns` → `chat.Service.Turn` → `planTurn` → `decision.Decide` → `SaveTurn`.
 
 ```text
-P0 Scaffold ✅
-  → P1 Core chat (Go + seed + Decision Engine)
-  → P2 AI service (extract + mock/LLM)
-  → P3 Web UI (Citizen)
-  → P4 Admin pipeline (upload → review → publish → embed)
-  → P5 RAG + citations
-  → P6 Hardening (auth, audit, security)
-  → P7 Infra local (Compose full stack)
-  → P8 CI/CD
-  → P9 Staging server
-  → P10 UAT + metrics
-  → P11 Production cutover
-  → P12 Operate (backup, monitor, runbook)
+Câu người dân (hoặc chữ Việt từ speech)
+        │
+        ▼
+[A] Python POST /v1/extract          ← LLM
+        procedure_code + slots (allowed keys)
+        │
+        ▼
+[B] Go validate type/enum
+        │
+        ▼
+[C] decision.Decide                  ← không gọi model
+        ASK | DIRECT | FINAL | OUT_OF_SCOPE
+        │
+        ├─ ASK: câu hỏi lấy từ JSON, dừng
+        │
+        └─ DIRECT / FINAL
+              │
+              ▼
+        [D] Python retrieve            ← RAG + pgvector
+              chỉ chunk của version đang pin
+              │
+              ▼
+        Go ghép checklist JSON + citation
+        RAG không được sửa checklist
 ```
 
----
+Keyword `MatchIntent` / `Extract` giữ làm fallback khi Python timeout.
 
-## Phase 0 — Done (baseline)
-
-- [x] Monorepo `apps/{api,ai-service,web}`, `deploy/`, `docs/phase-0/`
-- [x] Seeds + schema + decision contract
-- [x] Compose skeleton (Postgres+pgvector, MinIO)
-
-**Exit:** repo trên `main`, docs Phase 0 trong repo.
+Giọng Bahnar (sau, khi có checkpoint): Python `POST /v1/speech/translate` **trước** bước [A]. Cùng `planTurn`.
 
 ---
 
-## Phase 1 — Go Backend core (chat deterministic)
+## 2. Các pha còn lại
 
-**Mục tiêu:** `POST /api/v1/chat/turns` chạy với seed JSON, không cần LLM thật.
+Làm đúng thứ tự. Pha sau không bắt đầu khi exit của pha trước chưa đạt.
 
-| # | Task | Output |
-|---|------|--------|
-| 1.1 | `go mod` + Gin skeleton (`cmd/api`) | Health `GET /health` |
-| 1.2 | Config từ env (`DATABASE_URL`, `XA_ID`, …) | `internal/config` |
-| 1.3 | Migrate Postgres (users, sessions, messages, slot_state, domains, procedures, versions, audit) | SQL/goose/migrate |
-| 1.4 | Seed loader từ `docs/phase-0/seeds/*.json` | Active procedures trong DB |
-| 1.5 | Intent mock (keyword) trong Go *hoặc* gọi AI stub | Detect `dk_khai_sinh`… |
-| 1.6 | Slot state + Decision Engine (`direct` / `ask_all_missing` / `final`) | Unit tests |
-| 1.7 | Chat turn API + persist session/messages/audit | curl E2E khai sinh |
+### P2 — Extract LLM — **DONE** (2026-09-29, `phase_p2_llm_extract_bundle`)
 
-**Done when:** hỏi “làm khai sinh” → hỏi full missing từ JSON → trả lời đủ slot → guidance + citation stub.
+**Vì sao trước RAG:** các lỗi “ba / tôi / gõ sai kết hôn” nằm ở nhận câu, không ở vector.
 
-**Không làm:** Admin UI, RAG thật, LLM cloud.
+| # | Việc | File |
+|---|------|------|
+| 2.1 | FastAPI `apps/ai-service`, `GET /health` | `app/main.py` |
+| 2.2 | `POST /v1/extract`: message, candidates (code, name, examples, slots), pinned procedure, allowed keys, slot state | `app/models/extract.py` |
+| 2.3 | Provider `mock` \| `openai` \| `gemini` qua `LLM_PROVIDER` | `app/providers/{mock,openai,gemini}.py`, structured output, không free-text key |
+| 2.4 | Go client timeout; lỗi thì keyword | `internal/aiextract/{client,validate}.go`, `internal/chat/ai_plan.go` |
+| 2.5 | Test: “ba”→`cha`, “tôi” không đoán, “à quên chưa đưng kí kéth ôn”→`da_ket_hon=false` sau khi đã final | `apps/ai-service/tests/test_mock_provider.py` + `internal/chat/ai_plan_test.go` + `internal/decision/extraction_test.go` |
 
----
+**Exit — đã đạt, xem `phase_p2_llm_extract_report.md`:** hội thoại mới, bốn câu trên đúng action; checklist vẫn từ JSON; toàn bộ test Phase 1–3 vẫn PASS không đổi; gọi AI không bao giờ diễn ra khi đang giữ transaction/row lock DB (kiến trúc 3 pha trong `chat.Service.turnWithAI`); AI không bao giờ tự chọn action, không tự bịa procedure/slot, không sửa guidance/checklist/citation, không tự đổi procedure đang pin (luôn qua `CONFIRM_INTENT`).
 
-## Phase 2 — Python AI Service
+**Không:** paraphrase câu hỏi, RAG, speech, PDF upload, procedure draft, embedding, deploy/commit/push (giữ nguyên cho pha sau).
 
-**Mục tiêu:** Go gọi AI qua REST; bắt đầu mock, sau gắn LLM.
+**Mặc định tắt:** `AI_EXTRACT_ENABLED=false` — API chạy nguyên luồng keyword-only cũ (`chat.Service.turnKeywordOnly`), không có gì đổi trừ khi bật cờ này.
 
-| # | Task | Output |
-|---|------|--------|
-| 2.1 | FastAPI skeleton + `/health` | Service port 8001 |
-| 2.2 | `POST /v1/extract` — intent + slots (structured, allowed keys) | Contract JSON |
-| 2.3 | Provider abstraction (`mock` → `openai`/`gemini`) | Env `LLM_PROVIDER` |
-| 2.4 | Go client gọi AI + timeout/retry | Integration |
-| 2.5 | (Optional) `POST /v1/generate` paraphrase reply | Soft NLG |
+**Sửa sau review (cùng bundle):** provider/model do server gán, không do model; claim `PENDING` (migration `000008`) để hai request đồng thời chỉ gọi extractor một lần; `ai-service` không publish cổng và yêu cầu `AI_SERVICE_TOKEN`; Go `DisallowUnknownFields` và config sai thì fail startup.
 
-**Done when:** CI dùng mock; staging có thể bật LLM key.
+**Sửa blocker tiếp theo:** `POST /v1/extract` rate-limit sau auth (429 + `Retry-After`, Go không retry); ngưỡng Go và timeout Python từ chối `NaN`/`Inf`; `LLM_MODEL` và độ dài token kiểm tra lúc startup; trần payload chỉ còn hằng số Pydantic; Compose profile `ai` tùy chọn nên keyword-only (`--profile app`) không chờ `ai-service`.
 
----
+### P3.1 — Admin document intake — upload PDF thật
 
-## Phase 3 — Citizen Web
+Admin JWT upload PDF vào MinIO (bucket private) và bảng `documents` (migration `000009`: `mime_type`, `file_size_bytes`, unique `xa_id + checksum`). List, detail, và stream lại file. Chưa OCR, extract draft, embed, hay RAG. Mặc định tắt. Bật local cần cả hai cờ: `ADMIN_INGESTION_ENABLED=true VITE_ADMIN_INGESTION=true docker compose --profile app --profile storage up --build`.
 
-| # | Task | Output |
-|---|------|--------|
-| 3.1 | Vite + React JS app | `apps/web` |
-| 3.2 | Chat UI (session_id, history, missing questions) | `/` |
-| 3.3 | Call Go `/api/v1/chat/turns` | CORS + proxy |
-| 3.4 | Guest session UX | Không bắt login V1 |
+### P4A — Document indexing foundation
 
-**Done when:** browser chat end-to-end với seed khai sinh / chứng thực.
+Migration `000010` (không sửa `000001`–`000009`). Thêm `READY` cạnh `PROCESSED`, `documents.supersedes_document_id` cùng xã, và `relationship_type` / `page_range` / `created_at` trên `procedure_version_documents`. Ràng buộc document, procedure và version cùng `xa_id` và `domain_id`.
 
----
+Trạng thái indexing nằm trên từng link `procedure_version_documents` (`UPLOADED | PROCESSING | READY | FAILED`). Job thuộc `(document_id, procedure_version_id)` và `xa_id`. `documents.processing_status` là trạng thái tổng hợp. Worker P4A là mock `POST /v1/index`. Không ghi `knowledge_chunks`, không OCR, không embedding, không RAG, không activate. Migration thêm là `000011`–`000013` (không sửa `000001`–`000012`). `000013` chỉ chuẩn hóa response idempotency cũ để replay đúng schema mới.
 
-## Phase 4 — Admin knowledge pipeline
+Một lệnh chạy:
 
-| # | Task | Output |
-|---|------|--------|
-| 4.1 | MinIO bucket + Go upload API | PDF → object storage + `documents` row |
-| 4.2 | AI `POST /v1/documents/extract` → draft | `procedure_drafts` |
-| 4.3 | Admin Review UI (forms, không raw JSON) | `/admin` |
-| 4.4 | Validate schema/business | Block approve if invalid |
-| 4.5 | Publish: version + archive previous | `procedure_versions` |
-| 4.6 | Chunk + embed (Python) → pgvector | Active only after index OK |
-| 4.7 | Rollback API + UI | Audit reason |
-
-**Done when:** upload PDF text → review → publish → citizen dùng version mới.
-
----
-
-## Phase 5 — RAG + citations
-
-| # | Task | Output |
-|---|------|--------|
-| 5.1 | Retrieve top-k chunks (filter `xa_id`, active version) | AI retrieve |
-| 5.2 | Final guidance = JSON checklist + RAG explanation + citations | Knowledge orchestrator |
-| 5.3 | Guardrail: RAG không override procedure JSON | Tests |
-| 5.4 | Evaluation set (VN admin cases) | Metrics intent/slot/citation |
-
-**Done when:** final answers luôn có citation; unsupported ≤ target (eval).
-
----
-
-## Phase 6 — Security & hardening
-
-| # | Task | Output |
-|---|------|--------|
-| 6.1 | JWT auth (citizen optional / admin required) | RBAC publish/rollback |
-| 6.2 | Secrets chỉ env / secret manager | No keys in git |
-| 6.3 | Rate limit chat/upload | Basic |
-| 6.4 | PII redaction in logs | Policy |
-| 6.5 | Dependency scan + OWASP checklist | Report |
-
----
-
-## Phase 7 — Full local Docker stack
-
-| # | Task | Output |
-|---|------|--------|
-| 7.1 | Dockerfile cho `api`, `ai-service`, `web` | Multi-stage builds |
-| 7.2 | Compose: postgres, minio, api, ai, web, nginx | `deploy/docker-compose.yml` |
-| 7.3 | Migrations on startup / init job | Idempotent |
-| 7.4 | Prod secrets: env on VPS (no committed secrets) | Documented |
-| 7.5 | One-command: `docker compose up --build` | Dev README |
-
-**Done when:** máy mới clone → compose up → chat + admin chạy.
-
----
-
-## Phase 8 — CI/CD
-
-| # | Task | Output |
-|---|------|--------|
-| 8.1 | GitHub Actions: lint + unit Go/Python/Web | PR checks |
-| 8.2 | Integration với mock LLM | CI green |
-| 8.3 | Build & push images (GHCR/Docker Hub) | Tags `sha` / `semver` |
-| 8.4 | Deploy job → staging (SSH hoặc compose pull) | Manual approve prod |
-
----
-
-## Phase 9 — Staging server (pre-prod)
-
-**Mục tiêu:** môi trường giống prod trên VPS.
-
-| # | Task | Output |
-|---|------|--------|
-| 9.1 | Thuê VPS (2–4 vCPU, 4–8GB RAM) + domain | `staging.example.vn` |
-| 9.2 | Cài Docker + Compose + firewall (22/80/443) | Hardened host |
-| 9.3 | TLS (Caddy/Nginx + Let’s Encrypt) | HTTPS |
-| 9.4 | Deploy stack từ CI hoặc script | Running staging |
-| 9.5 | Postgres volume + daily backup cron | `.sql.gz` offsite |
-| 9.6 | MinIO persistence + bucket policy | Private |
-| 9.7 | Seed procedures + 1–2 PDF text thật (nếu có) | Ready for UAT |
-| 9.8 | LLM key trên staging only | Secret file / env |
-
-**Done when:** team + cán bộ thử trên HTTPS staging.
-
----
-
-## Phase 10 — UAT & evaluation
-
-| # | Task | Output |
-|---|------|--------|
-| 10.1 | Chạy test matrix (khai sinh, chứng thực, publish, rollback) | Pass critical |
-| 10.2 | AI eval (intent ≥85%, slot F1 ≥80%, citation 100%) | Report |
-| 10.3 | Perf smoke (20 concurrent, P95 non-AI) | Numbers |
-| 10.4 | Security pass (no high/critical) | Checklist |
-| 10.5 | UAT citizens + officers (satisfaction ≥4/5) | Fixes |
-
----
-
-## Phase 11 — Production cutover
-
-| # | Task | Output |
-|---|------|--------|
-| 11.1 | Prod VPS (hoặc promote staging) + domain chính | DNS |
-| 11.2 | Fresh secrets (JWT, DB, MinIO, LLM) | Rotated |
-| 11.3 | Restore/migrate schema + approved procedures only | Clean data |
-| 11.4 | Blue/green hoặc downtime window ngắn | Compose pull + up |
-| 11.5 | Smoke: health, chat, admin login, publish dry-run | Go-live |
-| 11.6 | Monitoring alerts (uptime, 5xx, disk, AI fail) | On-call notes |
-
-**Prod topology**
-
-```text
-Internet → Nginx/Caddy (TLS)
-              ├── web
-              └── /api → Go api → ai-service (internal)
-                              ├── PostgreSQL+pgvector
-                              └── MinIO
+```bash
+cd deploy && ADMIN_INGESTION_ENABLED=true VITE_ADMIN_INGESTION=true ADMIN_INDEXING_ENABLED=true VITE_ADMIN_INDEXING=true \
+  docker compose --profile app --profile storage --profile ai up --build
 ```
 
----
+### P4B — Content processing and vector indexing
 
-## Phase 12 — Operate (sau go-live)
+Migration `000014`. Native PDF text, OCR only for weak pages, deterministic chunks, embeddings in Qdrant, staging generations in PostgreSQL. Activate and retrieval stay out. See `docs/p4b-runbook.md`.
 
-| # | Task | Cadence |
-|---|------|---------|
-| 12.1 | Backup Postgres + MinIO | Daily; test restore monthly |
-| 12.2 | Log retention + audit export | Weekly review |
-| 12.3 | Patch images / deps | Monthly |
-| 12.4 | Procedure content updates qua Admin | As regulations change |
-| 12.5 | Incident runbook (rollback version / redeploy) | Documented |
+### P5 — RAG + citation
 
----
+Chỉ khi `Decide` ra `DIRECT_ANSWER` hoặc `PROVIDE_FINAL_GUIDANCE`.
 
-## Thứ tự ưu tiên nếu thời gian hẹp (Must)
+| # | Việc |
+|---|------|
+| 5.1 | Retrieve top-k, filter `xa_id` + `procedure_version_id` đã pin |
+| 5.2 | Reply = summary/checklist JSON + đoạn dẫn nguồn |
+| 5.3 | INSERT `message_citations` (chunk, document, page_range) |
+| 5.4 | Test: chunk thủ tục khác version không lọt; thiếu chunk vẫn trả checklist JSON |
 
-1. Phase 1 (chat deterministic)  
-2. Phase 3 (Citizen UI)  
-3. Phase 2 (AI extract — mock OK)  
-4. Phase 4 (admin publish tối thiểu)  
-5. Phase 7 + 9 (Compose → staging)  
-6. Phase 5 RAG (có thể song song sau 4)  
-7. Phase 8 CI + Phase 11 prod  
+**Exit:** chứng thực và khai sinh (sau khi đủ slot) có nguồn; câu hỏi thiếu slot không gọi retrieve.
 
-**Defer nếu thiếu thời gian:** voice, OCR, multi-xã, VNeID, payment.
+### P3b — UI còn lại (song song được sau P2)
 
----
+Đã có chat text. Còn:
 
-## Checklist “Prod-ready”
+- Hiện citation trên bubble (khi P5 có)
+- Admin đã có upload và trạng thái indexing mock (P4A). Activate để sau P4B
+- Mic Bahnar để sau P6
 
-- [ ] `docker compose` full stack documented  
-- [ ] Migrations idempotent  
-- [ ] HTTPS + firewall  
-- [ ] Secrets not in git  
-- [ ] Admin RBAC (publish/rollback)  
-- [ ] Backup + restore tested  
-- [ ] Health checks + basic metrics  
-- [ ] Rollback procedure (app image + procedure version)  
-- [ ] UAT signed off  
-- [ ] Runbook + known limitations  
+### P6 — Speech (sau checkpoint RQ, không chặn text)
 
----
+| # | Việc |
+|---|------|
+| 6.1 | `POST /v1/speech/translate` — audio → chữ Việt |
+| 6.2 | Ghi `speech_translation_requests` + `model_versions` |
+| 6.3 | Nút mic trên chat; chữ Việt đi vào turn như gõ |
 
-## Gợi ý tuần (16 tuần MSE — map nhanh)
+**Exit:** một file Bahnar mẫu → guidance hộ tịch có citation. Không TTS.
 
-| Weeks | Focus |
-|-------|--------|
-| 1–2 | Confirm procedures + env; Phase 1 start |
-| 3–4 | Finish Phase 1–2 contracts |
-| 5–7 | Phase 1 solid + Phase 2 LLM |
-| 8–10 | Phase 4–5 AI/admin/RAG |
-| 11–12 | Phase 3 UI + Phase 7 Compose |
-| 13–14 | Phase 8–10 CI/staging/UAT |
-| 15–16 | Phase 11–12 prod + docs |
+### P7 — Chạy một lệnh local
+
+Dockerfile `api`, `ai-service`, `web`. Compose: postgres, minio, api, ai, web. `docker compose up --build` ra chat + admin.
+
+### P8 — CI tối thiểu
+
+GitHub Actions: `go test`, pytest extract mock, web build. Không deploy prod trong pha này.
+
+### P9 — Demo HTTPS
+
+Một VPS, TLS, health, seed hộ tịch, một PDF READY, key LLM chỉ trên server. Backup Postgres hàng ngày là đủ cho demo.
 
 ---
 
-## Next action (ngay)
+## 3. Ai sở hữu logic
 
-**Bắt đầu Phase 1:** scaffold `apps/api` (Go module + Gin + migrate + Decision Engine + chat turns).
+| Việc | Process | Hàm / API |
+|------|---------|-----------|
+| Session, pin, audit, persist | Go | `chat.Service.Turn`, `repository.SaveTurn` |
+| Hỏi hay trả | Go | `decision.Decide` |
+| Câu hỏi, checklist | JSON trong DB | `definition.slots`, `guidance` |
+| Nhận thủ tục + slot | Python | `POST /v1/extract` |
+| Embed + tìm đoạn | Python + pgvector | job embed, retrieve |
+| Dịch giọng | Python | `POST /v1/speech/translate` |
+| UI | React | `CitizenChatPage`, admin pages |
 
-Khi sẵn sàng, bảo: **“làm Phase 1”**.
+---
+
+## 4. Thứ tự review
+
+1. P2 extract (mock rồi LLM)  
+2. P4A indexing foundation (`000010`, mock worker). Embed và activate là P4B, chưa làm  
+3. P5 RAG  
+4. P7 compose  
+5. P6 speech khi có checkpoint  
+6. P8–P9 demo
+
+Ước lượng code (không gồm train RQ): P2 khoảng vài ngày, P4–P5 khoảng một tuần, speech thêm khi model đã chọn.
+
+---
+
+## 5. Cần bạn chốt trước khi code P2
+
+- [ ] Primary LLM: OpenAI hay Gemini? (mock vẫn làm trước, không cần key để viết contract)
+- [ ] Embedding giữ `text-embedding-3-small` / 1536? (schema đã là `vector(1536)`)
+- [ ] P2 xong rồi mới P4, đúng thứ tự trên?
+- [ ] Công dân demo vẫn guest được, admin bắt buộc login?
+
+Khi đồng ý, bước code đầu là **P2.1–P2.4** (FastAPI extract + Go gọi vào `planTurn`).
+
+> **Cập nhật 2026-09-29:** Mục 4–5 ở trên là ghi chú lập kế hoạch từ trước khi
+> code P2, giữ lại làm lịch sử. P2 đã hoàn thành với `LLM_PROVIDER=mock` mặc
+> định (không cần key), `AI_EXTRACT_ENABLED=false` mặc định (không đổi hành
+> vi production hiện tại). Xem `phase_p2_llm_extract_report.md` để biết chi
+> tiết exit-gate và kết quả kiểm thử.

@@ -1,0 +1,51 @@
+# C0 cascaded standalone inference.
+# Fill checkpoint directories locally. The loader uses these paths exactly
+# and does not pick a later step.
+#
+# Checkpoint identity (separate facts; do not collapse them):
+#   expected_step_match              basename is checkpoint-12500 / checkpoint-17500
+#   configured_hash_match            operator YAML SHA-256 matches model.safetensors
+#   research_reference_hash_match    weights match configs/c0_research_pins.yaml
+# Operator YAML and research_pins are configured references. They never mint
+# verified_c0 or research_provenance=VERIFIED. Basename alone is never C0 identity.
+#
+#   ASR  checkpoint-12500  (experiment full_xlsr300m_v1)
+#   MT   checkpoint-17500  (experiment mt_bartpho_syllable_v1)
+#
+# Tokenizer is the RQ1 Hub pin, not the files inside the MT checkpoint.
+# Set mt_training_contract to mt_training_contract.json to fail closed on
+# tokenizer_fingerprint mismatch. Omit it to load the Hub tokenizer with
+# tokenizer_parity=NOT_VERIFIED.
+
+asr_checkpoint: ""
+mt_checkpoint: ""
+mt_training_contract: ""
+
+# cpu | cuda | auto. auto uses cuda only when torch.cuda.is_available().
+device: cpu
+
+# Locked Notebook 04 generation contract (configs/mt.yaml).
+max_source_length: 256
+generation_max_length: 256
+num_beams: 4
+
+# CLI serving bounds. Not an RQ1 evaluation contract.
+# 30 s covers a citizen utterance; 16 kHz PCM16 for 30 s is about 1 MB.
+max_audio_duration_seconds: 30
+max_audio_bytes: 10485760
+
+# Operator integrity pins for model.safetensors. Empty skips the checksum gate.
+# A declared pin that does not match FAILS inference (checkpoint_checksum_mismatch).
+# A matching pin is configured_hash_match, not research provenance.
+asr_weights_sha256: ""
+mt_weights_sha256: ""
+
+# Configured research-reference hashes. Default: configs/c0_research_pins.yaml.
+# A match is research_reference_hash_match / REFERENCE_HASH_MATCH, not VERIFIED.
+# Empty values keep research_provenance=NOT_VERIFIED.
+# Do not copy the operator YAML hashes into that file.
+research_pins: configs/c0_research_pins.yaml
+
+# Optional overrides. Values other than the locked BARTpho pin are rejected.
+# tokenizer_model_id: vinai/bartpho-syllable
+# tokenizer_revision: 36eee8b4d648dd99da56462edcda3c5c97f7f3de

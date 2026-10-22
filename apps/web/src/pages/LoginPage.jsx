@@ -1,48 +1,47 @@
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext.jsx'
-import { CitizenShell } from '../components/CitizenShell.jsx'
+import { ROUTES } from '../routes.js'
 
-const PRESETS = {
-  citizen: {
-    email: 'citizen@example.com',
-    password: 'citizen123',
-    title: 'Đăng nhập công dân',
-    blurb:
-      'Đăng nhập để lưu phiên hỏi thủ tục. Bạn vẫn có thể hỏi như khách nếu chưa có tài khoản.',
-  },
-  admin: {
-    email: 'admin@chuse.vn',
-    password: 'admin123',
-    title: 'Đăng nhập cán bộ',
-    blurb:
-      'Tài khoản Admin dùng để upload tài liệu, duyệt bản nháp và publish thủ tục.',
-  },
-}
+// Compile-time flag: production builds leave VITE_DEMO_LOGIN unset → dead branch tree-shaken.
+const DEMO_ON =
+  import.meta.env.VITE_DEMO_LOGIN === 'true' ||
+  import.meta.env.VITE_DEMO_LOGIN === '1'
+
+const DEMO_PRESETS = DEMO_ON
+  ? {
+      citizen: { email: 'citizen@example.com', password: 'citizen123' },
+      admin: { email: 'admin@chuse.vn', password: 'admin123' },
+    }
+  : null
 
 export default function LoginPage() {
   const { login, user } = useAuth()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const mode = searchParams.get('as') === 'admin' ? 'admin' : 'citizen'
-  const preset = PRESETS[mode]
 
-  const [email, setEmail] = useState(PRESETS.citizen.email)
-  const [password, setPassword] = useState(PRESETS.citizen.password)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    setEmail(PRESETS[mode].email)
-    setPassword(PRESETS[mode].password)
+    if (DEMO_PRESETS) {
+      setEmail(DEMO_PRESETS[mode].email)
+      setPassword(DEMO_PRESETS[mode].password)
+    } else {
+      setEmail('')
+      setPassword('')
+    }
     setError('')
   }, [mode])
 
   if (user?.role === 'ADMIN') {
-    return <Navigate to="/admin" replace />
+    return <Navigate to={ROUTES.admin} replace />
   }
   if (user?.role === 'CITIZEN') {
-    return <Navigate to="/" replace />
+    return <Navigate to={ROUTES.home} replace />
   }
 
   function switchMode(next) {
@@ -55,7 +54,7 @@ export default function LoginPage() {
     setBusy(true)
     try {
       const next = await login(email, password)
-      navigate(next.role === 'ADMIN' ? '/admin' : '/', { replace: true })
+      navigate(next.role === 'ADMIN' ? ROUTES.admin : ROUTES.home, { replace: true })
     } catch (err) {
       setError(err.message || 'Đăng nhập thất bại')
     } finally {
@@ -63,9 +62,26 @@ export default function LoginPage() {
     }
   }
 
+  const title =
+    mode === 'admin' ? 'Đăng nhập cán bộ' : 'Đăng nhập công dân'
+  const blurb =
+    mode === 'admin'
+      ? 'Tài khoản Admin dùng để quản lý thủ tục. Không có mật khẩu mặc định trên production.'
+      : 'Đăng nhập để lưu phiên hỏi thủ tục. Bạn vẫn có thể hỏi như khách nếu chưa có tài khoản.'
+
   return (
-    <CitizenShell>
-      <main className="login-wrap">
+    <div className="login-screen">
+      <aside className="login-hero">
+        <div className="login-hero-brand">
+          <div className="brand-icon" aria-hidden>
+            CS
+          </div>
+          <span>Citizen Assistance</span>
+        </div>
+        <h2>Công dân số phục vụ người dân</h2>
+        <p>Hỏi · Tra cứu · Làm thủ tục — tại xã, bằng tiếng Việt.</p>
+      </aside>
+      <main className="login-panel">
         <form className="login-card" onSubmit={onSubmit}>
           <div className="login-tabs" role="tablist" aria-label="Loại tài khoản">
             <button
@@ -88,8 +104,8 @@ export default function LoginPage() {
             </button>
           </div>
 
-          <h1>{preset.title}</h1>
-          <p className="muted">{preset.blurb}</p>
+          <h1>{title}</h1>
+          <p className="muted">{blurb}</p>
 
           <label>
             Email
@@ -98,6 +114,7 @@ export default function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="username"
+              placeholder="email@example.com"
               required
             />
           </label>
@@ -108,6 +125,7 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
+              placeholder="••••••••"
               required
             />
           </label>
@@ -119,19 +137,16 @@ export default function LoginPage() {
           </button>
 
           <div className="login-hint">
-            {mode === 'citizen' ? (
-              <p>
-                <strong>Demo API:</strong> citizen@example.com / citizen123
+            {DEMO_ON ? (
+              <p className="cell-muted">
+                Dev demo login enabled (VITE_DEMO_LOGIN). Not present in
+                production builds.
               </p>
-            ) : (
-              <p>
-                <strong>Demo API:</strong> admin@chuse.vn / admin123
-              </p>
-            )}
-            <Link to="/">Tiếp tục hỏi thủ tục (khách)</Link>
+            ) : null}
+            <Link to={ROUTES.home}>Tiếp tục hỏi thủ tục (khách)</Link>
           </div>
         </form>
       </main>
-    </CitizenShell>
+    </div>
   )
 }

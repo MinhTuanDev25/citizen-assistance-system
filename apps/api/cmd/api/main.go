@@ -14,6 +14,7 @@ import (
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/db"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/httpserver"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/logx"
+	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/storage"
 )
 
 // @title           Citizen Assistance API
@@ -53,7 +54,33 @@ func main() {
 		"min_conns", cfg.DBMinConns,
 	)
 
-	engine := httpserver.New(logger, pool, cfg)
+	var objects storage.ObjectStore
+	if cfg.AdminIngestionEnabled {
+		client, err := storage.NewMinIO(storage.MinIOConfig{
+			Endpoint:         cfg.ObjectStorageEndpoint,
+			AccessKey:        cfg.ObjectStorageAccessKey,
+			SecretKey:        cfg.ObjectStorageSecretKey,
+			Bucket:           cfg.ObjectStorageBucket,
+			UseSSL:           cfg.ObjectStorageUseSSL,
+			Region:           cfg.ObjectStorageRegion,
+			AutoCreateBucket: cfg.ObjectStorageAutoCreateBucket,
+		})
+		if err != nil {
+			logger.Error("object storage is not ready")
+			os.Exit(1)
+		}
+		readyCtx, readyCancel := context.WithTimeout(ctx, 10*time.Second)
+		err = client.EnsureBucket(readyCtx)
+		readyCancel()
+		if err != nil {
+			logger.Error("object storage bucket is not ready")
+			os.Exit(1)
+		}
+		objects = client
+		logger.Info("object storage ready", "bucket", cfg.ObjectStorageBucket)
+	}
+
+	engine := httpserver.NewWithStore(logger, pool, cfg, objects)
 	srv := &http.Server{
 		Addr:              cfg.APIAddr,
 		Handler:           engine,

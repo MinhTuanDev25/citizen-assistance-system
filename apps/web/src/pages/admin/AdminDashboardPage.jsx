@@ -1,28 +1,64 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { listProcedures } from '../../api/catalog.js'
+import { listDocuments } from '../../api/documents.js'
 import { useCommune } from '../../commune/CommuneContext.jsx'
-import { mockStore } from '../../data/mockStore.js'
+import { ROUTES } from '../../routes.js'
+
+const STEPS = [
+  {
+    to: ROUTES.adminDocuments,
+    step: '1',
+    title: 'Tải PDF',
+    text: 'Lưu tài liệu nguồn theo lĩnh vực.',
+    bg: '#dbeafe',
+  },
+  {
+    to: ROUTES.adminDocuments,
+    step: '2',
+    title: 'Gắn và lập chỉ mục',
+    text: 'Nối PDF với phiên bản thủ tục, chờ sẵn sàng.',
+    bg: '#dcfce7',
+  },
+  {
+    to: ROUTES.adminProcedures,
+    step: '3',
+    title: 'Kích hoạt phiên bản',
+    text: 'Công dân hỏi đáp theo phiên đang dùng.',
+    bg: '#ffedd5',
+  },
+]
 
 export default function AdminDashboardPage() {
-  const { xaId } = useCommune()
-  const docs = mockStore.documents.length
-  const drafts = mockStore.drafts.length
+  const { xaId, commune } = useCommune()
+  const [docs, setDocs] = useState(null)
   const [active, setActive] = useState(null)
   const [apiError, setApiError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const data = await listDocuments({})
+        if (!cancelled) setDocs(data?.count ?? 0)
+      } catch (err) {
+        if (!cancelled) setApiError(err.message || 'API tài liệu lỗi')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!xaId) return
     let cancelled = false
     ;(async () => {
       try {
-        const data = await listProcedures({ xaId })
+        const data = await listProcedures({ xaId, citizen: false })
         if (!cancelled) setActive(data?.count ?? 0)
       } catch (err) {
-        if (!cancelled) {
-          setApiError(err.message || 'API procedures lỗi')
-          setActive(mockStore.procedures.filter((p) => p.status === 'ACTIVE').length)
-        }
+        if (!cancelled) setApiError(err.message || 'Không tải được thủ tục')
       }
     })()
     return () => {
@@ -33,47 +69,39 @@ export default function AdminDashboardPage() {
   return (
     <div className="admin-page">
       <header className="admin-page-head">
-        <h1>Tổng quan</h1>
-        <p>Pipeline tri thức: upload → extract → review → publish → citizen dùng.</p>
+        <div>
+          <h1>Tổng quan</h1>
+          <p>Xã {commune?.name || '…'}</p>
+        </div>
       </header>
 
-      {apiError ? (
-        <p className="form-error">
-          Procedures API: {apiError} (đang hiện số mock tạm)
-        </p>
-      ) : null}
+      {apiError ? <p className="form-error">{apiError}</p> : null}
 
-      <div className="stat-grid">
-        <div className="stat-card">
-          <span>Tài liệu (mock)</span>
-          <strong>{docs}</strong>
+      <div className="stat-grid stat-grid-2">
+        <div className="stat-card accent-blue">
+          <span>Tài liệu PDF</span>
+          <strong>{docs == null ? '…' : docs}</strong>
+          <Link to={ROUTES.adminDocuments}>Mở tài liệu</Link>
         </div>
-        <div className="stat-card">
-          <span>Bản nháp (mock)</span>
-          <strong>{drafts}</strong>
-        </div>
-        <div className="stat-card">
-          <span>Thủ tục ACTIVE</span>
+        <div className="stat-card accent-teal">
+          <span>Thủ tục đang dùng</span>
           <strong>{active == null ? '…' : active}</strong>
+          <Link to={ROUTES.adminProcedures}>Mở thủ tục</Link>
         </div>
       </div>
 
-      <section className="panel">
-        <h2>Luồng làm việc</h2>
-        <ol className="flow-list">
-          <li>
-            <Link to="/admin/documents">Upload PDF/text</Link> → lưu documents
-          </li>
-          <li>Extract → sinh procedure draft (AI)</li>
-          <li>
-            <Link to="/admin/drafts">Review form</Link> + validate schema
-          </li>
-          <li>
-            Publish version → <Link to="/admin/procedures">thủ tục ACTIVE</Link>
-          </li>
-          <li>Rollback khi cần (kèm lý do audit)</li>
-        </ol>
-      </section>
+      <p className="cas-side-section">Luồng làm việc</p>
+      <div className="home-grid admin-flow">
+        {STEPS.map((card) => (
+          <Link key={card.title} to={card.to} className="home-card">
+            <div className="icon" style={{ background: card.bg }} aria-hidden>
+              {card.step}
+            </div>
+            <strong>{card.title}</strong>
+            <span>{card.text}</span>
+          </Link>
+        ))}
+      </div>
     </div>
   )
 }

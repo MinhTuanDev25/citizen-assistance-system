@@ -6,7 +6,7 @@ import { loadAuth } from '../auth/auth.js'
  * options.auth === false → skip Bearer
  */
 export async function apiRequest(path, options = {}) {
-  const { guestToken, auth = true, headers: extraHeaders, ...rest } = options
+  const { guestToken, auth = true, headers: extraHeaders, timeoutMs, ...rest } = options
   const headers = {
     Accept: 'application/json',
     ...(rest.body ? { 'Content-Type': 'application/json' } : {}),
@@ -23,7 +23,14 @@ export async function apiRequest(path, options = {}) {
     headers['X-Guest-Token'] = guestToken
   }
 
-  const res = await fetch(path, { ...rest, headers })
+  const controller = timeoutMs && !rest.signal ? new AbortController() : null
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null
+  let res
+  try {
+    res = await fetch(path, { ...rest, headers, signal: rest.signal || controller?.signal })
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
   const payload = await res.json().catch(() => ({}))
   if (!res.ok) {
     const msg = payload?.error?.message || `HTTP ${res.status}`

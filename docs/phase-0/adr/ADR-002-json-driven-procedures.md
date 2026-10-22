@@ -2,28 +2,20 @@
 
 ## Status
 
-Accepted (Phase 0)
+Accepted (Phase 0) — publish path updated to proposal §4.2.
 
 ## Context
 
-Có 18 thủ tục thuộc 3 domain. Hardcode workflow từng thủ tục trong code sẽ phình nhanh và khó cập nhật khi xã đổi quy định.
+V1 công dân là **một domain hộ tịch**. Vẫn không hardcode từng thủ tục trong Go: xã đổi giấy tờ thì đổi JSON + PDF, không deploy lại engine.
 
 ## Decision
 
-Mỗi thủ tục lưu dạng `procedure_definition` JSON gồm:
+Mỗi thủ tục lưu `procedure_versions.definition` JSON: identity, intent examples, slots, required/conditional, questions, guidance, citations, version.
 
-- identity (id, domain, name)
-- intent examples
-- required / conditional slots
-- slot questions
-- guidance checklist + location rules
-- citations / source metadata
-- version + status
-
-Admin upload PDF → sinh draft JSON → human review → publish version active.
+Cán bộ soạn/giữ JSON (seed hoặc sửa). PDF upload → chunk/embed → **activate**. Không PDF→draft LLM, không workspace duyệt nhiều bước.
 
 ## Consequences
 
-- Thêm/sửa thủ tục không cần deploy code (chỉ publish version)
-- Cần schema validation mạnh
-- Seed tạm (`manual_seed`) được phép trước khi có PDF thật, nhưng không được active prod nếu chưa có nguồn xã review
+- Thêm thủ tục hộ tịch = JSON + nguồn PDF, không đổi Decision Engine
+- Schema validation trước activate
+- `manual_seed` được trước khi có PDF xã; không coi là nguồn pháp lý

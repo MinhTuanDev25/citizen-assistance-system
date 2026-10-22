@@ -12,6 +12,8 @@ database:
 app:
   xa_id: xa_chu_se
   log_level: info
+  citizen_domain_ids:
+    - ho_tich_chung_thuc
 
 auth:
   jwt_secret: "" # required: set JWT_SECRET at deploy

@@ -14,13 +14,17 @@ RUN apk add --no-cache git ca-certificates
 COPY apps/api/go.mod apps/api/go.sum ./
 RUN go mod download
 COPY apps/api/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux go build -o /out/api ./cmd/api \
+    && CGO_ENABLED=0 GOOS=linux go build -o /out/index-reaper ./cmd/index-reaper
 
 FROM alpine:3.20
 WORKDIR /app
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata \
+    && adduser -D -u 10001 cas
 COPY --from=builder /out/api /app/api
+COPY --from=builder /out/index-reaper /app/index-reaper
 COPY --from=builder /src/configs /app/configs
+USER cas
 
 # APP_ENV selects configs/${APP_ENV}/config.yaml. Secrets via env at deploy.
 EXPOSE 8080

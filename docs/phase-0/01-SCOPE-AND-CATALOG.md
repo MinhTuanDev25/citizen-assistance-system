@@ -1,91 +1,79 @@
 # Scope V1 & Procedure Catalog
 
+Nguồn khóa: capstone proposal *Quality-Aware Low-Resource Bahnar-to-Vietnamese Speech Translation*, §1.6 và §4.
+
 ## 1. Business scope
 
-| Item | V1 decision |
-|------|-------------|
-| Jurisdiction | **1 xã duy nhất** (`xa_id` cấu hình cố định) |
-| Product | AI trợ lý hành chính công |
-| Channels | **Text** (bắt buộc V1). **Voice** (có trong scope, mode chưa chốt — xem mục 5) |
-| Success metric | Hỏi đúng slot thiếu (full missing) → đủ slot thì hướng dẫn đúng + có nguồn |
-| Out of scope V1 | Nộp hồ sơ online, thanh toán phí, multi-xã |
-| Knowledge source | PDF/văn bản xã (khi có) + seed thủ công tạm thời |
+| Item | V1 (proposal) |
+|------|----------------|
+| Jurisdiction | 1 xã (`xa_id` cấu hình cố định, seed: `xa_chu_se`) |
+| Product | Prototype trợ lý hành chính xã, gắn mô hình dịch giọng Bahnar → chữ Việt đã chọn |
+| Administrative domain | **Một nhóm Hộ tịch & Chứng thực** (`ho_tich_chung_thuc`) với definition + workflow |
+| Channels | Text tiếng Việt **và** giọng Bahnar → chữ Việt. Trả lời bằng chữ Việt |
+| Success (artifact) | Một luồng hộ tịch hoàn chỉnh: hỏi/slot → hướng dẫn có citation; input giọng Bahnar vào được guidance tiếng Việt |
+| Knowledge | PDF văn bản xã (chữ trích được) + seed tạm. RAG chỉ trên chunk của version **ACTIVE** |
+| Operations | PostgreSQL + pgvector, S3/MinIO, `audit_logs`, Docker, CI/CD tối thiểu |
 
-## 2. Domains & procedures (18)
+### Có trong V1
 
-### Domain A — Hộ tịch & Chứng thực (`ho_tich_chung_thuc`)
+- Công dân: đăng nhập khi cần, hỏi text hoặc ghi giọng Bahnar, lịch sử hội thoại, hỏi slot còn thiếu một lượt, hướng dẫn có nguồn
+- Cán bộ: tải PDF, metadata, gắn tự động `procedure_version_documents`, trạng thái index, **kích hoạt** version
+- pgvector: embedding của `knowledge_chunks` (không dùng để chọn thủ tục)
 
-| procedure_id | Tên | Priority V1 |
-|--------------|-----|-------------|
-| `dk_khai_sinh` | Đăng ký khai sinh | P0 (seed) |
-| `dk_ket_hon` | Đăng ký kết hôn | P1 |
-| `dk_khai_tu` | Đăng ký khai tử | P1 |
-| `xn_tinh_trang_hon_nhan` | Xác nhận tình trạng hôn nhân | P1 |
-| `chung_thuc_ban_sao` | Chứng thực bản sao | P0 (seed) |
-| `chung_thuc_chu_ky` | Chứng thực chữ ký | P1 |
+### Không thuộc V1 (proposal §1.6)
 
-### Domain B — Đất đai, Nhà ở & Quy hoạch (`dat_dai_nha_o_quy_hoach`)
+| Loại | Excluded |
+|------|----------|
+| Nghiên cứu | Dịch Việt → Bahnar, TTS Bahnar, train foundation từ đầu |
+| Domain | Đất đai, bảo hiểm / chính sách xã hội, mở rộng multi-domain |
+| Công dân | Nộp hồ sơ online, thanh toán, chữ ký số, ra quyết định pháp lý |
+| Admin | AI draft workspace, quy trình duyệt nhiều bước |
+| Ops | HA enterprise, rollback phức tạp, tích hợp hệ thống nhà nước |
+| PDF | OCR file scan — V1 chỉ PDF **trích được chữ**. Rollback version: làm nếu còn thời gian |
 
-| procedure_id | Tên | Priority V1 |
-|--------------|-----|-------------|
-| `cap_gcn_qsd_lan_dau` | Cấp GCN quyền sử dụng đất lần đầu | P1 |
-| `tach_thua` | Tách thửa | P1 |
-| `hop_thua` | Hợp thửa | P1 |
-| `chuyen_muc_dich_sd_dat` | Chuyển mục đích sử dụng đất | P1 |
-| `tra_cuu_quy_hoach` | Tra cứu quy hoạch | P0 (seed) |
-| `xin_giay_phep_xay_dung` | Xin giấy phép xây dựng | P0 (seed) |
+Hệ thống chỉ hướng dẫn thông tin. Quyết định hành chính vẫn thuộc cán bộ xã.
 
-### Domain C — Bảo hiểm & Chính sách xã hội (`bao_hiem_chinh_sach_xh`)
+## 2. Catalog công dân V1 — Hộ tịch & Chứng thực
 
-| procedure_id | Tên | Priority V1 |
-|--------------|-----|-------------|
-| `dk_bhyt_tre_em` | Đăng ký BHYT trẻ em | P1 |
-| `dk_bhyt_ho_gia_dinh` | Đăng ký BHYT hộ gia đình | P0 (seed) |
-| `ho_ngheo` | Hộ nghèo | P1 |
-| `ho_can_ngheo` | Hộ cận nghèo | P1 |
-| `tro_cap_nguoi_cao_tuoi` | Trợ cấp người cao tuổi | P1 |
-| `tro_cap_nguoi_khuyet_tat` | Trợ cấp người khuyết tật | P1 |
+| procedure_code | Tên | Ghi chú |
+|----------------|-----|---------|
+| `dk_khai_sinh` | Đăng ký khai sinh | P0 — có slot bắt buộc + slot điều kiện |
+| `chung_thuc_ban_sao` | Chứng thực bản sao | P0 — `required_slots` rỗng → `DIRECT_ANSWER` |
 
-## 3. Runtime behavior (non-negotiable)
+Các mã hộ tịch khác (`dk_ket_hon`, `dk_khai_tu`, …) có thể thêm **trong cùng domain** khi có definition; không mở domain mới.
 
-1. Nhận câu hỏi công dân → detect domain + procedure.
-2. Load `procedure_definition` version **active**.
-3. So khớp slot đã biết vs `required_slots` (và conditional slots nếu có).
-4. Nếu thiếu → `ASK_MISSING_SLOTS` (**hỏi full danh sách slot thiếu trong 1 lượt**, không hỏi từng câu).
-5. Nếu đủ → `PROVIDE_FINAL_GUIDANCE` (+ citation).
-6. Nếu câu hỏi đã đủ thông tin / thủ tục không cần slot → `DIRECT_ANSWER`.
+### Ngoài phạm vi công dân V1 (seed DB có thể còn, không đưa catalog / matcher)
 
-## 4. Assumptions (Phase 0)
+| Domain | procedure_code | Lý do |
+|--------|----------------|-------|
+| `dat_dai_nha_o_quy_hoach` | `tra_cuu_quy_hoach`, `xin_giay_phep_xay_dung`, … | Proposal loại đất đai |
+| `bao_hiem_chinh_sach_xh` | `dk_bhyt_ho_gia_dinh`, … | Proposal loại bảo hiểm / phúc lợi |
 
-- Chưa có PDF thật → seed dùng `source_type = manual_seed`, bắt buộc thay bằng văn bản xã trước UAT/prod.
-- Nội dung hướng dẫn trong seed là **khung nghiệp vụ**, cán bộ xã phải review trước khi active production.
-- Một số thủ tục đất đai/GPXD có thể cần chuyển cấp huyện; seed phải ghi rõ `authority_level`.
+## 3. Runtime (không đổi so với decision contract)
 
-## 5. Channel: Text + Voice (chưa chốt mode voice)
+1. Input: chữ Việt **hoặc** giọng Bahnar đã dịch thành chữ Việt.
+2. Nhận diện thủ tục trong catalog hộ tịch đang ACTIVE.
+3. Decision Engine (Go, deterministic): `ASK_MISSING_SLOTS` / `DIRECT_ANSWER` / `PROVIDE_FINAL_GUIDANCE` / `OUT_OF_SCOPE`.
+4. Thiếu slot → hỏi **hết** câu còn thiếu trong một lượt (câu lấy từ JSON).
+5. Đủ slot → RAG chỉ trên chunk của **procedure version đã pin**, trả guidance + citation. RAG không đè checklist JSON.
+6. Session pin `active_procedure_id` + `active_procedure_version_id` khi đã chọn thủ tục.
 
-| Input | Output | Ghi chú |
-|-------|--------|---------|
-| Text | Text | Core V1 — luôn có |
-| Voice | Text | **Đề xuất V1.1**: STT → cùng pipeline text → reply chữ (dễ, ổn định, dễ audit) |
-| Voice | Voice | Voice-to-voice: thêm TTS; phức tạp hơn (latency, giọng, đọc checklist dài) |
+## 4. Voice trong artifact
 
-**Kiến trúc nên tách:**
+Não hệ thống luôn chạy trên **chữ Việt + JSON**.
 
 ```text
-[Text UI] ────────┐
-                  ├──► cùng Conversation + Decision + definition JSON
-[Voice] → STT ────┘              │
-                                 ▼
-                            reply_text
-                                 │
-                    ┌────────────┴────────────┐
-                    ▼                         ▼
-                 hiện chữ              (optional) TTS → nghe
+[Text UI] ─────────────────────────────┐
+                                       ├──► session + Decision Engine + definition
+[Mic Bahnar] → S2TT/ASR+MT (Python) ──┘              │
+                                                     ▼
+                                              reply_text (tiếng Việt)
+                                                     │
+                                              không TTS Bahnar (V1)
 ```
 
-Nghĩa là **não hệ thống luôn chạy trên text + JSON**. Voice chỉ là lớp vào/ra.
+TTS tiếng Bahnar và dịch Việt → Bahnar **không** thuộc V1. Thứ tự làm phần mềm có thể ship text trước, rồi gắn checkpoint đã chọn (proposal tuần 11).
 
-**Khuyến nghị:**  
-1) V1 ship text trước.  
-2) Voice sớm thì làm **voice → text reply**.  
-3) Voice-to-voice chỉ khi checklist/câu hỏi ổn định và có nhu cầu thực tế từ xã.
+## 5. Seed
+
+Chưa có PDF xã → `source_type = manual_seed`, phải thay bằng văn bản xã trước demo/UAT. Nội dung seed là khung, không phải nguồn pháp lý.

@@ -63,46 +63,35 @@ Admin UI đọc/ghi object này qua form; runtime Decision Engine đọc để q
 
 ## 2. Luồng Admin upload → lưu DB gì?
 
+Proposal §4.2 — **không** extract draft JSON.
+
 ```text
-Admin Upload PDF
+Admin mở procedure_version + Upload PDF
       │
       ▼
- [1] documents                  ← file + metadata hiệu lực
+ [1] documents                  ← file MinIO + metadata hiệu lực
+ [1b] procedure_version_documents  ← tự INSERT (relationship, page_range)
       │
       ▼
- [2] LLM extract draft
-      │
+ [2] Job extract text → chunk → embed
+      │  documents.processing_status UPLOADED → PROCESSING → READY | FAILED
+      │  knowledge_chunks.embedding vector(1536)
       ▼
- [3] procedure_drafts           ← draft_definition + validation_result
+ [3] Admin thấy index status → activate
       │
-      ▼
- [4] Admin Review UI (sửa form, không sửa raw JSON)
-      │  validate lại → update validation_result
-      ▼
- [5] Approve / Publish (xem data-model §6)
-      │
-      ├─► procedure_versions       status=INDEXING + source_draft_id
-      ├─► procedure_version_documents
-      ├─► embed + knowledge_chunks (ngoài txn dài)
-      └─► SHORT TXN: archive cũ → active + procedures.active_version_id
-                     + draft=published + audit_logs
+      ├─► procedure_versions.status = ACTIVE
+      ├─► procedures.active_version_id
+      └─► audit_logs
 ```
 
-### Chi tiết từng bước
+| Bước | Hành động | Ghi vào bảng |
+|------|-----------|--------------|
+| 1 | Upload PDF | `documents` |
+| 1b | Gắn nguồn tự động | `procedure_version_documents` |
+| 2 | Embed | `knowledge_chunks` |
+| 3 | Activate | `procedure_versions`, `procedures`, `audit_logs` |
 
-| Bước | Hành động | Ghi vào bảng | Lưu những gì |
-|------|-----------|--------------|--------------|
-| 1 | Upload PDF | `documents` | metadata + `processing_status` / `validity_status` |
-| 2 | Extract | (chưa publish) | LLM sinh object procedure |
-| 3 | Tạo draft | `procedure_drafts` | `draft_definition`, `validation_result`, `status=DRAFT` |
-| 4 | Admin sửa | `procedure_drafts` | UPDATE definition + validate |
-| 5a | Tạo version | `procedure_versions` | `procedure_id` (uuid), `definition`, `status=INDEXING`, `source_draft_id` |
-| 5b | Link docs | `procedure_version_documents` | N–N version ↔ document |
-| 5c | Embed | `knowledge_chunks` | `chunk_index`, `document_id`, `embedding vector(1536)` |
-| 5d | Activate (short txn) | versions + `procedures` + drafts + `audit_logs` | archive cũ; `ACTIVE`; `active_version_id`; draft=`PUBLISHED`; audit |
-| Fail embed | Cleanup | chunks + versions | DELETE chunks theo version → `status=APPROVED` → retry |
-
-Chi tiết đầy đủ: [`data-model.md`](data-model.md) §6.
+OCR scan và rollback version **không** thuộc minimum. Chi tiết: [`data-model.md`](data-model.md) §6.
 
 ---
 
@@ -111,15 +100,15 @@ Chi tiết đầy đủ: [`data-model.md`](data-model.md) §6.
 Ví dụ: `"Tôi muốn làm giấy khai sinh cho con tôi."`
 
 ```text
-User message
+User message (chữ Việt, hoặc giọng Bahnar đã dịch)
    │
    ▼
 [A] Auth / session
    │  tạo hoặc tái sử dụng conversation_sessions
    ▼
 [B] Conversation Manager
-   │  detect domain + procedure_code (dk_khai_sinh) → resolve procedures.id (uuid)
-   │  extract slots từ câu (nếu có)
+   │  detect procedure trong catalog hộ tịch (extract structured / LLM)
+   │  extract slots từ câu (allowed keys)
    ▼
 [C] Load procedures.active_version_id
    │  → procedure_versions.definition
@@ -180,12 +169,12 @@ Pipeline extract:
 
 ```text
 ┌─────────────────────────────┐
-│ Catalog (admin publish)     │
-│ domains                     │
-│ procedures                  │
-│ procedure_versions.definition │  ← quy tắc hỏi/trả
-│ documents                   │  ← nguồn PDF + hiệu lực
-│ procedure_drafts            │  ← nháp review UI
+│ Catalog (admin activate)      │
+│ domains                       │
+│ procedures                    │
+│ procedure_versions.definition │
+│ documents + version_documents │
+│ knowledge_chunks (pgvector)   │
 └─────────────────────────────┘
 
 ┌─────────────────────────────┐

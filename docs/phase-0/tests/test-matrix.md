@@ -46,18 +46,18 @@ Ký hiệu: **PASS** khi action + slots/guidance đúng contract.
 
 | ID | User input | Expected action | Expected detail |
 |----|------------|-----------------|-----------------|
-| OS-01 | "Làm hộ chiếu" | `OUT_OF_SCOPE` | không map 18 thủ tục |
+| OS-01 | "Làm hộ chiếu" | `OUT_OF_SCOPE` | ngoài hộ tịch / chứng thực |
 | OS-02 | "Tư vấn đầu tư chứng khoán" | `OUT_OF_SCOPE` | ngoài domain |
 | OS-03 | đổi topic giữa chừng từ khai sinh → chứng thực | switch procedure hoặc xác nhận lại | V1: hỏi confirm trước khi đổi `active_procedure_id` |
 
-## G. Admin publish
+## G. Admin activate (không draft)
 
 | ID | Scenario | Expected |
 |----|----------|----------|
-| AD-01 | draft thiếu citation | validate fail |
+| AD-01 | activate khi PDF chưa READY | fail `INDEX_NOT_READY` |
 | AD-02 | required_slot không có trong `slots` | validate fail |
-| AD-03 | publish activate | version mới active, version cũ archived |
-| AD-04 | rollback | active trỏ về version trước; chat dùng version mới active |
+| AD-03 | activate | version mới ACTIVE, cũ ARCHIVED |
+| AD-04 | rollback | optional — ngoài minimum |
 
 ## H. Citation rule
 

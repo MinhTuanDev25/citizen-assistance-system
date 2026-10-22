@@ -1,0 +1,63 @@
+# Isolated P4B storage integration. Separate project, ports, and volumes.
+# Does not attach to citizen-assistance or its database, bucket, or Qdrant.
+name: citizen-assistance-p4b-test
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: cas
+      POSTGRES_PASSWORD: cas
+      POSTGRES_DB: citizen_assistance_p4b_test
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - p4btestpg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cas -d citizen_assistance_p4b_test"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: bitnamilegacy/minio:2024.12.18
+    entrypoint: ["/opt/bitnami/minio/bin/minio"]
+    command: ["server", "--address", "0.0.0.0:9000", "--console-address", "0.0.0.0:9001", "/bitnami/minio/data"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "127.0.0.1:9010:9000"
+      - "127.0.0.1:9011:9001"
+    volumes:
+      - p4btestminio:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    ports:
+      - "127.0.0.1:6335:6333"
+    volumes:
+      - p4btestqdrant:/qdrant/storage
+
+  migrate:
+    image: migrate/migrate:v4.18.1
+    volumes:
+      - ./migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - -path=/migrations
+      - -database=postgres://cas:cas@postgres:5432/citizen_assistance_p4b_test?sslmode=disable
+      - up
+    restart: "no"
+
+volumes:
+  p4btestpg:
+  p4btestminio:
+  p4btestqdrant:

@@ -21,6 +21,1306 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/v1/admin/documents": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-documents"
+                ],
+                "summary": "List admin documents for this commune",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Domain id",
+                        "name": "domain_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "UPLOADED, PROCESSING, PROCESSED, READY, or FAILED",
+                        "name": "processing_status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "PENDING, VALID, EXPIRED, or SUPERSEDED",
+                        "name": "validity_status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page offset",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin JWT required. Stores one application/pdf. Client xa_id is ignored.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-documents"
+                ],
+                "summary": "Upload an admin PDF",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "PDF file",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Title",
+                        "name": "title",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Active domain id",
+                        "name": "domain_id",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Document number",
+                        "name": "document_number",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Issuer",
+                        "name": "issuer",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Effective date YYYY-MM-DD",
+                        "name": "effective_date",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Expire date YYYY-MM-DD",
+                        "name": "expire_date",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Issued date YYYY-MM-DD",
+                        "name": "issued_date",
+                        "in": "formData"
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/documents/index-metrics": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-documents"
+                ],
+                "summary": "Index generation counts for this commune",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/documents/link-targets": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-documents"
+                ],
+                "summary": "List procedure versions that can receive a document",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/documents/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-documents"
+                ],
+                "summary": "Get one admin document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/documents/{id}/content": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/pdf"
+                ],
+                "tags": [
+                    "admin-documents"
+                ],
+                "summary": "Download the stored PDF",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/documents/{id}/links": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns per-link index status. READY links include page_count, chunk_count, ocr_page_count, pipeline_version, and embedding_model_id from the active generation only. Staging generations are not returned.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-documents"
+                ],
+                "summary": "List procedure versions attached to a document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-documents"
+                ],
+                "summary": "Attach a document to a procedure version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Idempotency key",
+                        "name": "X-Request-ID",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Link",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api_http_v1_document.DocumentLinkRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/documents/{id}/links/{versionId}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-documents"
+                ],
+                "summary": "Detach a document from a procedure version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Procedure version id",
+                        "name": "versionId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Idempotency key",
+                        "name": "X-Request-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/documents/{id}/links/{versionId}/index": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-documents"
+                ],
+                "summary": "Claim indexing for one document link",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Procedure version id",
+                        "name": "versionId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Idempotency key",
+                        "name": "X-Request-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/documents/{id}/links/{versionId}/index/reindex": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-documents"
+                ],
+                "summary": "Reindex a READY link without dropping the active generation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Procedure version id",
+                        "name": "versionId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Idempotency key",
+                        "name": "X-Request-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/documents/{id}/links/{versionId}/index/retry": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-documents"
+                ],
+                "summary": "Retry one link from FAILED or an expired PROCESSING lease",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Procedure version id",
+                        "name": "versionId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Idempotency key",
+                        "name": "X-Request-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/procedures": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin-only. Server commune scope. Does not use ListActive. Marks seed ACTIVE rows without activated_at as legacy_active.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-procedures"
+                ],
+                "summary": "List commune procedures including versions without ACTIVE",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/procedures/{procedureId}/activation-history": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin-only. Returns PROCEDURE_VERSION_ACTIVATED rows. Citizen/guest cannot call this route.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-procedures"
+                ],
+                "summary": "Read-only activation audit for one procedure",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Procedure UUID",
+                        "name": "procedureId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/procedures/{procedureId}/versions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin-only. Includes APPROVED, INDEXING, ACTIVE, ARCHIVED. Eligibility requires published READY generations, not mock READY.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-procedures"
+                ],
+                "summary": "List procedure versions with indexing eligibility",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Procedure UUID",
+                        "name": "procedureId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin-only. Copies definition from the current ACTIVE version unless definition is supplied. Requires confirm=true. Does not activate.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-procedures"
+                ],
+                "summary": "Create an APPROVED candidate procedure version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Procedure UUID",
+                        "name": "procedureId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Idempotency UUID",
+                        "name": "X-Request-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/procedures/{procedureId}/versions/{versionId}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin-only. Reasons include MOCK_INDEX_NOT_PUBLISHED when a link is READY without a published generation.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-procedures"
+                ],
+                "summary": "Get one procedure version, definition, and Activate eligibility",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Procedure UUID",
+                        "name": "procedureId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Version UUID",
+                        "name": "versionId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/admin/procedures/{procedureId}/versions/{versionId}/activate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin-only. Archives the current ACTIVE version, sets the candidate ACTIVE, updates procedures.active_version_id, writes PROCEDURE_VERSION_ACTIVATED. expected_active_version_id is required (null if none). 409 STALE_ACTIVE_VERSION / IDEMPOTENCY_CONFLICT / ACTIVATION_CONFLICT. 422 eligibility codes.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-procedures"
+                ],
+                "summary": "Activate a procedure version atomically",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Procedure UUID",
+                        "name": "procedureId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Version UUID",
+                        "name": "versionId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Idempotency UUID",
+                        "name": "X-Request-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/auth/login": {
             "post": {
                 "consumes": [
@@ -517,6 +1817,7 @@ const docTemplate = `{
         },
         "/api/v1/procedures": {
             "get": {
+                "description": "Default / citizen=true: public CitizenDomainIDs only. citizen=false: full ACTIVE catalog — ADMIN JWT required (not a public privilege flag). Invalid citizen values → 400.",
                 "produces": [
                     "application/json"
                 ],
@@ -536,6 +1837,18 @@ const docTemplate = `{
                         "description": "Filter by domain id",
                         "name": "domain_id",
                         "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "true/omit: CitizenDomainIDs; false: admin full catalog",
+                        "name": "citizen",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Bearer ADMIN JWT required when citizen=false",
+                        "name": "Authorization",
+                        "in": "header"
                     }
                 ],
                 "responses": {
@@ -551,6 +1864,18 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -562,6 +1887,7 @@ const docTemplate = `{
         },
         "/api/v1/procedures/by-code/{code}": {
             "get": {
+                "description": "Guest or citizen callers may only read procedures whose domain_id is in CitizenDomainIDs. ADMIN Bearer JWT is required to read procedures outside that public/citizen scope. Guest requests for out-of-scope codes receive 404; citizen JWT receives 403.",
                 "produces": [
                     "application/json"
                 ],
@@ -582,6 +1908,12 @@ const docTemplate = `{
                         "description": "Commune id (default from config)",
                         "name": "xa_id",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Bearer ADMIN JWT required for procedures outside CitizenDomainIDs",
+                        "name": "Authorization",
+                        "in": "header"
                     }
                 ],
                 "responses": {
@@ -592,13 +1924,19 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "validation error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "citizen JWT requested a procedure outside CitizenDomainIDs",
                         "schema": {
                             "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "not found or guest out-of-scope",
                         "schema": {
                             "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
@@ -614,6 +1952,7 @@ const docTemplate = `{
         },
         "/api/v1/procedures/{id}/active-version": {
             "get": {
+                "description": "Guest or citizen callers may only read ACTIVE definitions for procedures whose domain_id is in CitizenDomainIDs. ADMIN Bearer JWT is required for procedures outside that public/citizen scope. Guest out-of-scope → 404; citizen JWT out-of-scope → 403.",
                 "produces": [
                     "application/json"
                 ],
@@ -628,6 +1967,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Bearer ADMIN JWT required for procedures outside CitizenDomainIDs",
+                        "name": "Authorization",
+                        "in": "header"
                     }
                 ],
                 "responses": {
@@ -638,13 +1983,19 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad Request",
+                        "description": "validation error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "citizen JWT requested a procedure outside CitizenDomainIDs",
                         "schema": {
                             "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
                     "404": {
-                        "description": "Not Found",
+                        "description": "not found or guest out-of-scope",
                         "schema": {
                             "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
@@ -718,7 +2069,7 @@ const docTemplate = `{
         },
         "/api/v1/sessions/{sessionId}/messages": {
             "get": {
-                "description": "Oldest→newest. FE maps role USER→user bubble, ASSISTANT→bot bubble.",
+                "description": "Returns the latest N messages ordered oldest→newest for UI replay.",
                 "produces": [
                     "application/json"
                 ],
@@ -736,10 +2087,15 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "Bearer access token",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
                         "description": "Guest token from session create",
                         "name": "X-Guest-Token",
-                        "in": "header",
-                        "required": true
+                        "in": "header"
                     },
                     {
                         "type": "integer",
@@ -788,7 +2144,7 @@ const docTemplate = `{
                 }
             },
             "post": {
-                "description": "Persists user message. Chat turn / Decision Engine will be added next.",
+                "description": "Deprecated: use POST /api/v1/sessions/{sessionId}/turns instead. This route no longer accepts user messages.",
                 "consumes": [
                     "application/json"
                 ],
@@ -798,7 +2154,39 @@ const docTemplate = `{
                 "tags": [
                     "sessions"
                 ],
-                "summary": "Append USER message to session",
+                "summary": "Deprecated — use POST /turns",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session UUID",
+                        "name": "sessionId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "410": {
+                        "description": "Gone",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/sessions/{sessionId}/turns": {
+            "post": {
+                "description": "Atomically saves USER+ASSISTANT. Actions include ASK_MISSING_SLOTS, DIRECT_ANSWER, PROVIDE_FINAL_GUIDANCE, OUT_OF_SCOPE, CONFIRM_INTENT. Idempotent via X-Request-ID bound to normalized message hash; same ID + different body → 409 IDEMPOTENCY_CONFLICT.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sessions"
+                ],
+                "summary": "Run one citizen chat turn",
                 "parameters": [
                     {
                         "type": "string",
@@ -809,8 +2197,20 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "Bearer access token",
+                        "name": "Authorization",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
                         "description": "Guest token from session create",
                         "name": "X-Guest-Token",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Idempotency key (UUID)",
+                        "name": "X-Request-ID",
                         "in": "header",
                         "required": true
                     },
@@ -825,8 +2225,8 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "201": {
-                        "description": "Created",
+                    "200": {
+                        "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
@@ -1013,6 +2413,20 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api_http_v1_document.DocumentLinkRequest": {
+            "type": "object",
+            "properties": {
+                "page_range": {
+                    "type": "string"
+                },
+                "procedure_version_id": {
+                    "type": "string"
+                },
+                "relationship_type": {
                     "type": "string"
                 }
             }

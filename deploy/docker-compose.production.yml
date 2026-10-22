@@ -1,0 +1,112 @@
+# Application tier for a real deploy. PostgreSQL, object storage, and Qdrant
+# stay outside this file and are reached by endpoint. Do not use the local
+# compose file for go-live.
+#
+# This file does not start containers by itself until images, secrets, TLS
+# certificates, and model directories are supplied. `docker compose config`
+# fails while a required variable is missing.
+
+name: citizen-assistance-production
+
+services:
+  api:
+    image: ${CAS_API_IMAGE:?CAS_API_IMAGE is required}
+    environment:
+      APP_ENV: prod
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      XA_ID: ${XA_ID:?XA_ID is required}
+      AI_EXTRACT_ENABLED: ${AI_EXTRACT_ENABLED:-false}
+      AI_SERVICE_URL: http://ai-service:8001
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?AI_SERVICE_TOKEN is required}
+      ADMIN_INGESTION_ENABLED: ${ADMIN_INGESTION_ENABLED:-false}
+      ADMIN_INDEXING_ENABLED: ${ADMIN_INDEXING_ENABLED:-false}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:?OBJECT_STORAGE_ACCESS_KEY is required}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:?OBJECT_STORAGE_SECRET_KEY is required}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET is required}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-}
+      OBJECT_STORAGE_USE_SSL: ${OBJECT_STORAGE_USE_SSL:?OBJECT_STORAGE_USE_SSL is required}
+      OBJECT_STORAGE_AUTO_CREATE_BUCKET: "false"
+      DOCUMENT_MAX_BYTES: ${DOCUMENT_MAX_BYTES:-20971520}
+      INDEX_MODE: pipeline
+      INDEX_CLAIM_TTL_SECONDS: ${INDEX_CLAIM_TTL_SECONDS:-180}
+      INDEX_PIPELINE_TIMEOUT_SECONDS: ${INDEX_PIPELINE_TIMEOUT_SECONDS:-120}
+      INDEX_PUBLISH_TIMEOUT_MS: ${INDEX_PUBLISH_TIMEOUT_MS:-10000}
+    ports:
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: "10001:10001"
+    restart: unless-stopped
+    depends_on:
+      ai-service:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  ai-service:
+    image: ${CAS_AI_IMAGE:?CAS_AI_IMAGE is required}
+    environment:
+      APP_ENV: prod
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?AI_SERVICE_TOKEN is required}
+      INDEX_MODE: pipeline
+      EMBEDDING_PROVIDER: onnx
+      OCR_PROVIDER: paddle
+      EMBEDDING_MODEL_DIR: /models/embedding
+      OCR_MODEL_DIR: /models/ocr
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      QDRANT_URL: ${QDRANT_URL:?QDRANT_URL is required}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-knowledge_chunks}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:?OBJECT_STORAGE_ACCESS_KEY is required}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:?OBJECT_STORAGE_SECRET_KEY is required}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET is required}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-}
+      OBJECT_STORAGE_USE_SSL: ${OBJECT_STORAGE_USE_SSL:?OBJECT_STORAGE_USE_SSL is required}
+      OBJECT_STORAGE_AUTO_CREATE_BUCKET: "false"
+    volumes:
+      - ${EMBEDDING_MODEL_DIR:?EMBEDDING_MODEL_DIR is required}:/models/embedding:ro
+      - ${OCR_MODEL_DIR:?OCR_MODEL_DIR is required}:/models/ocr:ro
+    expose:
+      - "8001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/ready', timeout=2)"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 60s
+
+  index-reaper:
+    image: ${CAS_API_IMAGE:?CAS_API_IMAGE is required}
+    command: ["./index-reaper"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      QDRANT_URL: ${QDRANT_URL:?QDRANT_URL is required}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-knowledge_chunks}
+      INDEX_ORPHAN_GRACE_SECONDS: ${INDEX_ORPHAN_GRACE_SECONDS:-120}
+      INDEX_CLEANUP_BATCH_SIZE: ${INDEX_CLEANUP_BATCH_SIZE:-8}
+      INDEX_REAPER_INTERVAL_SECONDS: ${INDEX_REAPER_INTERVAL_SECONDS:-60}
+      INDEX_REAPER_SHUTDOWN_SECONDS: ${INDEX_REAPER_SHUTDOWN_SECONDS:-30}
+    user: "10001:10001"
+    stop_grace_period: 45s
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+        required: false
+
+  web:
+    image: ${CAS_WEB_IMAGE:?CAS_WEB_IMAGE is required}
+    ports:
+      - "127.0.0.1:8088:80"
+    restart: unless-stopped
+    depends_on:
+      - api

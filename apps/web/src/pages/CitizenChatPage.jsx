@@ -1,22 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
-import { sendTurn, WELCOME } from '../api/chat.js'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { WELCOME } from '../api/chat.js'
 import { listProcedures } from '../api/catalog.js'
 import {
   ensureSession,
+  executeChatTurn,
   listSessionMessages,
-  mapApiMessage,
-  postUserMessage,
+  orderedMessages,
+  startFreshSession,
 } from '../api/session.js'
-import { CitizenShell } from '../components/CitizenShell.jsx'
-import { CommuneScene } from '../components/CommuneScene.jsx'
+import { CitizenLayout } from '../components/CitizenLayout.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { useCommune } from '../commune/CommuneContext.jsx'
-
-const FALLBACK_SUGGESTIONS = [
-  'Đăng ký khai sinh cần gì?',
-  'Chứng thực giấy tờ như thế nào?',
-  'Giờ làm việc bộ phận một cửa?',
-]
+import { ROUTES } from '../routes.js'
+import {
+  citationAvailability,
+  citationExcerpt,
+  citationPage,
+  citationPdfHref,
+  citationTitle,
+  retrievalHint,
+  splitEvidence,
+} from '../lib/citations.js'
 
 function Typing() {
   return (
@@ -28,9 +33,108 @@ function Typing() {
   )
 }
 
+function EvidenceList({ citations, retrievalStatus, retrievalReason }) {
+  const { supporting, related } = splitEvidence(citations)
+  const hint = retrievalHint(retrievalStatus, retrievalReason)
+  if (!supporting.length && !related.length && !hint) return null
+  return (
+    <div className="cite-block">
+      {supporting.length ? (
+        <section>
+          <p className="cite-heading">Nguồn hỗ trợ nội dung đã xác minh</p>
+          <ol className="cite-evidence">
+            {supporting.map((cite, index) => (
+              <CitationItem key={`s-${index}`} cite={cite} index={index + 1} verified />
+            ))}
+          </ol>
+        </section>
+      ) : null}
+      {related.length ? (
+        <section>
+          <p className="cite-heading">Tài liệu liên quan</p>
+          <ol className="cite-evidence" start={supporting.length + 1}>
+            {related.map((cite, index) => (
+              <CitationItem key={`r-${index}`} cite={cite} index={supporting.length + index + 1} />
+            ))}
+          </ol>
+        </section>
+      ) : null}
+      {hint ? <p className="cite-hint">{hint}</p> : null}
+    </div>
+  )
+}
+
+function CitationItem({ cite, index, verified = false }) {
+  const page = citationPage(cite)
+  const excerpt = citationExcerpt(cite)
+  const availability = citationAvailability(cite)
+  const href = citationPdfHref(cite)
+  const number = cite.document_number || cite.DocumentNumber || ''
+  const label = `[${index}] ${citationTitle(cite)}${number ? ` · ${number}` : ''}${page ? ` — Trang ${page}` : ''}`
+  return (
+    <li>
+      <strong>
+        {href ? (
+          <a className="cite-link" href={href} target="_blank" rel="noopener noreferrer">
+            {label}
+          </a>
+        ) : (
+          label
+        )}
+      </strong>
+      {href ? (
+        <a className="cite-open" href={href} target="_blank" rel="noopener noreferrer">
+          Mở PDF
+        </a>
+      ) : null}
+      {verified ? null : <span className="cite-badge">chưa xác minh checklist</span>}
+      {availability ? <span className="cite-badge">{availability}</span> : null}
+      {excerpt ? <blockquote>{excerpt}</blockquote> : null}
+    </li>
+  )
+}
+
+function ConfirmActions({ candidates, onPick, disabled }) {
+  if (!candidates?.length) return null
+  return (
+    <div className="confirm-actions" role="group" aria-label="Xác nhận thủ tục">
+      <button
+        type="button"
+        className="hint"
+        disabled={disabled}
+        onClick={() => onPick('Có')}
+      >
+        Có · {candidates[0].name || candidates[0].procedure_code}
+      </button>
+      <button
+        type="button"
+        className="hint"
+        disabled={disabled}
+        onClick={() => onPick('Không')}
+      >
+        Không
+      </button>
+      {candidates.slice(1).map((c) => (
+        <button
+          key={c.procedure_code}
+          type="button"
+          className="hint"
+          disabled={disabled}
+          onClick={() => onPick(c.name)}
+        >
+          {c.name}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function CitizenChatPage() {
   const { user } = useAuth()
   const { xaId, commune } = useCommune()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const askedRef = useRef('')
   const [messages, setMessages] = useState([])
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -39,22 +143,33 @@ export default function CitizenChatPage() {
   const [chatSession, setChatSession] = useState(null)
   const [catalog, setCatalog] = useState([])
   const [catalogError, setCatalogError] = useState('')
+  const [pendingConfirm, setPendingConfirm] = useState(null)
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
   const messagesRef = useRef(null)
+  const composingRef = useRef(false)
+  const sentEchoRef = useRef({ text: '', at: 0 })
+  const recognitionRef = useRef(null)
+  const [listening, setListening] = useState(false)
+  const [voiceHint, setVoiceHint] = useState('')
 
   useEffect(() => {
     const el = messagesRef.current
     if (!el) return
     el.scrollTop = el.scrollHeight
-  }, [messages, busy])
+  }, [messages, busy, pendingConfirm])
+
+  useEffect(() => {
+    if (!sessionReady || busy) return
+    inputRef.current?.focus()
+  }, [sessionReady, busy])
 
   useEffect(() => {
     if (!xaId) return
     let cancelled = false
     ;(async () => {
       try {
-        const data = await listProcedures({ xaId })
+        const data = await listProcedures({ xaId, citizen: true })
         if (cancelled) return
         setCatalog(data?.domains || [])
         setCatalogError('')
@@ -83,11 +198,15 @@ export default function CitizenChatPage() {
 
         const data = await listSessionMessages(sess.sessionId, sess.guestToken)
         if (cancelled) return
-        const items = (data?.items || []).map(mapApiMessage)
+        const items = orderedMessages(data?.items)
         setMessages(
           items.length
             ? items
             : [{ id: 'welcome', role: 'assistant', text: WELCOME }],
+        )
+        const last = [...items].reverse().find((m) => m.role === 'assistant')
+        setPendingConfirm(
+          last?.action === 'CONFIRM_INTENT' ? last.candidates : null,
         )
         setSessionReady(true)
       } catch (err) {
@@ -95,6 +214,7 @@ export default function CitizenChatPage() {
           setSessionError(err.message || 'Không tạo được phiên chat')
           setChatSession(null)
           setMessages([{ id: 'welcome', role: 'assistant', text: WELCOME }])
+          setPendingConfirm(null)
           setSessionReady(false)
         }
       }
@@ -104,16 +224,38 @@ export default function CitizenChatPage() {
     }
   }, [xaId, user?.id])
 
+  async function startNewChat() {
+    if (!xaId || busy) return
+    setBusy(true)
+    setSessionError('')
+    try {
+      const sess = await startFreshSession(xaId)
+      setChatSession(sess)
+      setDraft('')
+      setMessages([{ id: 'welcome', role: 'assistant', text: WELCOME }])
+      setPendingConfirm(null)
+      setSessionReady(true)
+      inputRef.current?.focus()
+    } catch (err) {
+      setSessionError(err.message || 'Không tạo được hội thoại mới')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function submit(text) {
     const content = text.trim()
     if (!content || busy) return
+    stopListening()
 
     setMessages((prev) => [
       ...prev,
       { id: `u-local-${Date.now()}`, role: 'user', text: content },
     ])
+    sentEchoRef.current = { text: content, at: Date.now() }
     setDraft('')
     setBusy(true)
+    setPendingConfirm(null)
 
     try {
       let sess = chatSession
@@ -124,25 +266,31 @@ export default function CitizenChatPage() {
         setSessionError('')
       }
 
-      await postUserMessage(sess.sessionId, content, sess.guestToken)
-
-      const history = await listSessionMessages(sess.sessionId, sess.guestToken)
-      const fromApi = (history?.items || []).map(mapApiMessage)
-
-      // Decision Engine chưa nối — trả lời tạm bằng mock sau khi đã persist USER
-      const reply = await sendTurn({
+      const result = await executeChatTurn({
+        sessionId: sess.sessionId,
         message: content,
-        historyLength: fromApi.length + 1,
+        guestToken: sess.guestToken,
       })
-
-      setMessages([
-        ...fromApi,
-        {
-          id: `a-local-${Date.now()}`,
-          role: 'assistant',
-          text: reply.text,
-        },
-      ])
+      if (!result.ok) {
+        throw result.error || new Error('Không gửi được tin nhắn')
+      }
+      if (result.historyFailed) {
+        setSessionError(
+          result.error?.message ||
+            'Đã gửi tin nhưng không tải lại lịch sử. Thử làm mới trang.',
+        )
+      } else {
+        const fromApi = orderedMessages(result.history?.items)
+        setMessages(
+          fromApi.length
+            ? fromApi
+            : [{ id: 'welcome', role: 'assistant', text: WELCOME }],
+        )
+        const last = [...fromApi].reverse().find((m) => m.role === 'assistant')
+        setPendingConfirm(
+          last?.action === 'CONFIRM_INTENT' ? last.candidates : null,
+        )
+      }
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -160,108 +308,143 @@ export default function CitizenChatPage() {
     }
   }
 
+  function stopListening() {
+    try {
+      recognitionRef.current?.stop()
+    } catch {
+      /* already stopped */
+    }
+    recognitionRef.current = null
+    setListening(false)
+  }
+
+  useEffect(() => () => stopListening(), [])
+
+  function toggleVoice() {
+    const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!Ctor) {
+      setVoiceHint('Trình duyệt này chưa hỗ trợ nhận giọng nói.')
+      return
+    }
+    if (listening) {
+      stopListening()
+      return
+    }
+    setVoiceHint('')
+    const rec = new Ctor()
+    rec.lang = 'vi-VN'
+    rec.interimResults = true
+    rec.continuous = false
+    rec.onresult = (event) => {
+      let text = ''
+      for (let i = 0; i < event.results.length; i += 1) {
+        text += event.results[i][0].transcript
+      }
+      setDraft(text.trim())
+    }
+    rec.onerror = (event) => {
+      if (event.error === 'not-allowed') {
+        setVoiceHint('Cần cho phép micro để nói câu hỏi.')
+      } else if (event.error !== 'aborted' && event.error !== 'no-speech') {
+        setVoiceHint('Không nhận được giọng nói. Thử lại.')
+      }
+      stopListening()
+    }
+    rec.onend = () => {
+      recognitionRef.current = null
+      setListening(false)
+    }
+    recognitionRef.current = rec
+    try {
+      rec.start()
+      setListening(true)
+    } catch {
+      setVoiceHint('Không bật được micro. Thử lại.')
+      stopListening()
+    }
+  }
+
   function askAboutProcedure(proc) {
     submit(`Tôi muốn hỏi về thủ tục ${proc.name}`)
   }
 
+  function onDraftChange(e) {
+    const next = e.target.value
+    const sent = sentEchoRef.current
+    if (
+      sent.text &&
+      Date.now() - sent.at < 400 &&
+      next &&
+      (next === sent.text || sent.text.endsWith(next))
+    ) {
+      sentEchoRef.current = { text: '', at: 0 }
+      return
+    }
+    if (!next) sentEchoRef.current = { text: '', at: 0 }
+    setDraft(next)
+  }
+
   function onKeyDown(e) {
+    if (composingRef.current || e.nativeEvent.isComposing || e.keyCode === 229) {
+      return
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       submit(draft)
     }
   }
 
-  const suggestions =
-    catalog.length > 0
-      ? catalog
-          .flatMap((g) => g.procedures || [])
-          .slice(0, 4)
-          .map((p) => p.name)
-      : FALLBACK_SUGGESTIONS
+  const suggestions = catalog
+    .flatMap((g) => g.procedures || [])
+    .slice(0, 4)
+
+  useEffect(() => {
+    const ask = location.state?.ask
+    if (!ask || !sessionReady || busy) return
+    if (askedRef.current === ask) return
+    askedRef.current = ask
+    navigate(ROUTES.chat, { replace: true, state: {} })
+    void submit(ask)
+  }, [busy, location.state, navigate, sessionReady])
 
   return (
-    <CitizenShell>
-      <main className="citizen-main">
-        <section className="citizen-intro" aria-label="Giới thiệu">
-          <div className="citizen-intro-copy">
-            <p className="citizen-intro-eyebrow">Trợ lý thủ tục hành chính</p>
-            <h1>Hỏi thủ tục bằng tiếng Việt</h1>
-            <p>
-              Tra cứu giấy tờ, điều kiện và nơi nộp tại{' '}
-              <strong>xã {commune?.name || '…'}</strong>
-              {user ? ` · Xin chào, ${user.name}` : ''}. Không bắt buộc đăng
-              nhập.
-            </p>
-            <div className="hints">
-              {suggestions.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  className="hint"
-                  spellCheck={false}
-                  onClick={() => submit(s)}
-                  disabled={busy || !sessionReady}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="citizen-intro-visual">
-            <CommuneScene className="commune-scene" />
-          </div>
-        </section>
-
-        <div className="citizen-aside">
-          <section className="catalog-panel" aria-label="Danh mục thủ tục">
-            <div className="catalog-head">
-              <h2>Thủ tục đang hỗ trợ</h2>
-              <p>Bấm để hỏi nhanh theo danh mục của xã</p>
-            </div>
-            {catalogError ? (
-              <p className="catalog-error">{catalogError}</p>
-            ) : null}
-            {!catalogError && catalog.length === 0 ? (
-              <p className="catalog-muted">Đang tải danh mục…</p>
-            ) : null}
-            <div className="catalog-groups">
-              {catalog.map((g) => (
-                <div key={g.domain_id} className="catalog-group">
-                  <h3>
-                    {g.domain_name} <span>{g.count}</span>
-                  </h3>
-                  <ul>
-                    {(g.procedures || []).map((p) => (
-                      <li key={p.id}>
-                        <button
-                          type="button"
-                          spellCheck={false}
-                          onClick={() => askAboutProcedure(p)}
-                          disabled={busy || !sessionReady}
-                        >
-                          <strong>{p.name}</strong>
-                          <span>Hỏi hướng dẫn</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          </section>
+    <CitizenLayout>
+      <main className="citizen-main chat-only">
+        <div className="quick-row" style={{ marginBottom: '0.75rem' }}>
+          {suggestions.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              disabled={busy || !sessionReady}
+              onClick={() => askAboutProcedure(p)}
+            >
+              {p.name}
+            </button>
+          ))}
         </div>
+        {catalogError ? <p className="form-error">{catalogError}</p> : null}
 
         <section className="chat-panel chat-panel-sticky" aria-label="Hội thoại">
           <div className="chat-header">
             <div>
-              <h2>Hội thoại hỗ trợ</h2>
+              <h2>Hỏi đáp thủ tục</h2>
               <p>
                 {user ? `Xin chào, ${user.name}` : 'Phiên khách'} · xã{' '}
                 {commune?.name}
                 {sessionReady ? ' · đã nối API' : ''}
               </p>
             </div>
-            <div className="status-dot" title="Sẵn sàng" />
+            <div className="chat-header-actions">
+              <button
+                type="button"
+                className="new-chat"
+                onClick={startNewChat}
+                disabled={busy || !sessionReady}
+              >
+                Hội thoại mới
+              </button>
+              <div className="status-dot" title="Sẵn sàng" />
+            </div>
           </div>
 
           {sessionError ? (
@@ -282,8 +465,22 @@ export default function CitizenChatPage() {
                 className={`msg ${m.role === 'user' ? 'user' : 'bot'}`}
               >
                 {m.text}
+                {m.role === 'assistant' ? (
+                  <EvidenceList
+                    citations={m.citations}
+                    retrievalStatus={m.retrievalStatus}
+                    retrievalReason={m.retrievalReason}
+                  />
+                ) : null}
               </div>
             ))}
+            {pendingConfirm ? (
+              <ConfirmActions
+                candidates={pendingConfirm}
+                disabled={busy || !sessionReady}
+                onPick={submit}
+              />
+            ) : null}
             {busy && (
               <div className="msg bot">
                 <Typing />
@@ -302,27 +499,53 @@ export default function CitizenChatPage() {
             <textarea
               ref={inputRef}
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={onDraftChange}
+              onCompositionStart={() => {
+                composingRef.current = true
+              }}
+              onCompositionEnd={() => {
+                composingRef.current = false
+              }}
               onKeyDown={onKeyDown}
               placeholder={
-                sessionReady
-                  ? 'Nhập câu hỏi của bạn…'
-                  : 'Đang mở phiên chat…'
+                listening
+                  ? 'Đang nghe… hãy nói câu hỏi'
+                  : sessionReady
+                    ? 'Nhập câu tự nhiên, ví dụ đăng ký khai sinh cho con…'
+                    : 'Đang mở phiên chat…'
               }
               rows={2}
-              disabled={busy || !sessionReady}
+              disabled={!sessionReady}
               spellCheck={false}
               aria-label="Nội dung câu hỏi"
             />
             <button
+              type="button"
+              className={`voice-mic${listening ? ' listening' : ''}`}
+              onClick={toggleVoice}
+              disabled={busy || !sessionReady}
+              aria-pressed={listening}
+              aria-label={listening ? 'Dừng nghe' : 'Nói câu hỏi'}
+              title={listening ? 'Dừng nghe' : 'Nói câu hỏi'}
+            >
+              {listening ? '●' : '🎙'}
+            </button>
+            <button
               type="submit"
+              className="composer-send"
+              onMouseDown={(e) => e.preventDefault()}
               disabled={busy || !sessionReady || !draft.trim()}
             >
               Gửi
             </button>
           </form>
+          {voiceHint ? (
+            <p className="form-error" style={{ margin: '0 0.9rem 0.75rem' }}>
+              {voiceHint}
+            </p>
+          ) : null}
         </section>
       </main>
-    </CitizenShell>
+    </CitizenLayout>
   )
 }
