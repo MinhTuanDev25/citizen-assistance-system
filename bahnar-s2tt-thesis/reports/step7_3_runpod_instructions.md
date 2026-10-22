@@ -6,12 +6,24 @@ that VRAM is free. Do not kill Jupyter/RQ2 from this guide.
 These commands match the source after the provenance final fix. They are
 not evidence that a run already happened.
 
+RunPod has two separate trees. Do not collapse them:
+
+```text
+CAS_ROOT / Git worktree   /workspace/citizen-assistance-phase7
+THESIS_SOURCE_ROOT        /workspace/citizen-assistance-phase7/bahnar-s2tt-thesis
+ARTIFACT_ROOT             /workspace/bahnar-s2tt-thesis
+```
+
+Git delivery uses a **new worktree**. Do not `git reset --hard`, `git clean`,
+or stash the existing `/workspace/citizen-assistance-system` checkout (it
+holds uncommitted RQ2 notebook/artifacts). Exact commands:
+`reports/phase7_step73_final_patch/GIT_DELIVERY_COMMANDS.md`.
+
 ## 1. Sync source onto the pod
 
-On the pod, thesis root is typically `/workspace/bahnar-s2tt-thesis`.
-
-Copy the Step 7.2 bundle (or `git` / `rsync` the same files) so these
-exist beside existing `src/`:
+Obtain Phase 7 source from approved `main` in
+`/workspace/citizen-assistance-phase7` (see the Git delivery runbook).
+C0 entrypoints live under THESIS_SOURCE_ROOT:
 
 ```text
 src/c0_cascaded.py
@@ -21,8 +33,10 @@ configs/c0_inference.example.yaml
 configs/c0_research_pins.yaml
 ```
 
+Trained checkpoints stay at ARTIFACT_ROOT. Do not copy or rename them.
+
 ```bash
-cd /workspace/bahnar-s2tt-thesis
+cd /workspace/citizen-assistance-phase7/bahnar-s2tt-thesis
 python -c "import src.c0_cascaded, src.c0_tokenizer, src.c0_manifest"
 ```
 
@@ -75,11 +89,13 @@ Hashing the files on the pod and writing that hash into YAML is a
 On the pod, hash the research `model.safetensors` files once:
 
 ```bash
+cd /workspace/citizen-assistance-phase7/bahnar-s2tt-thesis
 python - <<'PY'
 from pathlib import Path
 from src.rq1_contract import sha256_file
-asr = Path("bahnar_s2tt/full_state/contract_b5172ee0cc391e4f/checkpoints/full_train/full_xlsr300m_v1/ckpts/checkpoint-12500/model.safetensors")
-mt = Path("bahnar_s2tt/mt_full_state/contract_c3d7b95698738634/checkpoints/full_train/mt_bartpho_syllable_v1/ckpts/checkpoint-17500/model.safetensors")
+root = Path("/workspace/bahnar-s2tt-thesis")  # ARTIFACT_ROOT, not Git source
+asr = root / "bahnar_s2tt/full_state/contract_b5172ee0cc391e4f/checkpoints/full_train/full_xlsr300m_v1/ckpts/checkpoint-12500/model.safetensors"
+mt = root / "bahnar_s2tt/mt_full_state/contract_c3d7b95698738634/checkpoints/full_train/mt_bartpho_syllable_v1/ckpts/checkpoint-17500/model.safetensors"
 print("asr", sha256_file(asr))
 print("mt", sha256_file(mt))
 PY
@@ -98,8 +114,10 @@ research verification. Operator YAML pins are integrity only.
 
 ## 5. Checksum integrity (operator pin)
 
-Copy `configs/c0_inference.example.yaml` to
-`configs/c0_inference.runpod.yaml`.
+Copy `bahnar-s2tt-thesis/configs/c0_inference.example.yaml` (in the CAS
+worktree) to `configs/c0_inference.runpod.yaml` in the same directory.
+Do not invent a different example filename. Checkpoint fields must use
+ARTIFACT_ROOT paths from sections 2–3.
 
 Optional but recommended: set operator pins to the hashes you just
 computed so a later file swap fails closed:
@@ -167,6 +185,7 @@ C0 does not resample.
 
 ```bash
 nvidia-smi   # VRAM must be free
+cd /workspace/citizen-assistance-phase7/bahnar-s2tt-thesis
 python -m src.c0_cascaded --config configs/c0_inference.runpod.yaml --audio /path/to/bahnar.wav
 ```
 

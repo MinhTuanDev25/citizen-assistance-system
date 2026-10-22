@@ -57,6 +57,7 @@ deploy/volumes/
 /phase5_*.zip
 /phase6_*.zip
 /phase45_*.zip
+/phase7_*.zip
 /step02_*.zip
 /llm_phase45*.zip
 /reports/
