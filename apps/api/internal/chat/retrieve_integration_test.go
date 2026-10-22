@@ -25,7 +25,8 @@ func TestHTTPPinnedSourcesSurviveReindexUnlinkAndV2(t *testing.T) {
 	admin := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 	procID := uuid.New()
 	verID := uuid.New()
-	procCode := "p5_pin_" + uuid.NewString()[:8]
+	// ht_* stays citizen-visible; p5_* is stripped from LockTurn catalog.
+	procCode := "ht_pin_" + uuid.NewString()[:8]
 	token := "phase5pin" + uuid.NewString()
 	def := fmt.Sprintf(`{
 		"procedure_code": %q,
@@ -158,7 +159,7 @@ func TestAskTurnPinsSourcesBeforeReindexAndV2(t *testing.T) {
 	procID := uuid.New()
 	verID := uuid.New()
 	v2ID := uuid.New()
-	procCode := "p5_ask_" + uuid.NewString()[:8]
+	procCode := "ht_ask_" + uuid.NewString()[:8]
 	token := "phase5ask" + uuid.NewString()
 	def := fmt.Sprintf(`{
 		"procedure_code": %q,
@@ -335,7 +336,7 @@ func TestConcurrentActivateDoesNotMixPinnedVersionAndSources(t *testing.T) {
 	procID := uuid.New()
 	verID := uuid.New()
 	v2ID := uuid.New()
-	procCode := "p5_race_" + uuid.NewString()[:8]
+	procCode := "ht_race_" + uuid.NewString()[:8]
 	token := "phase5race" + uuid.NewString()
 	def := fmt.Sprintf(`{
 		"procedure_code": %q,
@@ -468,7 +469,7 @@ func setupPinActivateFixture(t *testing.T, pool *pgxpool.Pool) pinActivateFix {
 		v2ID:   uuid.New(),
 		token:  "phase5firstpin" + uuid.NewString(),
 	}
-	procCode := "p5_firstpin_" + uuid.NewString()[:8]
+	procCode := "ht_firstpin_" + uuid.NewString()[:8]
 	defV1 := fmt.Sprintf(`{
 		"procedure_code": %q,
 		"name": %q,
@@ -558,6 +559,9 @@ func firstPinTurn(t *testing.T, eng http.Handler, sessionID, guest, token string
 		map[string]string{"X-Guest-Token": guest, "X-Request-ID": uuid.NewString()})
 	if code != http.StatusOK {
 		t.Fatalf("first pin turn %d %v", code, turn)
+	}
+	if action := fmt.Sprint(dataMap(turn)["action"]); action == "OUT_OF_SCOPE" {
+		t.Fatalf("first pin turn OUT_OF_SCOPE (fixture code must stay citizen-visible): %v", turn)
 	}
 }
 
