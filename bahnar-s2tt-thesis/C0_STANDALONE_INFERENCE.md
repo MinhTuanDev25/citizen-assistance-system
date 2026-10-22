@@ -10,6 +10,7 @@ Repo config directory is `configs/`, not `config/`.
 python -m src.c0_cascaded --config configs/c0_inference.example.yaml --audio /path/to/bahnar.wav
 python -m src.c0_manifest --config configs/c0_inference.example.yaml --out manifests/c0_manifest.json
 python -m src.c0_tokenizer --contract /path/to/mt_training_contract.json
+python -m src.c0_speech   # internal HTTP API; see C0_SPEECH_API.md
 ```
 
 `checkpoint_identity` (do not collapse these):
@@ -38,7 +39,7 @@ failures emit JSON (`config_error` / `output_error`) and exit 1.
 ## Tests
 
 ```text
-python -m pytest -q tests/test_c0_cascaded.py tests/test_c0_tokenizer.py --noconftest
+python -m pytest -q tests/test_c0_cascaded.py tests/test_c0_tokenizer.py tests/test_c0_speech.py
 ```
 
 ## Status

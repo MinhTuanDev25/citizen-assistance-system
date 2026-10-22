@@ -678,6 +678,7 @@ class C0Cascade:
         self.tokenizer_source = str(self.mt.get("tokenizer_source") or TOKENIZER_SOURCE_HUB_PINNED_RQ1)
         self.tokenizer_model_id = str(self.mt.get("tokenizer_model_id") or LOCKED_MODEL_ID)
         self.tokenizer_revision = str(self.mt.get("tokenizer_revision") or LOCKED_MODEL_REVISION)
+        self.mt_training_contract = str(config.get("mt_training_contract") or "").strip()
 
     def _base_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -701,6 +702,15 @@ class C0Cascade:
             payload["mt_checkpoint_step"] = mt_step
         return payload
 
+    def infer_waveform(self, wav: np.ndarray, sample_rate: int = SAMPLE_RATE) -> dict[str, Any]:
+        """Run ASR then MT on an already-decoded waveform. Does not read a file.
+
+        ``duration_ms`` is audio length at ``sample_rate``. ``latency_ms`` is
+        wall time of this call (transcribe + translate), not HTTP overhead.
+        """
+        started = time.perf_counter()
+        return self._complete_from_wav(self._base_payload(), wav, sample_rate, started)
+
     def run(self, audio_path: Path) -> dict[str, Any]:
         started = time.perf_counter()
         payload = self._base_payload()
@@ -711,8 +721,29 @@ class C0Cascade:
                 max_duration_seconds=self.max_audio_duration_seconds,
                 max_audio_bytes=self.max_audio_bytes,
             )
-            payload["duration_ms"] = duration_ms(wav, sr)
-            asr_text = self.transcribe(self.asr["model"], self.asr["processor"], wav, sample_rate=sr)
+        except C0Error as exc:
+            payload["error"] = str(exc)
+            payload["error_code"] = getattr(exc, "error_code", "c0_error")
+            payload["latency_ms"] = int(round((time.perf_counter() - started) * 1000.0))
+            return payload
+        except Exception as exc:
+            code, message = _public_error(exc)
+            payload["error"] = message
+            payload["error_code"] = code
+            payload["latency_ms"] = int(round((time.perf_counter() - started) * 1000.0))
+            return payload
+        return self._complete_from_wav(payload, wav, sr, started)
+
+    def _complete_from_wav(
+        self,
+        payload: dict[str, Any],
+        wav: np.ndarray,
+        sample_rate: int,
+        started: float,
+    ) -> dict[str, Any]:
+        try:
+            payload["duration_ms"] = duration_ms(wav, sample_rate)
+            asr_text = self.transcribe(self.asr["model"], self.asr["processor"], wav, sample_rate=sample_rate)
             asr_text = str(asr_text).strip()
             if not asr_text:
                 raise C0EmptyOutputError("empty_asr", "ASR produced empty Bahnar transcript")

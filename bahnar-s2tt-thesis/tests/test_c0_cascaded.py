@@ -179,6 +179,12 @@ def test_pipeline_asr_then_mt_schema(tmp_path: Path):
     assert seen["mt"][2] == "bahnar transcript"
     assert seen["mt"][3]["num_beams"] == 4
 
+    asr_model = cascade.asr["model"]
+    again = cascade.infer_waveform(wav, 16000)
+    assert again["asr_text_bahnar"] == "bahnar transcript"
+    assert cascade.asr["model"] is asr_model
+    assert cascade.mt["tokenizer"] is cascade.mt["tokenizer"]
+
 
 def test_pipeline_keeps_asr_text_when_mt_fails(tmp_path: Path):
     def translate(*_args, **_kwargs):

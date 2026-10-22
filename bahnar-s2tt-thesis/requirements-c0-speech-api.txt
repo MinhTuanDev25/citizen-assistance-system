@@ -1,0 +1,8 @@
+# HTTP serving extras for Step 7.4. Install on top of requirements-c0-inference.txt.
+# Does not change PyTorch / Transformers / Accelerate pins.
+-r requirements-c0-inference.txt
+fastapi==0.115.6
+uvicorn==0.34.0
+httpx==0.28.1
+python-multipart==0.0.20
+pytest==8.3.4
