@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +41,7 @@ func TestUpgradeFromV10RepairsUnlinkedReadyDocument(t *testing.T) {
 	if status != "UPLOADED" {
 		t.Fatalf("unlinked document status %s", status)
 	}
-	assertVersion(t, pool, 18)
+	assertVersion(t, pool, latestMigrationVersion(t))
 	_ = name
 }
 
@@ -328,7 +329,8 @@ func TestMigration16RoundTripKeepsGenerationRows(t *testing.T) {
 	pool.Close()
 	migrateUp(t, dsn)
 	pool = openScratch(t, dsn)
-	assertVersion(t, pool, 18)
+	latest := latestMigrationVersion(t)
+	assertVersion(t, pool, latest)
 	var dirty bool
 	if err := pool.QueryRow(context.Background(), `SELECT dirty FROM schema_migrations`).Scan(&dirty); err != nil {
 		t.Fatal(err)
@@ -356,18 +358,55 @@ func TestMigration16RoundTripKeepsGenerationRows(t *testing.T) {
 	}
 	m.Close()
 	pool = openScratch(t, dsn)
-	assertVersion(t, pool, 17)
+	assertVersion(t, pool, latest-1)
 	pool.Close()
 	migrateUp(t, dsn)
 	pool = openScratch(t, dsn)
 	defer pool.Close()
-	assertVersion(t, pool, 18)
+	assertVersion(t, pool, latest)
 	if err := pool.QueryRow(context.Background(), `SELECT dirty FROM schema_migrations`).Scan(&dirty); err != nil {
 		t.Fatal(err)
 	}
 	if dirty {
 		t.Fatal("dirty after down/up")
 	}
+}
+
+func TestLatestMigrationVersionTracksUpFiles(t *testing.T) {
+	n := latestMigrationVersion(t)
+	if n < 20 {
+		t.Fatalf("expected at least migration 20, got %d", n)
+	}
+}
+
+func latestMigrationVersion(t *testing.T) int {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", "..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(filepath.Join(root, "deploy", "migrations", "*.up.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	max := 0
+	for _, match := range matches {
+		base := filepath.Base(match)
+		if len(base) < 6 {
+			continue
+		}
+		n, convErr := strconv.Atoi(base[:6])
+		if convErr != nil {
+			continue
+		}
+		if n > max {
+			max = n
+		}
+	}
+	if max == 0 {
+		t.Fatal("no numbered up migrations")
+	}
+	return max
 }
 
 func assertVersion(t *testing.T, pool *pgxpool.Pool, want int) {
@@ -377,6 +416,6 @@ func assertVersion(t *testing.T, pool *pgxpool.Pool, want int) {
 		t.Fatal(err)
 	}
 	if version != want {
-		t.Fatalf("version %d", version)
+		t.Fatalf("version %d want %d", version, want)
 	}
 }
