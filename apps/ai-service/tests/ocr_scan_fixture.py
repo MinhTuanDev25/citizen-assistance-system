@@ -10,6 +10,9 @@ FONT_CANDIDATES = (
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/Library/Fonts/Arial Unicode.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/dejavu-sans/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
 )
 
 
@@ -20,8 +23,9 @@ def render_lines(lines: tuple[str, ...], font_path: str | None = None, size: int
     if chosen is None:
         chosen = next((path for path in FONT_CANDIDATES if Path(path).is_file()), None)
     if chosen is None:
-        raise FileNotFoundError("no local font for the OCR fixture; refusing to download one")
-    font = ImageFont.truetype(chosen, size)
+        font = ImageFont.load_default()
+    else:
+        font = ImageFont.truetype(chosen, size)
     probe = ImageDraw.Draw(Image.new("RGB", (1, 1), "white"))
     widths = [probe.textbbox((0, 0), line, font=font)[2] for line in lines]
     height = size + 16

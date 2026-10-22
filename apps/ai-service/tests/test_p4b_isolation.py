@@ -136,6 +136,16 @@ def test_scan_fixture_has_no_text_layer_and_keywords_match_its_lines():
     assert missing_smoke_tokens("\n".join(LINES)) == []
 
 
+def test_scan_fixture_builds_without_system_font(monkeypatch):
+    import ocr_scan_fixture as fixture
+
+    monkeypatch.setattr(fixture, "FONT_CANDIDATES", ())
+    data = fixture.build_scan_pdf()
+    reader = PdfReader(io.BytesIO(data))
+    assert data.startswith(b"%PDF")
+    assert (reader.pages[0].extract_text() or "").strip() == ""
+
+
 def test_cleanup_keeps_going_and_only_names_owned_generations():
     owned = uuid.uuid4()
     existing = uuid.uuid4()
