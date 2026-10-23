@@ -40,7 +40,7 @@ func (h *memHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 func (h *memHandler) WithGroup(string) slog.Handler      { return h }
 
 func TestSensitivePath(t *testing.T) {
-	if !SensitivePath("/api/v1/auth/login") || !SensitivePath("/api/v1/sessions/x/turns") {
+	if !SensitivePath("/api/v1/auth/login") || !SensitivePath("/api/v1/sessions/x/turns") || !SensitivePath("/api/v1/sessions/x/speech/translate") {
 		t.Fatal("expected sensitive")
 	}
 	if SensitivePath("/api/v1/procedures") {

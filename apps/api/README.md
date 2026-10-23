@@ -40,6 +40,7 @@ make api-swagger   # regenerates apps/api/docs/
 | GET | `/api/v1/sessions/:sessionId/messages` | List messages |
 | POST | `/api/v1/sessions/:sessionId/messages` | **410 Gone** — deprecated; use `POST .../turns` |
 | POST | `/api/v1/sessions/:sessionId/turns` | One chat turn: detect procedure, slot state, decision |
+| POST | `/api/v1/sessions/:sessionId/speech/translate` | Bahnar WAV → Vietnamese text via C0 Speech API (off unless `SPEECH_ENABLED=true`; does not create a chat turn). `POST /api/v1/speech/translate` is 410 Gone. |
 
 ### Auth users
 

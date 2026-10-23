@@ -11,10 +11,11 @@ import (
 )
 
 const (
-	pathMessagesPost  = "/api/v1/sessions/{sessionId}/messages"
-	pathTurnsPost     = "/api/v1/sessions/{sessionId}/turns"
-	pathByCodeGet     = "/api/v1/procedures/by-code/{code}"
-	pathActiveVersion = "/api/v1/procedures/{id}/active-version"
+	pathMessagesPost    = "/api/v1/sessions/{sessionId}/messages"
+	pathTurnsPost       = "/api/v1/sessions/{sessionId}/turns"
+	pathByCodeGet       = "/api/v1/procedures/by-code/{code}"
+	pathActiveVersion   = "/api/v1/procedures/{id}/active-version"
+	pathSpeechTranslate = "/api/v1/sessions/{sessionId}/speech/translate"
 )
 
 type swaggerDoc struct {
@@ -81,6 +82,7 @@ func TestOpenAPIMatchesHandlers(t *testing.T) {
 	assertProcedureDetailGet(t, doc, pathByCodeGet)
 	assertProcedureDetailGet(t, doc, pathActiveVersion)
 	assertAdminActivation(t, doc)
+	assertSpeechTranslate(t, doc)
 
 	yamlBytes, err := os.ReadFile(yamlPath)
 	if err != nil {
@@ -98,6 +100,7 @@ func TestOpenAPIMatchesHandlers(t *testing.T) {
 	assertProcedureDetailGet(t, yamlDoc, pathByCodeGet)
 	assertProcedureDetailGet(t, yamlDoc, pathActiveVersion)
 	assertAdminActivation(t, yamlDoc)
+	assertSpeechTranslate(t, yamlDoc)
 
 	docsGo, err := os.ReadFile(docsGoPath)
 	if err != nil {
@@ -123,6 +126,27 @@ func TestOpenAPIMatchesHandlers(t *testing.T) {
 	}
 	if !strings.Contains(docsStr, "/api/v1/admin/procedures/{procedureId}/versions/{versionId}/activate") {
 		t.Error("docs.go embed missing admin activate path")
+	}
+	if !strings.Contains(docsStr, pathSpeechTranslate) {
+		t.Errorf("docs.go embed missing speech path %q", pathSpeechTranslate)
+	}
+}
+
+func assertSpeechTranslate(t *testing.T, doc swaggerDoc) {
+	t.Helper()
+	methods, ok := doc.Paths[pathSpeechTranslate]
+	if !ok || methods.Post == nil {
+		t.Fatalf("paths missing POST %q", pathSpeechTranslate)
+	}
+	op := methods.Post
+	for _, code := range []string{"200", "401", "413", "502", "503"} {
+		if _, has := op.Responses[code]; !has {
+			t.Errorf("%s POST must declare response %s", pathSpeechTranslate, code)
+		}
+	}
+	combined := strings.ToLower(op.Summary + " " + op.Description)
+	if !strings.Contains(combined, "speech") {
+		t.Errorf("%s docs must mention speech", pathSpeechTranslate)
 	}
 }
 

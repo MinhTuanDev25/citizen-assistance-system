@@ -62,6 +62,14 @@ type Config struct {
 	ObjectStorageRegion           string
 	ObjectStorageAutoCreateBucket bool
 	DocumentMaxBytes              int64
+
+	// Speech translation (Step 7.5). Off by default: text chat is unchanged.
+	SpeechEnabled        bool
+	SpeechServiceURL     string
+	SpeechServiceToken   string
+	SpeechTimeoutMS      int
+	SpeechMaxUploadBytes int64
+	SpeechMaxInflight    int
 }
 
 // DocumentMaxHardBytes matches middleware.DocumentUploadHardMax.
@@ -78,6 +86,19 @@ const AIRetrieveTimeoutHardMaxMS = 10000
 // AIDraftTimeoutHardMaxMS is the Admin drafting ceiling. This is independent
 // of the citizen extract 8s cap.
 const AIDraftTimeoutHardMaxMS = 120000
+
+// SpeechTimeoutHardMaxMS is above the upstream SPEECH_REQUEST_TIMEOUT_S (120s)
+// so a legitimate GPU call is not cut by the Go client first.
+const SpeechTimeoutHardMaxMS = 180000
+
+// SpeechUploadHardMaxBytes matches the upstream default 10 MiB HTTP body cap.
+const SpeechUploadHardMaxBytes int64 = 10 << 20
+
+// SpeechUploadMinBytes is the smallest SPEECH_MAX_UPLOAD_BYTES that still
+// leaves room for a WAV after the 64 KiB multipart reserve. Equal to
+// speech.MultipartOverheadReserve + 1. A cap at or below the reserve would
+// make MaxAudioBytes return 0; that must fail validation, not fail-open.
+const SpeechUploadMinBytes int64 = 64<<10 + 1
 
 type fileConfig struct {
 	Server struct {
@@ -157,6 +178,10 @@ func Load() (Config, error) {
 		IndexPipelineTimeout:          2 * time.Minute,
 		IndexPublishTimeout:           10 * time.Second,
 		ObjectStorageAutoCreateBucket: true,
+		SpeechEnabled:                 false,
+		SpeechTimeoutMS:               130000,
+		SpeechMaxUploadBytes:          SpeechUploadHardMaxBytes,
+		SpeechMaxInflight:             1,
 	}
 
 	if err := applyEnvOverrides(&cfg); err != nil {
@@ -185,6 +210,9 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("database.min_conns must be between 0 and max_conns")
 	}
 	if err := validateAIConfig(cfg); err != nil {
+		return Config{}, err
+	}
+	if err := validateSpeechConfig(cfg); err != nil {
 		return Config{}, err
 	}
 	if err := validateIngestionConfig(cfg); err != nil {
@@ -245,6 +273,9 @@ func validateProduction(cfg Config) error {
 	}
 	if isDevPlaceholder(cfg.AIServiceToken) {
 		return fmt.Errorf("AI_SERVICE_TOKEN is a development placeholder")
+	}
+	if cfg.SpeechEnabled && isDevPlaceholder(cfg.SpeechServiceToken) {
+		return fmt.Errorf("SPEECH_SERVICE_TOKEN is a development placeholder")
 	}
 	if cfg.AdminIngestionEnabled {
 		if cfg.ObjectStorageAutoCreateBucket {
@@ -401,6 +432,75 @@ func validateAIConfig(cfg Config) error {
 		}
 	}
 	return nil
+}
+
+func validateSpeechConfig(cfg Config) error {
+	if cfg.SpeechTimeoutMS <= 0 || cfg.SpeechTimeoutMS > SpeechTimeoutHardMaxMS {
+		return fmt.Errorf("SPEECH_TIMEOUT_MS must be in (0, %d]", SpeechTimeoutHardMaxMS)
+	}
+	if cfg.SpeechMaxUploadBytes < SpeechUploadMinBytes || cfg.SpeechMaxUploadBytes > SpeechUploadHardMaxBytes {
+		return fmt.Errorf("SPEECH_MAX_UPLOAD_BYTES must be in [%d, %d]", SpeechUploadMinBytes, SpeechUploadHardMaxBytes)
+	}
+	if cfg.SpeechMaxInflight < 1 || cfg.SpeechMaxInflight > 4 {
+		return fmt.Errorf("SPEECH_MAX_INFLIGHT must be in [1, 4]")
+	}
+	token := strings.TrimSpace(cfg.SpeechServiceToken)
+	if token != "" && len(token) < 16 {
+		return fmt.Errorf("SPEECH_SERVICE_TOKEN must be at least 16 characters")
+	}
+	if !cfg.SpeechEnabled {
+		return nil
+	}
+	if strings.TrimSpace(cfg.SpeechServiceURL) == "" {
+		return fmt.Errorf("SPEECH_SERVICE_URL is required when SPEECH_ENABLED=true")
+	}
+	if token == "" {
+		return fmt.Errorf("SPEECH_SERVICE_TOKEN is required when SPEECH_ENABLED=true")
+	}
+	if err := validateSpeechServiceURL(cfg.SpeechServiceURL); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateSpeechServiceURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("SPEECH_SERVICE_URL is invalid")
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" {
+		return fmt.Errorf("SPEECH_SERVICE_URL scheme must be http to a loopback address")
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("SPEECH_SERVICE_URL must not include credentials")
+	}
+	if parsed.RawQuery != "" {
+		return fmt.Errorf("SPEECH_SERVICE_URL must not include a query")
+	}
+	if parsed.Fragment != "" {
+		return fmt.Errorf("SPEECH_SERVICE_URL must not include a fragment")
+	}
+	path := parsed.EscapedPath()
+	if path != "" && path != "/" {
+		return fmt.Errorf("SPEECH_SERVICE_URL must not include a path")
+	}
+	if parsed.Host == "" || parsed.Hostname() == "" {
+		return fmt.Errorf("SPEECH_SERVICE_URL is invalid")
+	}
+	if !speechLoopbackHost(parsed.Hostname()) {
+		return fmt.Errorf("SPEECH_SERVICE_URL host must be loopback (127.0.0.1, ::1, or localhost)")
+	}
+	return nil
+}
+
+func speechLoopbackHost(host string) bool {
+	name := strings.ToLower(strings.TrimSpace(host))
+	if name == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(name)
+	return ip != nil && ip.IsLoopback()
 }
 
 func applyEnvOverrides(cfg *Config) error {
@@ -626,6 +726,43 @@ func applyEnvOverrides(cfg *Config) error {
 			return fmt.Errorf("INDEX_PUBLISH_TIMEOUT_MS must be an integer")
 		}
 		cfg.IndexPublishTimeout = time.Duration(n) * time.Millisecond
+	}
+	if v, ok := os.LookupEnv("SPEECH_ENABLED"); ok && strings.TrimSpace(v) != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			cfg.SpeechEnabled = true
+		case "0", "false", "no", "off":
+			cfg.SpeechEnabled = false
+		default:
+			return fmt.Errorf("SPEECH_ENABLED must be true or false")
+		}
+	}
+	if v := os.Getenv("SPEECH_SERVICE_URL"); v != "" {
+		cfg.SpeechServiceURL = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("SPEECH_SERVICE_TOKEN"); v != "" {
+		cfg.SpeechServiceToken = v
+	}
+	if v, ok := os.LookupEnv("SPEECH_TIMEOUT_MS"); ok && strings.TrimSpace(v) != "" {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("SPEECH_TIMEOUT_MS must be an integer")
+		}
+		cfg.SpeechTimeoutMS = n
+	}
+	if v, ok := os.LookupEnv("SPEECH_MAX_UPLOAD_BYTES"); ok && strings.TrimSpace(v) != "" {
+		n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil {
+			return fmt.Errorf("SPEECH_MAX_UPLOAD_BYTES must be an integer")
+		}
+		cfg.SpeechMaxUploadBytes = n
+	}
+	if v, ok := os.LookupEnv("SPEECH_MAX_INFLIGHT"); ok && strings.TrimSpace(v) != "" {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("SPEECH_MAX_INFLIGHT must be an integer")
+		}
+		cfg.SpeechMaxInflight = n
 	}
 	return nil
 }
