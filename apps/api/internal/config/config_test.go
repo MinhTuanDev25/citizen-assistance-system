@@ -2,6 +2,7 @@ package config
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -208,6 +209,146 @@ func TestLoadIngestionRequiresStorageWithoutEcho(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), secret) {
 		t.Fatalf("error echoed secret: %v", err)
+	}
+}
+
+func TestSpeechDisabledByDefault(t *testing.T) {
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("CONFIG_FILE", filepath.Join("..", "..", "configs", "local", "config.yaml"))
+	t.Setenv("DATABASE_URL", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SpeechEnabled || cfg.SpeechServiceURL != "" || cfg.SpeechServiceToken != "" {
+		t.Fatalf("speech default %+v", cfg)
+	}
+	if cfg.SpeechTimeoutMS != 130000 || cfg.SpeechMaxUploadBytes != SpeechUploadHardMaxBytes || cfg.SpeechMaxInflight != 1 {
+		t.Fatalf("speech bounds %+v", cfg)
+	}
+}
+
+func TestSpeechMaxUploadBytesBounds(t *testing.T) {
+	base := Config{
+		SpeechTimeoutMS: 130000, SpeechMaxInflight: 1, SpeechEnabled: false,
+	}
+	for _, n := range []int64{0, 1, 65535, 65536, SpeechUploadHardMaxBytes + 1} {
+		cfg := base
+		cfg.SpeechMaxUploadBytes = n
+		if err := validateSpeechConfig(cfg); err == nil {
+			t.Fatalf("%d accepted", n)
+		}
+	}
+	for _, n := range []int64{65537, SpeechUploadMinBytes, SpeechUploadHardMaxBytes} {
+		cfg := base
+		cfg.SpeechMaxUploadBytes = n
+		if err := validateSpeechConfig(cfg); err != nil {
+			t.Fatalf("%d rejected: %v", n, err)
+		}
+	}
+
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("CONFIG_FILE", filepath.Join("..", "..", "configs", "local", "config.yaml"))
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv("SPEECH_MAX_UPLOAD_BYTES", "65536")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SPEECH_MAX_UPLOAD_BYTES") {
+		t.Fatalf("env 65536: %v", err)
+	}
+	t.Setenv("SPEECH_MAX_UPLOAD_BYTES", "65537")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SpeechMaxUploadBytes != 65537 {
+		t.Fatalf("got %d", cfg.SpeechMaxUploadBytes)
+	}
+	t.Setenv("SPEECH_MAX_UPLOAD_BYTES", strconv.FormatInt(SpeechUploadHardMaxBytes, 10))
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SpeechMaxUploadBytes != SpeechUploadHardMaxBytes {
+		t.Fatalf("default hard max via env: %d", cfg.SpeechMaxUploadBytes)
+	}
+}
+
+func TestSpeechEnabledFailClosed(t *testing.T) {
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("CONFIG_FILE", filepath.Join("..", "..", "configs", "local", "config.yaml"))
+	t.Setenv("SPEECH_ENABLED", "true")
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "SPEECH_SERVICE_URL") {
+		t.Fatalf("empty url: %v", err)
+	}
+	t.Setenv("SPEECH_SERVICE_URL", "http://127.0.0.1:8090")
+	_, err = Load()
+	if err == nil || !strings.Contains(err.Error(), "SPEECH_SERVICE_TOKEN") {
+		t.Fatalf("empty token: %v", err)
+	}
+	t.Setenv("SPEECH_SERVICE_TOKEN", "speech-service-token-1")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.SpeechEnabled || cfg.SpeechServiceURL != "http://127.0.0.1:8090" {
+		t.Fatalf("%+v", cfg)
+	}
+	for _, raw := range []string{
+		"http://127.0.0.1:18090",
+		"http://127.0.0.1:8090",
+		"http://localhost:8090",
+		"http://[::1]:8090",
+	} {
+		t.Setenv("SPEECH_SERVICE_URL", raw)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+		if cfg.SpeechServiceURL != raw {
+			t.Fatalf("%s stored %s", raw, cfg.SpeechServiceURL)
+		}
+	}
+
+	rejects := map[string]string{
+		"file:///tmp/x":                   "scheme",
+		"https://speech.example.com":      "scheme",
+		"http://user:pass@127.0.0.1:8090": "credentials",
+		"http://example.com:8090":         "loopback",
+		"http://8.8.8.8:8090":             "loopback",
+		"http://10.0.0.5:8090":            "loopback",
+		"http://speech:8090":              "loopback",
+		"http://127.0.0.1:8090/v1":        "path",
+		"http://127.0.0.1:8090?x=1":       "query",
+		"http://127.0.0.1:8090#frag":      "fragment",
+	}
+	for raw, want := range rejects {
+		t.Setenv("SPEECH_SERVICE_URL", raw)
+		_, err := Load()
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: want %q got %v", raw, want, err)
+		}
+	}
+
+	secret := "speech-token-secret-xx"
+	t.Setenv("SPEECH_SERVICE_URL", "http://127.0.0.1:8090")
+	t.Setenv("SPEECH_SERVICE_TOKEN", secret)
+	t.Setenv("SPEECH_TIMEOUT_MS", "0")
+	_, err = Load()
+	if err == nil || strings.Contains(err.Error(), secret) {
+		t.Fatalf("timeout leaked: %v", err)
+	}
+}
+
+func TestSpeechProdRejectsPlaceholderToken(t *testing.T) {
+	cfg := Config{
+		Env: "prod", SpeechEnabled: true,
+		DatabaseURL:        "postgres://u:p@h:5432/db?sslmode=require",
+		SpeechServiceURL:   "http://127.0.0.1:8090",
+		SpeechServiceToken: "local-dev-speech-token",
+		SpeechTimeoutMS:    130000, SpeechMaxUploadBytes: SpeechUploadHardMaxBytes, SpeechMaxInflight: 1,
+	}
+	if err := validateProduction(cfg); err == nil || !strings.Contains(err.Error(), "SPEECH_SERVICE_TOKEN") {
+		t.Fatalf("%v", err)
 	}
 }
 

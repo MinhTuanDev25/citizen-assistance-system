@@ -31,6 +31,10 @@ const (
 	// The request ceiling includes this so a file of exactly the hard max
 	// is not rejected as 413.
 	DocumentUploadMultipartOverhead = 256 << 10
+	// Speech WAV uploads are capped at 10 MiB of HTTP body including
+	// multipart overhead, matching SPEECH_MAX_UPLOAD_BYTES.
+	SpeechUploadHardMax     = 10 << 20
+	SpeechMultipartOverhead = 256 << 10
 )
 
 var errPayloadTooLarge = errors.New("request body exceeds size limit")
@@ -105,12 +109,19 @@ func SensitivePath(path string) bool {
 	if strings.Contains(p, "/admin/documents") {
 		return true
 	}
+	if strings.Contains(p, "/speech/") {
+		return true
+	}
 	return false
 }
 
 func requestBodyLimit(path string) int64 {
-	if strings.Contains(strings.ToLower(path), "/admin/documents") {
+	lower := strings.ToLower(path)
+	if strings.Contains(lower, "/admin/documents") {
 		return DocumentUploadHardMax + DocumentUploadMultipartOverhead
+	}
+	if strings.Contains(lower, "/speech/translate") {
+		return SpeechUploadHardMax + SpeechMultipartOverhead
 	}
 	return MaxRequestBodyBytes
 }

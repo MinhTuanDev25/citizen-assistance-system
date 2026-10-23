@@ -7,6 +7,7 @@ import (
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/domain"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/procedure"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/session"
+	speechapi "github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/speech"
 	"github.com/gin-gonic/gin"
 )
 
@@ -19,6 +20,7 @@ func MapRoutes(
 	sessionHandler *session.Handler,
 	authHandler *authapi.Handler,
 	documentHandler *documentapi.Handler,
+	speechHandler *speechapi.Handler,
 	optionalJWT gin.HandlerFunc,
 	requireJWT gin.HandlerFunc,
 	requireAdmin gin.HandlerFunc,
@@ -66,6 +68,13 @@ func MapRoutes(
 			sessions.GET("/:sessionId/messages", sessionHandler.ListMessages)
 			sessions.POST("/:sessionId/messages", sessionHandler.CreateMessage)
 			sessions.POST("/:sessionId/turns", sessionHandler.Turn)
+			if speechHandler != nil {
+				sessions.POST("/:sessionId/speech/translate", speechHandler.Translate)
+			}
+		}
+
+		if speechHandler != nil {
+			v1.POST("/speech/translate", speechHandler.GoneLegacy)
 		}
 
 		adminProcs := v1.Group("/admin/procedures")

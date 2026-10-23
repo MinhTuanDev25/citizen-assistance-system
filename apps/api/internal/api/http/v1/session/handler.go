@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -17,13 +18,25 @@ import (
 
 const HeaderGuestToken = "X-Guest-Token"
 
+// SessionLookup is the session persistence used by Create / Turn / messages.
+// *repository.SessionRepo implements it. The authorization rule is unchanged:
+// JWT user_id or guest token must own the session. Turn does not compare xa_id
+// against the deployment commune pin.
+type SessionLookup interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*repository.Session, error)
+	GetByGuestToken(ctx context.Context, guestToken string) (*repository.Session, error)
+	CreateForUser(ctx context.Context, xaID string, userID uuid.UUID) (*repository.Session, error)
+	CreateGuest(ctx context.Context, xaID, guestToken string) (*repository.Session, error)
+	ListMessages(ctx context.Context, sessionID uuid.UUID, limit int) ([]repository.Message, error)
+}
+
 type Handler struct {
-	Sessions *repository.SessionRepo
+	Sessions SessionLookup
 	Communes *repository.CommuneRepo
 	Turns    *chat.Service
 }
 
-func NewHandler(sessions *repository.SessionRepo, communes *repository.CommuneRepo, turns *chat.Service) *Handler {
+func NewHandler(sessions SessionLookup, communes *repository.CommuneRepo, turns *chat.Service) *Handler {
 	return &Handler{Sessions: sessions, Communes: communes, Turns: turns}
 }
 

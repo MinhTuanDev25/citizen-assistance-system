@@ -14,6 +14,7 @@ import (
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/domain"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/procedure"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/session"
+	speechapi "github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/api/http/v1/speech"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/auth"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/chat"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/config"
@@ -25,6 +26,7 @@ import (
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/middleware"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/repository"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/retrieve"
+	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/speech"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/storage"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -147,6 +149,27 @@ func NewWithIndexWorker(logger *slog.Logger, pool *pgxpool.Pool, cfg config.Conf
 		procedureHandler.Drafting.Activation = procedureHandler.Activation
 	}
 
+	speechHandler := speechapi.NewHandler(speechapi.Handler{
+		Enabled:        cfg.SpeechEnabled,
+		Sessions:       sessionRepo,
+		Audit:          &speech.Store{Pool: pool},
+		MaxUploadBytes: speech.MaxAudioBytes(cfg.SpeechMaxUploadBytes),
+		MaxBodyBytes:   cfg.SpeechMaxUploadBytes,
+		MaxInflight:    cfg.SpeechMaxInflight,
+		Logger:         logger,
+	})
+	if cfg.SpeechEnabled {
+		client := speech.NewClient(cfg.SpeechServiceURL, time.Duration(cfg.SpeechTimeoutMS)*time.Millisecond)
+		client.ServiceToken = cfg.SpeechServiceToken
+		client.MaxUpstreamBody = cfg.SpeechMaxUploadBytes
+		speechHandler.Client = client
+		logger.Info("speech translation enabled",
+			"timeout_ms", cfg.SpeechTimeoutMS,
+			"max_upload_bytes", cfg.SpeechMaxUploadBytes,
+			"max_inflight", cfg.SpeechMaxInflight,
+		)
+	}
+
 	api := r.Group("/api")
 	v1.MapRoutes(
 		api,
@@ -156,6 +179,7 @@ func NewWithIndexWorker(logger *slog.Logger, pool *pgxpool.Pool, cfg config.Conf
 		sessionHandler,
 		authHandler,
 		documentHandler,
+		speechHandler,
 		middleware.OptionalJWT(tokens),
 		middleware.RequireJWT(tokens),
 		middleware.RequireAdmin(tokens),

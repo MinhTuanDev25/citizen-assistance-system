@@ -1134,6 +1134,32 @@ paths:
       summary: Get commune by id
       tags:
       - communes
+  /api/v1/documents/{id}/content:
+    get:
+      parameters:
+      - description: Document id
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/pdf
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: Open a published PDF for citizen/guest citation viewing
+      tags:
+      - documents
   /api/v1/domains:
     get:
       parameters:
@@ -1530,6 +1556,83 @@ paths:
       summary: Deprecated — use POST /turns
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/speech/translate:
+    post:
+      consumes:
+      - multipart/form-data
+      description: 'Authorizes the session from the URL, then forwards WAV to the
+        internal C0 Speech API. Does not create a chat turn. Disabled unless SPEECH_ENABLED=true.
+        Audit writes are best-effort: a successful translation may still return HTTP
+        200 if the audit INSERT fails.'
+      parameters:
+      - description: Conversation session UUID
+        in: path
+        name: sessionId
+        required: true
+        type: string
+      - description: Bearer access token
+        in: header
+        name: Authorization
+        type: string
+      - description: Guest token from session create
+        in: header
+        name: X-Guest-Token
+        type: string
+      - description: Correlation UUID
+        in: header
+        name: X-Request-ID
+        type: string
+      - description: 16 kHz mono WAV
+        in: formData
+        name: audio
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "410":
+          description: Gone
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+        "504":
+          description: Gateway Timeout
+          schema:
+            $ref: '#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope'
+      summary: Translate Bahnar speech to Vietnamese
+      tags:
+      - speech
   /api/v1/sessions/{sessionId}/turns:
     post:
       consumes:
