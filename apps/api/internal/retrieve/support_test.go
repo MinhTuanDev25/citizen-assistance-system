@@ -3,11 +3,11 @@ package retrieve
 import "testing"
 
 const (
-	g3Doc    = "60b677df-acc0-4198-a3b6-a919c01482a1"
-	g3Gen    = "e2ad49da-4db7-4e18-90e3-c2f0bb358940"
-	g3Clone  = "21125806-0a32-4e84-a866-d497859be2fe"
-	g2Gen    = "06679d02-3a43-4831-8dde-82799fc9b4a4"
-	gcsSHA   = "410276e9993151a4f2ff17e5e8a3ea7b5cdc6abd42faf6ded0ac07cf57e8b17c"
+	g3Doc   = "60b677df-acc0-4198-a3b6-a919c01482a1"
+	g3Gen   = "e2ad49da-4db7-4e18-90e3-c2f0bb358940"
+	g3Clone = "21125806-0a32-4e84-a866-d497859be2fe"
+	g2Gen   = "06679d02-3a43-4831-8dde-82799fc9b4a4"
+	gcsSHA  = "410276e9993151a4f2ff17e5e8a3ea7b5cdc6abd42faf6ded0ac07cf57e8b17c"
 
 	stmtBirth    = "Giấy chứng sinh (nếu có) hoặc giấy tờ thay thế theo hướng dẫn xã"
 	stmtIDParent = "CCCD/hộ chiếu của cha và/hoặc mẹ"

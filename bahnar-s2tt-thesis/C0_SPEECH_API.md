@@ -5,7 +5,7 @@ Vietnamese MT pipeline. Serving software, not a new research experiment.
 
 Local tests on this machine used a fake runtime. **RunPod GPU API and real
 audio HTTP inference are UNVERIFIED until the operator runs
-`scripts/phase7/RUNPOD_SPEECH_API.md`.**
+`docs/RUNPOD.md`.**
 
 ## Architecture
 
@@ -96,8 +96,8 @@ bodies never include traces or filesystem paths.
 | `tests/test_c0_speech.py` | Unit + HTTP tests with a fake cascade |
 | `requirements-c0-speech-api.txt` | FastAPI extras on top of C0 inference pins |
 | `configs/c0_speech_api.example.env` | Env template (no real paths/secrets) |
-| `scripts/phase7/run_speech_api.sh` | One-worker startup |
-| `scripts/phase7/RUNPOD_SPEECH_API.md` | Operator GPU smoke commands |
+| `scripts/runpod/run_speech_api.sh` | One-worker startup |
+| `docs/RUNPOD.md` | Operator GPU smoke commands |
 
 ## Local verification (this machine)
 

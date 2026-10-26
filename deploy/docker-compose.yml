@@ -20,6 +20,8 @@ name: citizen-assistance
 #     INDEX_MODE=pipeline EMBEDDING_PROVIDER=fake OCR_PROVIDER=fake \
 #       docker compose --profile app --profile storage --profile ai --profile qdrant up --build
 #   full       app + minio. Still keyword-only unless profile ai is added.
+#   speech     SSH tunnel sidecar to the RunPod Speech API (needs .env.speech.local).
+#   Everything at once (recommended): ./scripts/up.sh  or  make up
 
 services:
   postgres:
@@ -232,7 +234,45 @@ services:
     profiles:
       - qdrant
 
+  speech-tunnel:
+    # SSH forward to the RunPod Speech API inside the api network namespace,
+    # so Go reaches it at its own loopback http://127.0.0.1:18090.
+    # Secrets live in deploy/.env.speech.local (see .env.speech.example).
+    # Recreate this service whenever api is recreated (deploy/scripts/up.sh does).
+    build:
+      context: ./speech-tunnel
+    image: cas-speech-tunnel:local
+    network_mode: "service:api"
+    environment:
+      RUNPOD_SSH_HOST: ${RUNPOD_SSH_HOST:-}
+      RUNPOD_SSH_PORT: ${RUNPOD_SSH_PORT:-}
+      RUNPOD_SSH_USER: ${RUNPOD_SSH_USER:-root}
+      RUNPOD_SPEECH_PORT: ${RUNPOD_SPEECH_PORT:-8090}
+      SPEECH_TUNNEL_LOCAL_PORT: "18090"
+    volumes:
+      - type: bind
+        source: ${RUNPOD_SSH_KEY_PATH:-/dev/null}
+        target: /run/secrets/runpod_ssh_key
+        read_only: true
+        bind:
+          create_host_path: false
+      - speechtunnelstate:/state
+    depends_on:
+      api:
+        condition: service_started
+    # Unhealthy = tunnel down or RunPod Speech not answering (healthz needs no token).
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://127.0.0.1:18090/healthz"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    profiles:
+      - speech
+
 volumes:
   pgdata:
   miniodata:
   qdrantdata:
+  speechtunnelstate:

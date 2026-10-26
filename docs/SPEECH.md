@@ -1,4 +1,8 @@
-# Phase 7 Step 7.6 — Citizen Bahnar speech (frontend)
+# Bahnar Speech — citizen flow (Phase 7)
+
+How Bahnar audio becomes a confirmed Vietnamese Chat Turn. Running the C0
+Speech API on the GPU pod and the tunnel is in [`RUNPOD.md`](RUNPOD.md).
+Speech API contract: [`bahnar-s2tt-thesis/C0_SPEECH_API.md`](../bahnar-s2tt-thesis/C0_SPEECH_API.md).
 
 ## 1. What this step implements
 
@@ -140,53 +144,34 @@ speech success. The composer, quick-procedure chips, and
 
 ## 9. Development environment
 
-Default Vite proxy: `/api` → `http://127.0.0.1:8080` (`make api-run` /
-`make web-run`).
-
-Docker API on `:8082` may have `SPEECH_ENABLED=false`. The verified
-Speech-enabled native API was `:8083`.
-
-Override with existing env, not hardcoded hosts in browser code:
-
-```bash
-VITE_API_PROXY=http://127.0.0.1:8083
-```
-
-`apps/web/vite.config.js` reads `process.env.VITE_API_PROXY`.
+The supported local environment is the Docker stack: one URL for chat,
+admin, and Speech (`http://127.0.0.1:${WEB_PORT}`, 5174 with the current
+`deploy/.env`). nginx in the web image proxies `/api/` to the `api` container.
 
 ## 10. Local frontend commands
 
 ```bash
 cd apps/web
 npm install
-npm run dev          # http://localhost:5173 , proxy → :8080
 npm test             # vitest, happy-dom
-npm run build
 npm run test:ci      # vitest + dual production builds + bundle check
 ```
 
-There is no separate TypeScript / ESLint script in this package
-(JavaScript + Vite).
+`npm run dev` (Vite, `:5173`, proxy `/api` → `VITE_API_PROXY`, default
+`http://127.0.0.1:8080`) is only for UI work against an API you start
+yourself. There is no separate TypeScript / ESLint script in this package.
 
-## 11. Connect the frontend to native Go on :8083
+## 11. Run the whole stack (Docker)
 
 ```bash
-# terminal 1 — Go with Speech + tunnel already on 18090
-cd apps/api
-SPEECH_ENABLED=true \
-SPEECH_SERVICE_URL=http://127.0.0.1:18090 \
-SPEECH_SERVICE_TOKEN='same-as-python' \
-API_ADDR=:8083 \
-APP_ENV=local go run ./cmd/api
-
-# terminal 2
-cd apps/web
-VITE_API_PROXY=http://127.0.0.1:8083 npm run dev
+cp deploy/.env.speech.example deploy/.env.speech.local   # fill token + RunPod SSH
+make up                                                  # deploy/scripts/up.sh
 ```
 
-The browser still calls relative `/api/...`. Restart Vite after changing
-`VITE_API_PROXY`. Apply migration `000021` on the database that process
-uses.
+The `speech-tunnel` sidecar shares the api container's network namespace and
+forwards `127.0.0.1:18090` to RunPod `127.0.0.1:8090`, so Go keeps the
+loopback-only `SPEECH_SERVICE_URL` rule. Its health check calls `/healthz`
+through the tunnel; see [`RUNPOD.md`](RUNPOD.md) §5.
 
 ## 12. Automated tests
 
@@ -240,7 +225,7 @@ Automated tests mock Go. They do **not** prove:
 - a physical microphone or Safari/Chrome permission UX
 - live XLS-R / BARTpho inference
 - tokenizer parity or research provenance
-- production Docker-to-Speech networking (Step 7.5 M3)
+- the RunPod tunnel (covered by the `speech-tunnel` health check)
 
 When RunPod is stopped, the UI must show the Go error
 (`SPEECH_UNAVAILABLE` / timeout), never a fake transcript. If the
@@ -249,25 +234,23 @@ without recording again. Invalid / oversized WAV errors do not offer
 Retry; the citizen must choose another file. **Hủy yêu cầu dịch** only
 aborts the browser HTTP request.
 
-## 15. Live RunPod E2E still required
+## 15. Live RunPod E2E
 
-When the pod and tunnel are up:
+Operator-confirmed (not re-run by automation):
 
-1. Point Vite at native Go `:8083` as above.
-2. Upload a known Bahnar WAV (the 7.5 fixture if available).
-3. Confirm HTTP 200, `model_id=c0_cascaded`, nonempty ASR + Việt.
-4. Confirm the Chat Turn uses the edited Vietnamese text.
-5. Confirm PostgreSQL `speech_translation_requests` audit `SUCCESS`.
-6. Repeat with microphone capture of spoken Bahnar.
+- Step 7.6 on Mac + RunPod: upload WAV, microphone, cancel, silence →
+  `SPEECH_NO_SPEECH`, confirm → Chat Turn, audit `SUCCESS` with chat link.
+- 2026-10-26: Docker stack (`make up`) → `speech-tunnel` → RunPod, real
+  translation.
 
-Until that run happens:
-`STEP76_BROWSER_MICROPHONE_VERIFIED=NOT_VERIFIED`
-`STEP76_REAL_RUNPOD_E2E_VERIFIED=NOT_VERIFIED`
+To repeat: upload a known Bahnar WAV on the Docker URL, check HTTP 200,
+`model_id=c0_cascaded`, nonempty ASR and Vietnamese, then confirm the Chat
+Turn uses the edited text and `speech_translation_requests` has `SUCCESS`.
 
 ## 16. Known limitations / deferred
 
-- Production Docker API → Speech service networking remains a 7.5 M3
-  go-live blocker. Step 7.6 does not change it.
+- `deploy/docker-compose.production.yml` (VPS reference) keeps Speech off;
+  the planned single-pod go-live is in [`RUNPOD.md`](RUNPOD.md) §7.
 - `ScriptProcessor` is deprecated; it is used for broad-browser capture
   without extra dependencies. AudioWorklet can replace it later.
 - Frontend WAV ceiling is `SPEECH_MAX_WAV_BYTES = 10 MiB − 64 KiB`

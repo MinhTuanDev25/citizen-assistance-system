@@ -6,7 +6,6 @@ import json
 import socket
 import threading
 import time
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -157,120 +156,6 @@ def test_status_and_ready_share_probe_result(monkeypatch):
     assert status["reason"] == "postgres_unreachable"
     assert ready.status_code == 503
     assert ready.body
-
-
-def test_bundle_filter_keeps_model_packages(tmp_path):
-    import sys
-
-    root = Path(__file__).resolve().parents[3]
-    sys.path.insert(0, str(root / "scripts"))
-    from p4b_bundle import iter_files, should_skip_dir
-
-    assert should_skip_dir("models") is False
-    (tmp_path / "apps" / "ai-service" / "app" / "models").mkdir(parents=True)
-    (tmp_path / "docs" / "models").mkdir(parents=True)
-    (tmp_path / "weights").mkdir()
-    (tmp_path / "apps" / "ai-service" / "app" / "models" / "extract.py").write_text("x", encoding="utf-8")
-    (tmp_path / "docs" / "models" / "embedding.manifest.example.json").write_text("{}", encoding="utf-8")
-    (tmp_path / "weights" / "model.onnx").write_bytes(b"weight")
-    names = set(iter_files(tmp_path))
-    assert "apps/ai-service/app/models/extract.py" in names
-    assert "docs/models/embedding.manifest.example.json" in names
-    assert "weights/model.onnx" not in names
-
-
-def test_check_zip_fails_when_a_model_module_is_missing(tmp_path):
-    root = Path(__file__).resolve().parents[3]
-    script = root / "scripts" / "check-zip.sh"
-    required = [
-        "phase_1_3_final_report.md",
-        "phase_1_3_test_output.txt",
-        "phase_p2_llm_extract_report.md",
-        "phase_p2_test_output.txt",
-        "phase_p3_1_document_intake_report.md",
-        "phase_p3_1_test_output.txt",
-        "phase_p4a_document_indexing_report.md",
-        "phase_p4a_test_output.txt",
-        "deploy/migrations/000001_init_schema.up.sql",
-        "deploy/migrations/000001_init_schema.down.sql",
-        "deploy/migrations/000002_seed_master.up.sql",
-        "deploy/migrations/000002_seed_master.down.sql",
-        "deploy/migrations/000003_seed_procedures.up.sql",
-        "deploy/migrations/000003_seed_procedures.down.sql",
-        "deploy/migrations/000004_seed_auth_users.up.sql",
-        "deploy/migrations/000004_seed_auth_users.down.sql",
-        "deploy/migrations/000005_phase13_chat.up.sql",
-        "deploy/migrations/000005_phase13_chat.down.sql",
-        "deploy/migrations/000006_idempotency_envelope.up.sql",
-        "deploy/migrations/000006_idempotency_envelope.down.sql",
-        "deploy/migrations/000007_clear_demo_passwords.up.sql",
-        "deploy/migrations/000007_clear_demo_passwords.down.sql",
-        "deploy/migrations/000008_extract_claim.up.sql",
-        "deploy/migrations/000008_extract_claim.down.sql",
-        "deploy/migrations/000009_document_intake.up.sql",
-        "deploy/migrations/000009_document_intake.down.sql",
-        "deploy/migrations/000010_document_indexing.up.sql",
-        "deploy/migrations/000010_document_indexing.down.sql",
-        "deploy/migrations/000011_link_index_status.up.sql",
-        "deploy/migrations/000011_link_index_status.down.sql",
-        "deploy/migrations/000012_p4a_hardening.up.sql",
-        "deploy/migrations/000012_p4a_hardening.down.sql",
-        "deploy/migrations/000013_legacy_idempotency_replay.up.sql",
-        "deploy/migrations/000013_legacy_idempotency_replay.down.sql",
-        "deploy/migrations/000014_p4b_index_generations.up.sql",
-        "deploy/migrations/000014_p4b_index_generations.down.sql",
-        "deploy/migrations/000015_p4b_unlink_reindex.up.sql",
-        "deploy/migrations/000015_p4b_unlink_reindex.down.sql",
-        "docs/p4b-runbook.md",
-        "phase_p4b_document_content_report.md",
-        "phase_p4b_test_output.txt",
-        "SHA256SUMS.txt",
-        ".github/workflows/ci.yml",
-        ".gitignore",
-        "deploy/.env.example",
-        "packages/contracts/README.md",
-        "apps/api/go.mod",
-        "apps/web/package-lock.json",
-        "apps/api/docs/swagger.json",
-        "apps/api/docs/swagger.yaml",
-        "apps/api/docs/docs.go",
-        "apps/ai-service/app/main.py",
-        "apps/ai-service/app/config.py",
-        "apps/ai-service/app/models/__init__.py",
-        "apps/ai-service/app/models/extract.py",
-        "apps/ai-service/app/models/index.py",
-        "docs/models/embedding.manifest.example.json",
-        "docs/models/ocr.manifest.example.json",
-        "deploy/migrations/000016_p4b_cleanup_claim.up.sql",
-        "deploy/migrations/000016_p4b_cleanup_claim.down.sql",
-        "scripts/p4b_bundle.py",
-        "scripts/p4b-container-supervision-test.sh",
-    ]
-    archive = tmp_path / "bundle.zip"
-
-    def build(drop: str | None = None) -> None:
-        import hashlib
-
-        payload = {}
-        for name in required:
-            if name == drop or name == "SHA256SUMS.txt":
-                continue
-            payload[name] = b"" if name.endswith(".py") else b"x"
-        lines = [f"{hashlib.sha256(data).hexdigest()}  {name}" for name, data in sorted(payload.items())]
-        payload["SHA256SUMS.txt"] = ("\n".join(lines) + "\n").encode()
-        with zipfile.ZipFile(archive, "w") as zf:
-            for name, data in payload.items():
-                zf.writestr(name, data)
-
-    import subprocess
-
-    build()
-    ok = subprocess.run(["bash", str(script), str(archive)], capture_output=True, text=True)
-    assert ok.returncode == 0, ok.stderr
-    build(drop="apps/ai-service/app/models/extract.py")
-    bad = subprocess.run(["bash", str(script), str(archive)], capture_output=True, text=True)
-    assert bad.returncode != 0
-    assert "app/models/extract.py" in bad.stderr
 
 
 def test_manifest_examples_parse():

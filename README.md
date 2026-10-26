@@ -1,74 +1,63 @@
 # citizen-assistance-system
 
-Monorepo for two tracks that share this repository:
+Monorepo for two tracks:
 
-1. **Bahnar → Vietnamese speech-to-text translation (thesis)** — RQ1 cascaded vs direct S2TT, under [`bahnar-s2tt-thesis/`](bahnar-s2tt-thesis/).
-2. **Citizen assistance chatbot (application)** — commune-level administrative procedures, under `apps/`.
-
-The thesis is the research contribution (RQ1/RQ2). The chatbot is the **application artifact** in proposal §4: hộ tịch, slot workflow, RAG citations, Bahnar speech → Vietnamese text. It does not replace the speech-translation experiments.
+1. **Citizen Assistance System (Software V1)**: commune-level administrative
+   procedure assistant for Chư Sê. Vietnamese chat with a Go Decision Engine,
+   admin PDF ingestion and indexing, AI-drafted procedure definitions with human
+   review, RAG citations, and Bahnar speech → Vietnamese via the thesis C0 model.
+2. **Bahnar → Vietnamese speech translation thesis (RQ1/RQ2)** under
+   [`bahnar-s2tt-thesis/`](bahnar-s2tt-thesis/README.md). The application only
+   uses its `src/c0_speech` inference API.
 
 ## Layout
 
 ```text
-citizen-assistance-system/
-├── bahnar-s2tt-thesis/   # RQ1 notebooks, src, configs, tests
-├── apps/
-│   ├── api/              # Go + Gin — auth, sessions, Decision Engine, admin
-│   ├── ai-service/       # Python — extract, mock index (P4A). Embed and speech later
-│   └── web/              # React + JS — Citizen Portal + Admin Portal
-├── packages/contracts/   # OpenAPI / shared schemas
-├── deploy/               # Docker Compose, nginx, env examples
-├── docs/                 # Phase-0 design + ADRs (chatbot)
-└── .github/workflows/
+apps/
+  api/          Go (Gin): auth, sessions, Chat Turn, Decision Engine, admin, speech route
+  ai-service/   Python (FastAPI): extract, draft definition, index pipeline, retrieve
+  web/          React (Vite): Citizen Portal + Admin Portal
+bahnar-s2tt-thesis/   research code, configs, tests; C0 Speech API (src/c0_speech)
+deploy/
+  docker-compose.yml             local stack (main workflow)
+  docker-compose.p4b-test.yml    isolated stack for CI storage tests
+  docker-compose.production.yml  VPS reference (CI-validated, Speech off)
+  migrations/                    golang-migrate SQL (000001–000022)
+  scripts/                       up.sh, migrate.sh
+  speech-tunnel/                 SSH tunnel sidecar to the RunPod Speech API
+docs/           STATUS, RUNPOD, SPEECH, p4b-runbook, phase-0 design + ADRs, archive/
+scripts/        CI/ops helpers; runpod/ for scripts run on the GPU pod
 ```
 
-## Thesis (RQ1)
+## Run locally
 
-Compare a **cascaded ASR + MT** system (C0) with a **direct S2TT** system (D0) on `cuong06/Bahnar_Vietnamese`.
+Requires Docker. Configuration lives in `deploy/.env` (copy from
+`deploy/.env.example`). Speech additionally needs `deploy/.env.speech.local`
+(copy from `deploy/.env.speech.example`); without it everything else runs and
+Speech is off.
 
-| Notebook | Role | Status |
-|----------|------|--------|
-| 01 | Audit + locked RQ1 splits | Implemented |
-| 02 | ASR preflight / smoke | Implemented |
-| 03 | Cascaded ASR (Bahnar speech → Bahnar text) | Implemented |
-| 04 | Cascaded MT (Bahnar text → Vietnamese) | Implemented |
-| 05 | Direct S2TT (Bahnar speech → Vietnamese) | Implemented |
-| 06 | Frozen-test C0 vs D0 evaluation | Placeholder |
+```bash
+make up      # build + start: postgres, migrate, api, web, ai-service, minio, qdrant, speech-tunnel
+make logs
+make down    # stops containers, keeps data volumes
+```
 
-Start in [`bahnar-s2tt-thesis/README.md`](bahnar-s2tt-thesis/README.md). Do not jump to full train: `prepare → pilot → resume_test_a → restart kernel → resume_test_b → train → evaluate`.
+Open the web URL printed by `make up` (`http://127.0.0.1:5174` with the current
+`deploy/.env`). Admin screens need an ADMIN account.
 
-## Chatbot (application)
+Tests: `go test ./...` in `apps/api`, `npm run test:ci` in `apps/web`,
+`pytest` in `apps/ai-service`. CI: [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
-| Layer | Tech |
-|-------|------|
-| Frontend | React + JavaScript |
-| Backend | Go (Gin) |
-| AI | Python (FastAPI) |
-| DB | PostgreSQL. P4B vectors are in Qdrant, dimension 384, not the unused pgvector column |
-| Files | MinIO (S3-compatible). Local stack uses MinIO. RunPod S3 is not configured here |
-| Deploy | Docker Compose + reverse proxy |
+## Documentation
 
-- A→Z plan: [`docs/IMPLEMENTATION-PLAN-A-TO-Z.md`](docs/IMPLEMENTATION-PLAN-A-TO-Z.md)
-- Phase 0: [`docs/phase-0/00-README.md`](docs/phase-0/00-README.md)
-- Local DB: [`deploy/README.md`](deploy/README.md) — `make db-migrate`
-
-## Status
-
-**Thesis**
-
-- [x] Notebooks 01–04 (split, ASR preflight, ASR, MT)
-- [x] Notebook 05 Direct S2TT D0 (code + contracts; RunPod prepare still needs NB03 CSV pins)
-- [ ] Notebook 06 frozen-test C0 vs D0
-
-**Chatbot**
-
-- [x] Monorepo + Postgres/pgvector + MinIO compose
-- [x] Go chat turns + Decision Engine (seed hộ tịch; keyword extract = fallback)
-- [x] Citizen web (text)
-- [x] P2 `POST /v1/extract` LLM (optional; keyword fallback when `AI_EXTRACT_ENABLED` is off)
-- [x] P3.1 admin PDF upload, list, detail, and download (`ADMIN_INGESTION_ENABLED` + `VITE_ADMIN_INGESTION`, both default off)
-- [x] P4A indexing foundation: per-link status, mock index, retry. No embed, RAG, or activate. Run: `cd deploy && ADMIN_INGESTION_ENABLED=true VITE_ADMIN_INGESTION=true ADMIN_INDEXING_ENABLED=true VITE_ADMIN_INDEXING=true docker compose --profile app --profile storage --profile ai up --build`
-- [x] P4B content pipeline: native text, OCR adapter, chunks, Qdrant. No retrieval or activate. Run: `cd deploy && ADMIN_INGESTION_ENABLED=true VITE_ADMIN_INGESTION=true ADMIN_INDEXING_ENABLED=true VITE_ADMIN_INDEXING=true INDEX_MODE=pipeline EMBEDDING_PROVIDER=fake OCR_PROVIDER=fake INDEX_PIPELINE_TIMEOUT_SECONDS=120 INDEX_CLAIM_TTL_SECONDS=180 docker compose --profile app --profile storage --profile ai --profile qdrant up --build`
-- [ ] Admin embed → activate
-- [ ] RAG citations + Bahnar speech in Python
-- [ ] Docs Phase 0 aligned to proposal (2026-09-28)
+| Topic | File |
+|---|---|
+| What is done, evidence level, what remains | [`docs/STATUS.md`](docs/STATUS.md) |
+| Bahnar Speech citizen flow | [`docs/SPEECH.md`](docs/SPEECH.md) |
+| RunPod: Speech API, tunnel, go-live plan | [`docs/RUNPOD.md`](docs/RUNPOD.md) |
+| PDF indexing models and pipeline | [`docs/p4b-runbook.md`](docs/p4b-runbook.md) |
+| Local database, Compose details | [`deploy/README.md`](deploy/README.md) |
+| VPS production reference | [`deploy/README.production.md`](deploy/README.production.md) |
+| Original design, ADRs, seed procedures | [`docs/phase-0/00-README.md`](docs/phase-0/00-README.md) |
+| Historical acceptance reports | [`docs/archive/`](docs/archive/) |
+| Per-app details | `apps/api/README.md`, `apps/ai-service/README.md`, `apps/web/README.md` |

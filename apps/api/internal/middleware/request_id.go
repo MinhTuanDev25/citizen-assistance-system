@@ -45,7 +45,6 @@ func RequestID() gin.HandlerFunc {
 		rid := strings.TrimSpace(c.GetHeader(HeaderRequestID))
 		if rid == "" {
 			rid = uuid.NewString()
-			c.Set("request_id_generated", true)
 		}
 		c.Set(ContextRequestID, rid)
 		c.Writer.Header().Set(HeaderRequestID, rid)
@@ -63,13 +62,6 @@ func GetRequestID(c *gin.Context) string {
 	return ""
 }
 
-// RequestIDWasGenerated reports whether middleware minted the request id.
-func RequestIDWasGenerated(c *gin.Context) bool {
-	v, _ := c.Get("request_id_generated")
-	b, _ := v.(bool)
-	return b
-}
-
 // LoggerFromContext returns request-scoped logger, or fallback.
 func LoggerFromContext(c *gin.Context, fallback *slog.Logger) *slog.Logger {
 	if v, ok := c.Get(ContextLogger); ok {
@@ -78,23 +70,6 @@ func LoggerFromContext(c *gin.Context, fallback *slog.Logger) *slog.Logger {
 		}
 	}
 	return fallback
-}
-
-type bodyLogWriter struct {
-	gin.ResponseWriter
-	body *bytes.Buffer
-}
-
-func (w *bodyLogWriter) Write(b []byte) (int, error) {
-	if w.body != nil && w.body.Len() < maxBodyLogBytes {
-		remain := maxBodyLogBytes - w.body.Len()
-		if len(b) > remain {
-			_, _ = w.body.Write(b[:remain])
-		} else {
-			_, _ = w.body.Write(b)
-		}
-	}
-	return w.ResponseWriter.Write(b)
 }
 
 // SensitivePath reports routes whose bodies must never be read or logged.

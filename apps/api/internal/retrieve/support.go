@@ -10,8 +10,8 @@ import (
 var supportMapJSON []byte
 
 type supportMapFile struct {
-	Schema  string          `json:"schema"`
-	Entries []supportEntry  `json:"entries"`
+	Schema  string         `json:"schema"`
+	Entries []supportEntry `json:"entries"`
 }
 
 type supportEntry struct {

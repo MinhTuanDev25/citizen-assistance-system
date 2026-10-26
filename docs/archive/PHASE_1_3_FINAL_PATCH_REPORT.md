@@ -33,7 +33,7 @@ PRODUCTION_DEPLOYMENT=NOT_RUN
 | `apps/ai-service/tests/test_p4b_services.py` | `put_object` và `INSERT` nằm trước `try` | Object được đăng ký ngay sau upload. Row và point được đăng ký ngay sau commit, trước `run_pipeline`. Mọi connection của test đi qua `connect_test_database` | Hai lần storage integration, số point không tăng |
 | `apps/ai-service/tests/test_p4b_isolation.py` | Chưa có regression cho env override và fault injection | Chứng minh URL chưa khóa bị `PGHOSTADDR=127.0.0.2` và service file `hostaddr=127.0.0.3` đổi đích. Guard từ chối các biến đó. URL đã khóa vẫn ra `127.0.0.1:5434` | 10 passed, exit 0 |
 | `docs/p4b-runbook.md` | Runbook chỉ mô tả chặn query string | Thêm contract chặn biến môi trường libpq và `hostaddr` đã khóa | Không phải test |
-| `docs/PHASE_1_3_ISOLATION_FINAL_REPORT.md` | Báo cáo vòng trước chưa biết hai finding này | Thêm ghi chú trỏ sang báo cáo này. Số liệu vòng DSN query, cổng loopback và cleanup generation được giữ nguyên | Không phải test |
+| `docs/archive/PHASE_1_3_ISOLATION_FINAL_REPORT.md` | Báo cáo vòng trước chưa biết hai finding này | Thêm ghi chú trỏ sang báo cáo này. Số liệu vòng DSN query, cổng loopback và cleanup generation được giữ nguyên | Không phải test |
 
 Query string cũ vẫn bị chặn: `host`, `hostaddr`, `port`, `dbname`, `service`, `servicefile`, `sslmode` lặp, nhiều host và Unix socket. Thiếu cấu hình và cấu hình production-like vẫn fail closed. Các unit test này không mở kết nối tới database development.
 
@@ -93,4 +93,4 @@ Collection `knowledge_chunks` không tồn tại trên Qdrant test. Các point `
 
 Giới hạn còn lại, không thuộc hai finding này: user Postgres của stack test vẫn là `cas` do image tạo. Phạm vi của nó là instance và DSN đã khóa, chưa phải role bị cắt quyền. Production, RunPod S3 và so sánh FP32/INT8 vẫn `NOT_RUN`.
 
-URL test không có query string bị `lock_database_url()` ghép `&hostaddr` sai. Lỗi đó được sửa ở vòng sau và ghi trong `docs/PHASE_1_3_PRODUCTION_HARDENING_REPORT.md`.
+URL test không có query string bị `lock_database_url()` ghép `&hostaddr` sai. Lỗi đó được sửa ở vòng sau và ghi trong `docs/archive/PHASE_1_3_PRODUCTION_HARDENING_REPORT.md`.
