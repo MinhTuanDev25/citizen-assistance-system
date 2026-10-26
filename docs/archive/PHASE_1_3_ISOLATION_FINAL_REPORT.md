@@ -65,4 +65,4 @@ Phase 1–3 local giữ PASS theo evidence đã có. Ba finding an toàn của i
 
 `PHASE_1_3_BASELINE_READY=true` cho việc bắt đầu viết Phase 4. Tài khoản Postgres của stack test vẫn là user `cas` do image tạo, giới hạn bởi instance và DSN đã khóa, chưa phải role bị cắt quyền trong database. Production, RunPod S3 và so sánh FP32/INT8 vẫn `NOT_RUN`.
 
-Review ngay sau vòng này chỉ ra hai lỗ còn lại: biến môi trường libpq (`PGHOSTADDR`, `PGSERVICE`, `PGSERVICEFILE`) và cleanup khi setup MinIO/PostgreSQL lỗi trước `try`. Hai mục đó được đóng trong `docs/PHASE_1_3_FINAL_PATCH_REPORT.md`. Số liệu trong file này vẫn là evidence của vòng DSN query, cổng loopback và cleanup theo generation.
+Review ngay sau vòng này chỉ ra hai lỗ còn lại: biến môi trường libpq (`PGHOSTADDR`, `PGSERVICE`, `PGSERVICEFILE`) và cleanup khi setup MinIO/PostgreSQL lỗi trước `try`. Hai mục đó được đóng trong `docs/archive/PHASE_1_3_FINAL_PATCH_REPORT.md`. Số liệu trong file này vẫn là evidence của vòng DSN query, cổng loopback và cleanup theo generation.

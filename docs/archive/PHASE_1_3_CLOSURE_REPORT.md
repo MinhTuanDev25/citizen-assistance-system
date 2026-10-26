@@ -17,7 +17,7 @@ Log lần chạy nằm ở `artifacts/phase_1_3_final_closure/` (gitignored). SH
 | `deploy/.env.production.example` | Thiếu biến shutdown | `INDEX_REAPER_SHUTDOWN_SECONDS=30` | Compose render |
 | `deploy/README.production.md` | Contract chưa nói fail-fast bucket và drain | Ghi rõ Python tự kiểm tra bucket; reaper drain không atomic với Qdrant/Postgres | Không phải test |
 | `.github/workflows/ci.yml` | Job `production-config` chưa khóa grace | Grep `INDEX_REAPER_SHUTDOWN_SECONDS` và `stop_grace_period: 45s` | YAML only; GitHub runner NOT_RUN |
-| `docs/PHASE_1_3_CLOSURE_REPORT.md` | Báo cáo closure | File này | Không phải test |
+| `docs/archive/PHASE_1_3_CLOSURE_REPORT.md` | Báo cáo closure | File này | Không phải test |
 
 `APP_ENV` chỉ nhận `prod` (so khớp `.strip().lower() == "prod"`). `INDEX_MODE` chỉ `mock` hoặc `pipeline`. Không thêm alias.
 

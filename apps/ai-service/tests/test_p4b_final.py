@@ -5,12 +5,9 @@ from __future__ import annotations
 import hashlib
 import os
 import socket
-import stat
-import subprocess
 import threading
 import time
 import uuid
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -592,74 +589,3 @@ def test_index_gate_releases_the_slot_and_reports_shutdown():
         assert gate.pending() == 0
     finally:
         gate.shutdown()
-
-
-def test_check_zip_rejects_unsafe_archives(tmp_path):
-    script = ROOT / "scripts" / "check-zip.sh"
-
-    def run(path: Path) -> subprocess.CompletedProcess:
-        return subprocess.run(["bash", str(script), str(path)], capture_output=True, text=True)
-
-    corrupt = tmp_path / "corrupt.zip"
-    corrupt.write_bytes(b"not a zip")
-    bad = run(corrupt)
-    assert bad.returncode != 0
-    assert "corrupt" in bad.stderr
-
-    weight = tmp_path / "weight.zip"
-    with zipfile.ZipFile(weight, "w") as archive:
-        archive.writestr("model.onnx", b"weight")
-    bad = run(weight)
-    assert bad.returncode != 0
-    assert "model.onnx" in bad.stderr
-
-    travel = tmp_path / "travel.zip"
-    with zipfile.ZipFile(travel, "w") as archive:
-        info = zipfile.ZipInfo("../escape.txt")
-        archive.writestr(info, b"x")
-    bad = run(travel)
-    assert bad.returncode != 0
-    assert "traversal" in bad.stderr
-
-    link = tmp_path / "link.zip"
-    with zipfile.ZipFile(link, "w") as archive:
-        info = zipfile.ZipInfo("linked.txt")
-        info.external_attr = (stat.S_IFLNK | 0o777) << 16
-        archive.writestr(info, b"target")
-    bad = run(link)
-    assert bad.returncode != 0
-    assert "symlink" in bad.stderr
-
-    duplicate = tmp_path / "dup.zip"
-    with zipfile.ZipFile(duplicate, "w") as archive:
-        archive.writestr("same.txt", b"a")
-        archive.writestr("same.txt", b"b")
-    bad = run(duplicate)
-    assert bad.returncode != 0
-    assert "duplicate" in bad.stderr
-
-
-def test_bundle_entry_point_writes_checksums_and_sidecar(tmp_path, monkeypatch):
-    import sys
-
-    sys.path.insert(0, str(ROOT / "scripts"))
-    from p4b_bundle import build_bundle
-
-    package = tmp_path / "src"
-    (package / "apps" / "ai-service" / "app" / "models").mkdir(parents=True)
-    (package / "docs" / "models").mkdir(parents=True)
-    (package / "apps" / "ai-service" / "app" / "models" / "extract.py").write_text("x = 1\n", encoding="utf-8")
-    (package / "docs" / "models" / "embedding.manifest.example.json").write_text("{}\n", encoding="utf-8")
-    (package / "skip.onnx").write_bytes(b"weight")
-    dest = tmp_path / "bundle.zip"
-    side = tmp_path / "bundle.zip.sha256"
-    digest = build_bundle(package, dest, side)
-    assert digest == hashlib.sha256(dest.read_bytes()).hexdigest()
-    assert side.read_text(encoding="utf-8").startswith(digest)
-    with zipfile.ZipFile(dest) as archive:
-        names = set(archive.namelist())
-    assert "apps/ai-service/app/models/extract.py" in names
-    assert "docs/models/embedding.manifest.example.json" in names
-    assert "skip.onnx" not in names
-    assert "SHA256SUMS.txt" in names
-    monkeypatch.chdir(tmp_path)

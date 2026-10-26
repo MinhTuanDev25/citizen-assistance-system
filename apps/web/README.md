@@ -16,7 +16,7 @@ Speech (Step 7.6): native Go with `SPEECH_ENABLED=true` may listen on
 VITE_API_PROXY=http://127.0.0.1:8083 npm run dev
 ```
 
-See `scripts/phase7/FRONTEND_SPEECH.md`.
+See `docs/SPEECH.md`.
 
 ## Routes
 

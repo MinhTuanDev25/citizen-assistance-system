@@ -1,0 +1,29 @@
+# Build context for apps/{api,web,ai-service}/Dockerfile (context = repo root).
+# Allowlist: those Dockerfiles only COPY from their own apps/<name>/ directory.
+# Everything else (thesis checkpoints, models, reports, backups, deploy/.env) stays out.
+*
+!apps/api/
+!apps/web/
+!apps/ai-service/
+
+# Host-built dependencies and caches must not reach Linux images
+# (apps/web/node_modules on a Mac contains darwin-arm64 binaries).
+**/node_modules
+**/dist
+**/coverage
+**/.vite
+**/.vitest-cache
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.venv
+**/venv
+apps/api/bin
+apps/api/tmp
+**/.DS_Store
+
+# Secrets and local env files never belong in an image.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key

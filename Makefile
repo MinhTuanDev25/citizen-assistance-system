@@ -1,4 +1,14 @@
-.PHONY: db-up db-down db-migrate db-migrate-down db-psql db-reset api-run api-tidy api-swagger web-run
+.PHONY: up down logs db-up db-down db-migrate db-migrate-down db-psql db-reset api-run api-tidy api-swagger web-run
+
+# Whole stack in Docker (web, api, ai-service, postgres, minio, qdrant, speech tunnel).
+up:
+	./deploy/scripts/up.sh
+
+down:
+	cd deploy && docker compose --profile app --profile storage --profile ai --profile qdrant --profile speech down
+
+logs:
+	cd deploy && docker compose --profile app --profile storage --profile ai --profile qdrant --profile speech logs -f --tail=100
 
 db-up:
 	cd deploy && docker compose up -d postgres

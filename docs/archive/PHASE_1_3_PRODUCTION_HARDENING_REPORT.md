@@ -26,7 +26,7 @@ PRODUCTION_DEPLOYMENT=NOT_RUN
 
 `PHASE_1_3_LOCAL_BASELINE` gồm baseline đã có và lần chạy lại storage integration cùng pytest trong vòng này. `P4B_DONE` vẫn là log lịch sử, model smoke không chạy lại. `PRODUCTION_FOUNDATION_READY` là false vì image AI chưa build lại, CI GitHub chưa chạy, restore chưa diễn tập, và staging/production chưa có.
 
-Vòng ngay sau đó vá S3 cho AI, `/ready`, CI isolation, web flags, index-reaper và probe Qdrant chỉ đọc. Kết quả mới nằm ở `docs/PRODUCTION_FOUNDATION_FINAL_REPORT.md`. Số liệu trong file này vẫn là evidence của vòng hardening trước.
+Vòng ngay sau đó vá S3 cho AI, `/ready`, CI isolation, web flags, index-reaper và probe Qdrant chỉ đọc. Kết quả mới nằm ở `docs/archive/PRODUCTION_FOUNDATION_FINAL_REPORT.md`. Số liệu trong file này vẫn là evidence của vòng hardening trước.
 
 ## 1. Current fixes
 

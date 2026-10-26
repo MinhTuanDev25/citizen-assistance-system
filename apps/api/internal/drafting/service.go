@@ -599,22 +599,3 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
-
-func (s *Service) ActiveVersionUnchanged(ctx context.Context, procedureID uuid.UUID, expected *uuid.UUID) error {
-	if s.Source == nil || s.Source.Pool == nil {
-		return nil
-	}
-	var active *uuid.UUID
-	err := s.Source.Pool.QueryRow(ctx, `SELECT active_version_id FROM procedures WHERE id = $1`, procedureID).Scan(&active)
-	if err != nil {
-		return err
-	}
-	switch {
-	case expected == nil && active == nil:
-		return nil
-	case expected != nil && active != nil && *expected == *active:
-		return nil
-	default:
-		return fmt.Errorf("drafting: active version changed during generate")
-	}
-}

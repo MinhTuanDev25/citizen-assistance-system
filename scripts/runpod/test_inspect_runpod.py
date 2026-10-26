@@ -27,7 +27,7 @@ from inspect_runpod_lib import (
 
 
 def test_cas_root_from_script_file():
-    fake = Path("/tmp/cas root with spaces/scripts/phase7/inspect_runpod_phase7.sh")
+    fake = Path("/tmp/cas root with spaces/scripts/runpod/inspect_runpod_phase7.sh")
     assert cas_root_from_script_file(fake) == Path("/tmp/cas root with spaces").resolve()
 
 

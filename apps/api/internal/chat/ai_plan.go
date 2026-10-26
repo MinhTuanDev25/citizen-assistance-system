@@ -305,7 +305,7 @@ func (s *Service) callExtractor(ctx context.Context, req aiextract.Request) extr
 			reason = "timeout"
 		} else if errors.Is(err, aiextract.ErrInvalidResponse) {
 			reason = "invalid_contract"
-		} else 		if errors.Is(err, aiextract.ErrRateLimited) {
+		} else if errors.Is(err, aiextract.ErrRateLimited) {
 			reason = "rate_limited"
 		}
 		slog.Warn("extract_call_failed", "fallback_reason", reason, "err", err.Error())
