@@ -193,7 +193,8 @@ def test_shutdown_during_stage_reaps_the_job(stage, tmp_path):
         gate.shutdown()
 
 
-def test_client_disconnect_terminates_the_job(tmp_path):
+@pytest.mark.parametrize("late_handle", [False, True])
+def test_client_disconnect_terminates_the_job(tmp_path, monkeypatch, late_handle):
     import httpx
 
     from app import main
@@ -206,6 +207,16 @@ def test_client_disconnect_terminates_the_job(tmp_path):
     started = str(tmp_path / "started")
     release = str(tmp_path / "release")
     gate.arm_hold(started, release, 5)
+    if late_handle:
+        # A slow runner can start the job before submit's thread returns the handle.
+        submit = gate.submit
+
+        def slow_submit(*args, **kwargs):
+            handle = submit(*args, **kwargs)
+            time.sleep(0.5)
+            return handle
+
+        monkeypatch.setattr(gate, "submit", slow_submit)
     main._gate = gate
     object.__setattr__(main._settings, "index_mode", "pipeline")
     object.__setattr__(main._settings, "pipeline_timeout_s", 2)

@@ -389,7 +389,16 @@ async def index_document(http_request: Request):
                 "body": body.model_dump(mode="json"),
                 "timeout_s": settings.pipeline_timeout_s,
             }
-            handle = await asyncio.to_thread(_gate.submit, message, settings.pipeline_timeout_s)
+            # The worker may start before the submit thread hands the handle back,
+            # so a disconnect landing in that window must still cancel the job.
+            submitting = asyncio.ensure_future(asyncio.to_thread(_gate.submit, message, settings.pipeline_timeout_s))
+            try:
+                handle = await asyncio.shield(submitting)
+            except asyncio.CancelledError:
+                clock.cancel()
+                late = await asyncio.shield(submitting)
+                await asyncio.shield(asyncio.to_thread(_gate.cancel, late))
+                raise
 
             async def _on_disconnect() -> None:
                 if disconnect is None:
