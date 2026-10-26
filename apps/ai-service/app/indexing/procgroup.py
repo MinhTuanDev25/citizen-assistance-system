@@ -83,25 +83,31 @@ def _parse_linux_stat(text: str) -> ProcInfo:
 
 
 def _read_linux(pid: int) -> ProcInfo | None:
-    try:
-        with open(f"/proc/{pid}/stat", "r", encoding="utf-8") as handle:
-            text = handle.read()
-    except FileNotFoundError:
-        return None
-    except ProcessLookupError:
-        return None
-    except OSError as exc:
-        raise IdentityError("cannot read /proc stat") from exc
-    try:
-        pgid = os.getpgid(pid)
-    except ProcessLookupError:
-        return None
-    except PermissionError as exc:
-        raise IdentityError("cannot read pgid") from exc
-    info = _parse_linux_stat(text)
-    if info.pid != pid or info.pgid != pgid:
-        raise IdentityError("process identity changed while reading")
-    return info
+    # A freshly spawned child calls setsid() right away, so its pgid can change
+    # between reading /proc stat and getpgid(). Re-read a few times before
+    # treating the mismatch as a real identity change.
+    for _ in range(5):
+        try:
+            with open(f"/proc/{pid}/stat", "r", encoding="utf-8") as handle:
+                text = handle.read()
+        except FileNotFoundError:
+            return None
+        except ProcessLookupError:
+            return None
+        except OSError as exc:
+            raise IdentityError("cannot read /proc stat") from exc
+        try:
+            pgid = os.getpgid(pid)
+        except ProcessLookupError:
+            return None
+        except PermissionError as exc:
+            raise IdentityError("cannot read pgid") from exc
+        info = _parse_linux_stat(text)
+        if info.pid != pid:
+            break
+        if info.pgid == pgid:
+            return info
+    raise IdentityError("process identity changed while reading")
 
 
 _DARWIN_STATUS_ZOMBIE = 5
