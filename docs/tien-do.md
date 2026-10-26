@@ -48,6 +48,7 @@ Ba domain vẫn có trong cơ sở dữ liệu để admin thấy catalog. Chat 
 | `GET /api/v1/sessions/:sessionId/messages` | Đọc lịch sử hội thoại của đúng session | Đã làm | Chủ session |
 | `POST /api/v1/sessions/:sessionId/messages` | Gửi tin theo route cũ | Đã đóng, trả 410. Dùng route turns | Chủ session |
 | `POST /api/v1/sessions/:sessionId/turns` | Một lượt chat: nhận thủ tục, điền slot, hỏi phần thiếu hoặc trả checklist JSON. Idempotent theo `X-Request-ID` | Đã làm. Nhận câu bằng từ khóa. LLM extract chỉ chạy khi `AI_EXTRACT_ENABLED=true` | Khách, Công dân, Admin |
+| `POST /api/v1/sessions/:sessionId/speech/translate` | WAV Bahnar PCM16 mono 16 kHz → ASR Bahnar + bản Việt. Không tạo Chat Turn | Đã làm trên Go (7.5). Frontend 7.6 xác nhận câu Việt rồi mới gọi turns | Chủ session |
 | `POST /api/v1/admin/documents` | Upload PDF vào MinIO và bảng `documents` | Đã làm. Cần `ADMIN_INGESTION_ENABLED` | Admin |
 | `GET /api/v1/admin/documents` | Liệt kê PDF theo domain và trạng thái | Đã làm. Cần cờ ingestion | Admin |
 | `GET /api/v1/admin/documents/:id` | Xem metadata một PDF | Đã làm. Cần cờ ingestion | Admin |
@@ -72,7 +73,7 @@ Ba domain vẫn có trong cơ sở dữ liệu để admin thấy catalog. Chat 
 | `POST /v1/extract` trên AI service | Đề xuất mã thủ tục và slot. Go kiểm type rồi mới quyết định action | Đã làm. Token nội bộ. Provider mặc định `mock` | Go gọi hộ công dân |
 | `POST /v1/index` trên AI service | `index.v1` mock hoặc `index.v2` pipeline. Pipeline không gọi mock | Đã làm. Token nội bộ. Weight thật chưa smoke | Go gọi hộ admin |
 | `POST /v1/retrieve` trên AI service | Tìm chunk của đúng `xa_id` và phiên bản đang ghim, trả citation | Chưa có route | Go gọi khi công dân đã đủ slot |
-| `POST /v1/speech/translate` trên AI service | Audio Bahnar thành chữ Việt, rồi đưa vào turn | Chưa có route | Go gọi hộ công dân |
+| `POST /v1/speech/infer` trên Speech API (C0, không phải AI extract) | WAV Bahnar → ASR + MT. Token nội bộ | Đã làm Step 7.4. Trình duyệt không gọi trực tiếp | Go gọi hộ công dân |
 
 ## Đã làm được
 
@@ -202,11 +203,21 @@ Keyword vẫn là đường chạy khi cờ tắt hoặc model lỗi.
 
 ### 4. Giọng Bahnar trên chat
 
-Chưa có `POST /v1/speech/translate`, chưa ghi `speech_translation_requests` / `model_versions` cho lượt nói, chưa có nút micro.
-
-Luồng đã chốt: audio Bahnar thành chữ Việt, rồi chữ đó đi vào turn như người dùng gõ. Không làm TTS.
-
-Việc này chờ checkpoint RQ đã chọn. Nó không chặn chat chữ.
+Go đã có `POST /api/v1/sessions/:sessionId/speech/translate` (Step 7.5).
+Frontend Step 7.6: micro Bahnar (WAV PCM16 mono 16 kHz) và tải WAV, xem
+ASR Bahnar + bản Việt, xác nhận rồi mới gọi Chat Turn. Tự dừng 30s vẫn
+dịch được; lỗi tạm thời có **Thử dịch lại** trên đúng bản ghi hiện tại
+(không Retry 401/403/404/409/422 `SPEECH_NO_SPEECH`). Audio im lặng
+không còn bị gói thành 502 `SPEECH_UNAVAILABLE`. Hủy ghi âm không xóa
+file Upload mới. Timer 30s trễ vẫn cắt WAV đúng 30 giây. Audit speech
+không lưu transcript (privacy); `chat_turn_request_id` chỉ ghi khi
+confirm gửi đúng `speech_request_id`. Retry cùng pending turn giữ Speech ID đầu. Linkage log
+`LINKED`/`ALREADY_LINKED`/`NOT_FOUND`/`CONFLICT`/`FAILED`; lỗi audit
+không đổi Chat Turn 200. Unique `chat_turn_request_id` (000022).
+Postgres speech tests không fallback ngầm `citizen_assistance`.
+Nút 🎙 cũ vẫn là SpeechRecognition tiếng Việt. Live RunPod từ trình
+duyệt và micro phần cứng thật vẫn cần nghiệm thu riêng
+(`scripts/phase7/FRONTEND_SPEECH.md`).
 
 ### 5. Một lệnh demo và nghiệm thu triển khai
 

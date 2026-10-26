@@ -333,6 +333,7 @@ func TestTranslateMapsUpstreamErrors(t *testing.T) {
 		http int
 	}{
 		{speech.ErrUnavailable, "SPEECH_UNAVAILABLE", http.StatusBadGateway},
+		{speech.ErrNoSpeech, "SPEECH_NO_SPEECH", http.StatusUnprocessableEntity},
 		{speech.ErrOverloaded, "SPEECH_OVERLOADED", http.StatusServiceUnavailable},
 		{speech.ErrTimeout, "SPEECH_TIMEOUT", http.StatusGatewayTimeout},
 		{speech.ErrInvalidResponse, "SPEECH_INVALID_UPSTREAM", http.StatusBadGateway},
@@ -497,6 +498,25 @@ func TestNilAuditIsObservable(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "speech_audit_failed") {
 		t.Fatalf("missing audit log: %s", logs.String())
+	}
+}
+
+func TestTranslateNoSpeechIsNotUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sess := guestSession()
+	audit := &fakeAudit{}
+	h := testHandler(true, &fakeTranslator{err: speech.ErrNoSpeech}, sess, audit)
+	res := postTranslate(t, h, sess, wavBytes(), map[string]string{HeaderGuestToken: *sess.GuestToken})
+	assertCode(t, res, http.StatusUnprocessableEntity, "SPEECH_NO_SPEECH")
+	if strings.Contains(res.Body.String(), "SPEECH_UNAVAILABLE") {
+		t.Fatal(res.Body.String())
+	}
+	if len(audit.recs) != 1 {
+		t.Fatalf("audit %+v", audit.recs)
+	}
+	rec := audit.recs[0]
+	if rec.Outcome != speech.OutcomeFailure || rec.ErrorCode != "SPEECH_NO_SPEECH" || rec.HTTPStatus != http.StatusUnprocessableEntity {
+		t.Fatalf("audit %+v", rec)
 	}
 }
 

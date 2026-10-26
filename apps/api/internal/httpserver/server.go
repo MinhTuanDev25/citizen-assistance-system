@@ -149,10 +149,12 @@ func NewWithIndexWorker(logger *slog.Logger, pool *pgxpool.Pool, cfg config.Conf
 		procedureHandler.Drafting.Activation = procedureHandler.Activation
 	}
 
+	speechStore := &speech.Store{Pool: pool}
+	sessionHandler.Speech = speechStore
 	speechHandler := speechapi.NewHandler(speechapi.Handler{
 		Enabled:        cfg.SpeechEnabled,
 		Sessions:       sessionRepo,
-		Audit:          &speech.Store{Pool: pool},
+		Audit:          speechStore,
 		MaxUploadBytes: speech.MaxAudioBytes(cfg.SpeechMaxUploadBytes),
 		MaxBodyBytes:   cfg.SpeechMaxUploadBytes,
 		MaxInflight:    cfg.SpeechMaxInflight,

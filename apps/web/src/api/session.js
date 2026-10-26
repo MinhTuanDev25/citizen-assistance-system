@@ -177,10 +177,14 @@ export function clearPendingTurn() {
  * One decision turn. Reuses requestId for an in-flight / failed send of the same message.
  * Does not clear pending — callers use executeChatTurn for UI semantics.
  */
-export async function postTurn(sessionId, message, guestToken, requestId) {
+export async function postTurn(sessionId, message, guestToken, requestId, extras = {}) {
   const headers = {}
   if (requestId) {
     headers['X-Request-ID'] = requestId
+  }
+  const body = { message }
+  if (extras.speechRequestId) {
+    body.speech_request_id = extras.speechRequestId
   }
   return apiRequest(
     `/api/v1/sessions/${encodeURIComponent(sessionId)}/turns`,
@@ -188,7 +192,7 @@ export async function postTurn(sessionId, message, guestToken, requestId) {
       method: 'POST',
       guestToken: guestToken || undefined,
       headers,
-      body: JSON.stringify({ message }),
+      body: JSON.stringify(body),
     },
   )
 }
@@ -203,13 +207,17 @@ export async function executeChatTurn({
   sessionId,
   message,
   guestToken,
+  speechRequestId,
   post = postTurn,
   loadHistory = listSessionMessages,
 }) {
-  const requestId = resolveTurnRequestId(sessionId, message)
+  const requestId = resolveTurnRequestId(sessionId, message, speechRequestId)
+  const pinnedSpeechId = pinPendingSpeechRequestId(speechRequestId)
   let turnResult
   try {
-    turnResult = await post(sessionId, message, guestToken, requestId)
+    turnResult = await post(sessionId, message, guestToken, requestId, {
+      speechRequestId: pinnedSpeechId,
+    })
   } catch (err) {
     return {
       ok: false,
@@ -248,7 +256,7 @@ export async function executeChatTurn({
 }
 
 /** Resolve request id: reuse pending for same session+message, else mint new. */
-export function resolveTurnRequestId(sessionId, message) {
+export function resolveTurnRequestId(sessionId, message, speechRequestId) {
   const pending = loadPendingTurn()
   if (
     pending &&
@@ -259,8 +267,31 @@ export function resolveTurnRequestId(sessionId, message) {
     return pending.requestId
   }
   const id = newTurnRequestId()
-  savePendingTurn({ sessionId, message, requestId: id })
+  const row = { sessionId, message, requestId: id }
+  const speech = trimmedSpeechRequestId(speechRequestId)
+  if (speech) row.speechRequestId = speech
+  savePendingTurn(row)
   return id
+}
+
+/**
+ * Keep the first speech_request_id on a pending Chat Turn.
+ * Retry of the same session+message must not swap in a different Speech ID.
+ */
+export function pinPendingSpeechRequestId(incoming) {
+  const pending = loadPendingTurn()
+  const next = trimmedSpeechRequestId(incoming)
+  if (!pending?.requestId) return next || undefined
+  if (pending.speechRequestId) return pending.speechRequestId
+  if (next) {
+    savePendingTurn({ ...pending, speechRequestId: next })
+    return next
+  }
+  return undefined
+}
+
+function trimmedSpeechRequestId(value) {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 export function newTurnRequestId() {
