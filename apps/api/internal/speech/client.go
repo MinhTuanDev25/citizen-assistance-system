@@ -43,6 +43,7 @@ var (
 	ErrTooLarge        = errors.New("speech: payload too large")
 	ErrInvalidResponse = errors.New("speech: invalid upstream response")
 	ErrInferenceFailed = errors.New("speech: inference failed")
+	ErrNoSpeech        = errors.New("speech: no speech recognised")
 	ErrShuttingDown    = errors.New("speech: service shutting down")
 )
 
@@ -331,6 +332,11 @@ func UpstreamCode(err error) string {
 
 func mapStatus(status int, raw []byte) error {
 	code := peekErrorCode(raw)
+	// Match empty_asr by upstream code, not HTTP status. Live Speech API
+	// images may still return 502 for this case; silence is not SPEECH_UNAVAILABLE.
+	if code == "empty_asr" {
+		return mappedError{kind: ErrNoSpeech, upstream: status, code: code}
+	}
 	kind := ErrUnavailable
 	switch status {
 	case http.StatusBadRequest:
@@ -339,6 +345,8 @@ func mapStatus(status int, raw []byte) error {
 		kind = ErrUpstreamAuth
 	case http.StatusRequestEntityTooLarge:
 		kind = ErrTooLarge
+	case http.StatusUnprocessableEntity:
+		kind = ErrInvalidAudio
 	case http.StatusGatewayTimeout:
 		kind = ErrTimeout
 	case http.StatusServiceUnavailable:

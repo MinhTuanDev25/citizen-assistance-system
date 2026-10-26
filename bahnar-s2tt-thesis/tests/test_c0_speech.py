@@ -450,7 +450,7 @@ def test_unauthorized_and_sanitized_runtime_error():
     client_err, _, _ = _client(boom)
     with client_err:
         failed = _post_audio(client_err, wav_bytes)
-        assert failed.status_code == 502
+        assert failed.status_code == 422
         assert failed.json()["error"]["code"] == "empty_asr"
         assert "/secret" not in failed.text
         assert "Traceback" not in failed.text

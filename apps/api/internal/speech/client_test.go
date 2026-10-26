@@ -176,7 +176,12 @@ func TestClientMapsStatuses(t *testing.T) {
 		{503, `{"error":{"code":"overloaded"}}`, ErrOverloaded},
 		{503, `{"error":{"code":"not_ready"}}`, ErrNotReady},
 		{504, `{"error":{"code":"inference_timeout"}}`, ErrTimeout},
-		{502, `{"error":{"code":"empty_asr"}}`, ErrInferenceFailed},
+		{502, `{"error":{"code":"empty_asr"}}`, ErrNoSpeech},
+		{422, `{"error":{"code":"empty_asr"}}`, ErrNoSpeech},
+		{502, `{"error":{"code":"empty_mt"}}`, ErrInferenceFailed},
+		{502, `{"error":{"code":"inference_failed"}}`, ErrInferenceFailed},
+		{502, `{"error":{}}`, ErrInferenceFailed},
+		{502, `not-json`, ErrInferenceFailed},
 		{500, `{"error":{"code":"inference_failed"}}`, ErrInferenceFailed},
 	}
 	for _, tc := range table {

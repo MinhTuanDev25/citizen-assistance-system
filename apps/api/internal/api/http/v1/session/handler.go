@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/middleware"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/repository"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/response"
+	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/speech"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -30,13 +32,26 @@ type SessionLookup interface {
 	ListMessages(ctx context.Context, sessionID uuid.UUID, limit int) ([]repository.Message, error)
 }
 
+// TurnRunner is the chat turn dependency. *chat.Service implements it.
+type TurnRunner interface {
+	Turn(ctx context.Context, sessionID, requestID uuid.UUID, message string) (*chat.TurnResult, error)
+}
+
+// SpeechTurnLinker records chat_turn_request_id on a successful speech audit
+// row. *speech.Store implements it. Optional: typed chat leaves it nil.
+type SpeechTurnLinker interface {
+	LinkChatTurn(ctx context.Context, speechRequestID, sessionID, chatTurnRequestID uuid.UUID) (speech.LinkResult, error)
+}
+
 type Handler struct {
 	Sessions SessionLookup
 	Communes *repository.CommuneRepo
-	Turns    *chat.Service
+	Turns    TurnRunner
+	Speech   SpeechTurnLinker
+	Logger   *slog.Logger
 }
 
-func NewHandler(sessions SessionLookup, communes *repository.CommuneRepo, turns *chat.Service) *Handler {
+func NewHandler(sessions SessionLookup, communes *repository.CommuneRepo, turns TurnRunner) *Handler {
 	return &Handler{Sessions: sessions, Communes: communes, Turns: turns}
 }
 
@@ -46,7 +61,8 @@ type createRequest struct {
 }
 
 type createMessageRequest struct {
-	Message string `json:"message" binding:"required"`
+	Message         string `json:"message" binding:"required"`
+	SpeechRequestID string `json:"speech_request_id"`
 }
 
 // Create godoc
@@ -194,7 +210,7 @@ func (h *Handler) CreateMessage(c *gin.Context) {
 // Turn godoc
 //
 //	@Summary		Run one citizen chat turn
-//	@Description	Atomically saves USER+ASSISTANT. Actions include ASK_MISSING_SLOTS, DIRECT_ANSWER, PROVIDE_FINAL_GUIDANCE, OUT_OF_SCOPE, CONFIRM_INTENT. Idempotent via X-Request-ID bound to normalized message hash; same ID + different body → 409 IDEMPOTENCY_CONFLICT.
+//	@Description	Atomically saves USER+ASSISTANT. Actions include ASK_MISSING_SLOTS, DIRECT_ANSWER, PROVIDE_FINAL_GUIDANCE, OUT_OF_SCOPE, CONFIRM_INTENT. Idempotent via X-Request-ID bound to normalized message hash; same ID + different body → 409 IDEMPOTENCY_CONFLICT. Optional speech_request_id links a prior SUCCESS speech audit row in the same session; linkage failures are logged and never change HTTP 200.
 //	@Tags			sessions
 //	@Accept			json
 //	@Produce		json
@@ -264,10 +280,67 @@ func (h *Handler) Turn(c *gin.Context) {
 		}
 		return
 	}
+	h.linkSpeechTurn(c, req.SpeechRequestID, sess.ID, requestID)
 	if result != nil && result.Action != "" {
 		c.Set("log_action", result.Action)
 	}
 	response.OK(c, result)
+}
+
+func (h *Handler) linkLogger(c *gin.Context) *slog.Logger {
+	fallback := slog.Default()
+	if h != nil && h.Logger != nil {
+		fallback = h.Logger
+	}
+	return middleware.LoggerFromContext(c, fallback)
+}
+
+// linkSpeechTurn is best-effort. A missing or invalid speech_request_id, or a
+// linker failure, must not change a successful Chat Turn into HTTP 500.
+// Outcomes LINKED / ALREADY_LINKED / NOT_FOUND / CONFLICT / FAILED are logged
+// with correlation UUIDs only — never audio, transcripts, or tokens.
+func (h *Handler) linkSpeechTurn(c *gin.Context, rawSpeechID string, sessionID, chatTurnRequestID uuid.UUID) {
+	if h == nil || h.Speech == nil {
+		return
+	}
+	log := h.linkLogger(c)
+	httpRequestID := middleware.GetRequestID(c)
+	speechID, err := uuid.Parse(strings.TrimSpace(rawSpeechID))
+	if err != nil || speechID == uuid.Nil {
+		if strings.TrimSpace(rawSpeechID) != "" {
+			log.Info("speech_chat_link",
+				"outcome", "SKIPPED",
+				"reason", "invalid_speech_request_id",
+				"http_request_id", httpRequestID,
+				"session_id", sessionID.String(),
+				"chat_turn_request_id", chatTurnRequestID.String(),
+			)
+		}
+		return
+	}
+	result, linkErr := h.Speech.LinkChatTurn(c.Request.Context(), speechID, sessionID, chatTurnRequestID)
+	outcome := result.Outcome
+	if outcome == "" {
+		outcome = speech.LinkFailed
+	}
+	attrs := []any{
+		"outcome", string(outcome),
+		"speech_request_id", speechID.String(),
+		"chat_turn_request_id", chatTurnRequestID.String(),
+		"session_id", sessionID.String(),
+		"http_request_id", httpRequestID,
+	}
+	if linkErr != nil {
+		attrs = append(attrs, "error", linkErr.Error())
+		log.Error("speech_chat_link", attrs...)
+		return
+	}
+	switch outcome {
+	case speech.LinkLinked, speech.LinkAlreadyLinked:
+		log.Info("speech_chat_link", attrs...)
+	default:
+		log.Warn("speech_chat_link", attrs...)
+	}
 }
 
 func (h *Handler) loadAuthorizedSession(c *gin.Context) (*repository.Session, bool) {

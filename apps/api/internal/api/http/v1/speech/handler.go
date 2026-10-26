@@ -92,6 +92,7 @@ type publicData struct {
 //	@Failure		404				{object}	response.Envelope
 //	@Failure		410				{object}	response.Envelope
 //	@Failure		413				{object}	response.Envelope
+//	@Failure		422				{object}	response.Envelope
 //	@Failure		502				{object}	response.Envelope
 //	@Failure		503				{object}	response.Envelope
 //	@Failure		504				{object}	response.Envelope
@@ -421,6 +422,8 @@ func mapPublic(err error) publicErr {
 		return publicErr{http.StatusBadGateway, "SPEECH_UPSTREAM_AUTH", "speech service authentication failed"}
 	case errors.Is(err, speech.ErrInvalidResponse):
 		return publicErr{http.StatusBadGateway, "SPEECH_INVALID_UPSTREAM", "speech service returned an invalid response"}
+	case errors.Is(err, speech.ErrNoSpeech):
+		return publicErr{http.StatusUnprocessableEntity, "SPEECH_NO_SPEECH", "no speech was recognised in the audio"}
 	case errors.Is(err, speech.ErrInferenceFailed), errors.Is(err, speech.ErrUnavailable):
 		return publicErr{http.StatusBadGateway, "SPEECH_UNAVAILABLE", "speech service is unavailable"}
 	default:

@@ -622,6 +622,123 @@ button {
   border-color: #ef4444 !important;
 }
 
+.bahnar-speech {
+  padding: 0 0.9rem 0.9rem;
+  border-top: 1px dashed var(--line);
+}
+
+.bahnar-speech-toolbar,
+.bahnar-speech-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.55rem 0;
+}
+
+.bahnar-speech-hint,
+.bahnar-speech-status,
+.bahnar-speech-meta,
+.bahnar-speech-live {
+  margin: 0.25rem 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.bahnar-speech-live {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.bahnar-speech-toolbar button,
+.bahnar-speech-actions button,
+.chat-panel .hint {
+  border: 1px solid var(--line);
+  background: #eff6ff;
+  color: var(--forest);
+  border-radius: 999px;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.bahnar-speech-toolbar button:hover:not(:disabled),
+.bahnar-speech-actions button:hover:not(:disabled),
+.chat-panel .hint:hover:not(:disabled) {
+  background: #dbeafe;
+  border-color: rgba(37, 99, 235, 0.35);
+  color: var(--forest);
+  transform: translateY(-1px);
+}
+
+.bahnar-speech .hint.active,
+.chat-panel .hint.active {
+  background: #dbeafe;
+  color: var(--forest);
+  border-color: var(--forest);
+}
+
+.bahnar-speech-actions button.composer-send {
+  background: var(--forest);
+  color: #fff;
+  border-color: var(--forest);
+}
+
+.bahnar-speech-toolbar button:disabled,
+.bahnar-speech-actions button:disabled,
+.chat-panel .hint:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.bahnar-file {
+  position: relative;
+  overflow: hidden;
+}
+
+.bahnar-file input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.bahnar-result {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.4rem;
+}
+
+.bahnar-result label {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.bahnar-result textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  font-weight: 400;
+  background: var(--paper);
+}
+
+@media (max-width: 720px) {
+  .bahnar-speech-actions,
+  .bahnar-speech-toolbar {
+    flex-direction: column;
+  }
+
+  .bahnar-speech-actions button,
+  .bahnar-speech-toolbar button {
+    width: 100%;
+  }
+}
+
 .composer button:hover:not(:disabled) {
   transform: translateY(-1px);
   filter: brightness(1.05);

@@ -153,6 +153,71 @@ describe('executeChatTurn pending request-id flow', () => {
     expect(loadPendingTurn()?.requestId).toBe(ridHolder.id)
   })
 
+  it('forwards an explicit speech_request_id without inventing one for typed chat', async () => {
+    const seen = []
+    await executeChatTurn({
+      sessionId: 's-speech',
+      message: 'tôi muốn khai sinh',
+      guestToken: 'g',
+      speechRequestId: '11111111-1111-1111-1111-111111111111',
+      post: async (_s, message, _g, requestId, extras) => {
+        seen.push({ message, requestId, extras })
+        return { action: 'OUT_OF_SCOPE' }
+      },
+      loadHistory: async () => ({ items: [] }),
+    })
+    expect(seen).toHaveLength(1)
+    expect(seen[0].extras.speechRequestId).toBe('11111111-1111-1111-1111-111111111111')
+
+    seen.length = 0
+    sessionStorage.clear()
+    await executeChatTurn({
+      sessionId: 's-typed',
+      message: 'xin chào',
+      guestToken: 'g',
+      post: async (_s, message, _g, requestId, extras) => {
+        seen.push({ message, extras })
+        return { action: 'OUT_OF_SCOPE' }
+      },
+      loadHistory: async () => ({ items: [] }),
+    })
+    expect(seen[0].extras.speechRequestId).toBeUndefined()
+  })
+
+  it('retries the same pending turn with the first speech_request_id', async () => {
+    const seen = []
+    const first = '11111111-1111-1111-1111-111111111111'
+    const swapped = '22222222-2222-2222-2222-222222222222'
+    await executeChatTurn({
+      sessionId: 's-pin',
+      message: 'tôi muốn khai sinh',
+      guestToken: 'g',
+      speechRequestId: first,
+      post: async (_s, _m, _g, requestId, extras) => {
+        seen.push({ requestId, extras })
+        throw new Error('network down')
+      },
+      loadHistory: async () => ({ items: [] }),
+    })
+    expect(loadPendingTurn()?.speechRequestId).toBe(first)
+
+    await executeChatTurn({
+      sessionId: 's-pin',
+      message: 'tôi muốn khai sinh',
+      guestToken: 'g',
+      speechRequestId: swapped,
+      post: async (_s, _m, _g, requestId, extras) => {
+        seen.push({ requestId, extras })
+        return { action: 'OUT_OF_SCOPE' }
+      },
+      loadHistory: async () => ({ items: [] }),
+    })
+    expect(seen).toHaveLength(2)
+    expect(seen[1].requestId).toBe(seen[0].requestId)
+    expect(seen[1].extras.speechRequestId).toBe(first)
+    expect(seen[1].extras.speechRequestId).not.toBe(swapped)
+  })
+
   it('does not re-post when history reload fails after successful turn', async () => {
     let postCount = 0
     const result = await executeChatTurn({

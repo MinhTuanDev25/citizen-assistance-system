@@ -34,7 +34,7 @@ PUBLIC_ERROR_MESSAGES = {
     "overloaded": "Inference capacity exceeded",
     "shutting_down": "Service is shutting down",
     "inference_timeout": "Inference timed out",
-    "empty_asr": "ASR produced empty transcript",
+    "empty_asr": "No speech was recognised in the audio",
     "empty_mt": "MT produced empty translation",
     "inference_failed": "Inference could not be completed",
     "config_error": "Speech service configuration is invalid",
@@ -56,7 +56,9 @@ def public_error_body(code: str, *, request_id: str) -> dict[str, object]:
 def map_c0_error_code(code: str) -> tuple[int, str]:
     table = {
         "audio_invalid": (400, "audio_invalid"),
-        "empty_asr": (502, "empty_asr"),
+        # empty_asr is a valid-WAV / no-speech outcome after C0 ASR finished.
+        # 422, not 502: silence is not an unavailable GPU or crashed worker.
+        "empty_asr": (422, "empty_asr"),
         "empty_mt": (502, "empty_mt"),
         "tokenizer_mismatch": (503, "tokenizer_mismatch"),
         "tokenizer_not_verified": (503, "tokenizer_not_verified"),

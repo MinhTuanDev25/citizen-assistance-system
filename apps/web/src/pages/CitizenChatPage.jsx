@@ -9,6 +9,7 @@ import {
   orderedMessages,
   startFreshSession,
 } from '../api/session.js'
+import { BahnarSpeechPanel } from '../components/BahnarSpeechPanel.jsx'
 import { CitizenLayout } from '../components/CitizenLayout.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { useCommune } from '../commune/CommuneContext.jsx'
@@ -243,9 +244,9 @@ export default function CitizenChatPage() {
     }
   }
 
-  async function submit(text) {
-    const content = text.trim()
-    if (!content || busy) return
+  async function submit(text, extras) {
+    const content = typeof text === 'string' ? text.trim() : ''
+    if (!content || busy) return false
     stopListening()
 
     setMessages((prev) => [
@@ -270,6 +271,7 @@ export default function CitizenChatPage() {
         sessionId: sess.sessionId,
         message: content,
         guestToken: sess.guestToken,
+        speechRequestId: extras?.speechRequestId,
       })
       if (!result.ok) {
         throw result.error || new Error('Không gửi được tin nhắn')
@@ -291,6 +293,7 @@ export default function CitizenChatPage() {
           last?.action === 'CONFIRM_INTENT' ? last.candidates : null,
         )
       }
+      return true
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -302,6 +305,7 @@ export default function CitizenChatPage() {
             'Xin lỗi, không gửi được tin nhắn. Kiểm tra API đang chạy.',
         },
       ])
+      return false
     } finally {
       setBusy(false)
       inputRef.current?.focus()
@@ -525,8 +529,8 @@ export default function CitizenChatPage() {
               onClick={toggleVoice}
               disabled={busy || !sessionReady}
               aria-pressed={listening}
-              aria-label={listening ? 'Dừng nghe' : 'Nói câu hỏi'}
-              title={listening ? 'Dừng nghe' : 'Nói câu hỏi'}
+              aria-label={listening ? 'Dừng nghe tiếng Việt' : 'Nói câu hỏi bằng tiếng Việt'}
+              title={listening ? 'Dừng nghe tiếng Việt (trình duyệt)' : 'Gõ bằng giọng tiếng Việt (trình duyệt)'}
             >
               {listening ? '●' : '🎙'}
             </button>
@@ -544,6 +548,13 @@ export default function CitizenChatPage() {
               {voiceHint}
             </p>
           ) : null}
+          <BahnarSpeechPanel
+            key={chatSession?.sessionId || 'no-session'}
+            sessionId={chatSession?.sessionId}
+            guestToken={chatSession?.guestToken}
+            disabled={busy || !sessionReady || listening}
+            onConfirm={submit}
+          />
         </section>
       </main>
     </CitizenLayout>
