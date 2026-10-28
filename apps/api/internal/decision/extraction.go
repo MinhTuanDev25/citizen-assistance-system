@@ -1,6 +1,9 @@
 package decision
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // ExtractedSlot is one Go-validated (aiextract.Validate has already run)
 // slot value the AI proposed. decision stays LLM-agnostic: it only ever sees
@@ -39,6 +42,7 @@ func DecideWithExtraction(in TurnInput, extraction *ExtractionProposal) (TurnOut
 
 	seeded := cloneState(in.Prior)
 	var applied AppliedSlots
+	var changed []string
 
 	keys := make([]string, 0, len(extraction.Slots))
 	for k := range extraction.Slots {
@@ -68,16 +72,22 @@ func DecideWithExtraction(in TurnInput, extraction *ExtractionProposal) (TurnOut
 			}
 			seeded[key] = SlotValue{Value: es.Value, Status: StatusKnown}
 			applied.Accepted = append(applied.Accepted, key)
+			changed = append(changed, changeLine(in.Definition, key, es.Value))
 		default:
 			applied.Rejected = append(applied.Rejected, key)
 		}
 	}
 
+	dropInapplicable(in.Definition, in.Prior, seeded)
 	out := Decide(TurnInput{
 		Definition:    in.Definition,
 		Prior:         seeded,
 		HadPriorState: in.HadPriorState,
 		Message:       in.Message,
 	})
+	// A corrected answer is said back, so the citizen sees it was taken.
+	if len(changed) > 0 && !strings.HasPrefix(out.ReplyText, "Mình cập nhật:") {
+		out.ReplyText = prefaceReply(changed, nil, out.ReplyText)
+	}
 	return out, applied
 }

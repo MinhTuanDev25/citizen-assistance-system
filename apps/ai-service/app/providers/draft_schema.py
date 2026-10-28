@@ -9,6 +9,27 @@ from __future__ import annotations
 
 from typing import Any
 
+_GUIDANCE_RULES = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["when", "item"],
+        "properties": {
+            "when": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["slot", "equals"],
+                "properties": {
+                    "slot": {"type": "string"},
+                    "equals": {"type": ["string", "number", "boolean"]},
+                },
+            },
+            "item": {"type": "string"},
+        },
+    },
+}
+
 DRAFT_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -46,7 +67,7 @@ DRAFT_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
                     "items": {
                         "type": "object",
                         "additionalProperties": False,
-                        "required": ["key", "type", "question", "enum_values"],
+                        "required": ["key", "type", "question", "enum_values", "enum_labels"],
                         "properties": {
                             "key": {"type": "string"},
                             "type": {
@@ -55,6 +76,7 @@ DRAFT_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
                             },
                             "question": {"type": "string"},
                             "enum_values": {"type": "array", "items": {"type": "string"}},
+                            "enum_labels": {"type": "array", "items": {"type": "string"}},
                         },
                     },
                 },
@@ -89,6 +111,8 @@ DRAFT_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
                         "notes",
                         "fee_hint",
                         "processing_time_hint",
+                        "conditional_checklist",
+                        "conditional_notes",
                     ],
                     "properties": {
                         "summary": {"type": "string"},
@@ -97,6 +121,8 @@ DRAFT_RESPONSE_JSON_SCHEMA: dict[str, Any] = {
                         "notes": {"type": "array", "items": {"type": "string"}},
                         "fee_hint": {"type": "string"},
                         "processing_time_hint": {"type": "string"},
+                        "conditional_checklist": _GUIDANCE_RULES,
+                        "conditional_notes": _GUIDANCE_RULES,
                     },
                 },
                 "citations": {

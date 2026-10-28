@@ -697,6 +697,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
+                    "202": {
+                        "description": "Job claimed and running in the background (INDEX_ASYNC)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
@@ -782,6 +788,12 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "202": {
+                        "description": "Job claimed and running in the background (INDEX_ASYNC)",
                         "schema": {
                             "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
@@ -875,6 +887,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
+                    "202": {
+                        "description": "Job claimed and running in the background (INDEX_ASYNC)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
@@ -950,6 +968,77 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Admin-only. Body: procedure_code (^[a-z0-9_]{2,64}$, unique per commune), name, domain_id (active domain). Creates one SOURCE version 0.0.0 with an empty definition so the first PDF can be linked and indexed for an AI draft. Never creates an ACTIVE version. Idempotent per X-Request-ID; 409 PROCEDURE_CODE_EXISTS.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-procedures"
+                ],
+                "summary": "Create a procedure in the server commune",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Idempotency UUID",
+                        "name": "X-Request-ID",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
@@ -2304,6 +2393,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
                         }
                     },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MinhTuanDev25_citizen-assistance-system_apps_api_internal_response.Envelope"
+                        }
+                    },
                     "502": {
                         "description": "Bad Gateway",
                         "schema": {
@@ -2327,7 +2422,7 @@ const docTemplate = `{
         },
         "/api/v1/sessions/{sessionId}/turns": {
             "post": {
-                "description": "Atomically saves USER+ASSISTANT. Actions include ASK_MISSING_SLOTS, DIRECT_ANSWER, PROVIDE_FINAL_GUIDANCE, OUT_OF_SCOPE, CONFIRM_INTENT. Idempotent via X-Request-ID bound to normalized message hash; same ID + different body → 409 IDEMPOTENCY_CONFLICT.",
+                "description": "Atomically saves USER+ASSISTANT. Actions include ASK_MISSING_SLOTS, DIRECT_ANSWER, PROVIDE_FINAL_GUIDANCE, OUT_OF_SCOPE, CONFIRM_INTENT. Idempotent via X-Request-ID bound to normalized message hash; same ID + different body → 409 IDEMPOTENCY_CONFLICT. Optional speech_request_id links a prior SUCCESS speech audit row in the same session; linkage failures are logged and never change HTTP 200.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2589,6 +2684,9 @@ const docTemplate = `{
             ],
             "properties": {
                 "message": {
+                    "type": "string"
+                },
+                "speech_request_id": {
                     "type": "string"
                 }
             }

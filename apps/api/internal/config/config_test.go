@@ -108,7 +108,7 @@ func TestLoadRejectsBadAIConfig(t *testing.T) {
 		{"AI_RETRIEVE_TIMEOUT_MS", "0"},
 		{"AI_RETRIEVE_TIMEOUT_MS", "11000"},
 		{"AI_DRAFT_TIMEOUT_MS", "0"},
-		{"AI_DRAFT_TIMEOUT_MS", "130000"},
+		{"AI_DRAFT_TIMEOUT_MS", "310001"},
 		{"AI_DRAFT_TIMEOUT_MS", "abc"},
 	}
 	for _, tc := range cases {
@@ -375,6 +375,51 @@ func TestIndexLeaseMustExceedTimeout(t *testing.T) {
 	base.IndexClaimTTL = 5 * time.Second
 	if err := validateIndexLease(base); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAsyncIndexLeaseFollowsHeartbeatNotJobLength(t *testing.T) {
+	cfg := Config{
+		IndexMode: "pipeline", IndexAsync: true,
+		IndexPipelineTimeout: time.Hour, IndexHeartbeat: 15 * time.Second,
+		IndexClaimTTL: 2 * time.Minute, IndexMaxConcurrent: 1, IndexPublishTimeout: 10 * time.Second,
+	}
+	if err := validateIndexLease(cfg); err != nil {
+		t.Fatalf("a one-hour job with a short renewed lease must be valid: %v", err)
+	}
+	sync := cfg
+	sync.IndexAsync = false
+	if err := validateIndexLease(sync); err == nil {
+		t.Fatal("without the heartbeat the lease must still outlive the pipeline timeout")
+	}
+	for name, mutate := range map[string]func(*Config){
+		"ttl below 3 beats":   func(c *Config) { c.IndexClaimTTL = 44 * time.Second },
+		"timeout above 2h":    func(c *Config) { c.IndexPipelineTimeout = 2*time.Hour + time.Second },
+		"heartbeat too short": func(c *Config) { c.IndexHeartbeat = 0 },
+		"too many workers":    func(c *Config) { c.IndexMaxConcurrent = 5 },
+	} {
+		bad := cfg
+		mutate(&bad)
+		if err := validateIndexLease(bad); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
+}
+
+func TestIndexAsyncEnvParsing(t *testing.T) {
+	t.Setenv("INDEX_ASYNC", "true")
+	t.Setenv("INDEX_HEARTBEAT_SECONDS", "20")
+	t.Setenv("INDEX_MAX_CONCURRENT", "2")
+	cfg := Config{}
+	if err := applyEnvOverrides(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.IndexAsync || cfg.IndexHeartbeat != 20*time.Second || cfg.IndexMaxConcurrent != 2 {
+		t.Fatalf("parsed %+v", cfg)
+	}
+	t.Setenv("INDEX_ASYNC", "maybe")
+	if err := applyEnvOverrides(&Config{}); err == nil {
+		t.Fatal("INDEX_ASYNC=maybe was accepted")
 	}
 }
 

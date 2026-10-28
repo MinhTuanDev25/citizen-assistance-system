@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from app.models.extract import ExtractRequest
 
-EXTRACT_PROMPT_VERSION = "extract.prompt.v2"
+EXTRACT_PROMPT_VERSION = "extract.prompt.v3"
 
 SYSTEM_PROMPT = (
     "You extract structured intent and slot values for a Vietnamese citizen "
@@ -24,7 +24,9 @@ SYSTEM_PROMPT = (
     "true/false requires an explicit positive or negative statement "
     "(đã/có vs chưa/không/không có). Negation applies to the nearest claim: "
     "'không có giấy chứng sinh' is false, not true. If a slot is not stated, "
-    "omit it. If the request is too vague to pick a procedure, set "
+    "omit it. An enum value MUST be one of enum_values; enum_labels (same "
+    "order) say how a citizen names each value, so 'sinh bình thường' maps to "
+    "the value whose label says so. If the request is too vague to pick a procedure, set "
     "procedure_code null, confidence 0, and abstain_reason. Never guess. "
     "Output must be a single JSON object matching this schema: "
     "{schema_version:'extract.v1', intent:{procedure_code, confidence 0..1, "
@@ -59,6 +61,7 @@ def build_user_payload(request: ExtractRequest) -> dict:
                         "type": spec.type,
                         "question": spec.question,
                         "enum_values": spec.enum_values,
+                        **({"enum_labels": spec.enum_labels} if spec.enum_labels else {}),
                     }
                     for key, spec in c.slots.items()
                 },

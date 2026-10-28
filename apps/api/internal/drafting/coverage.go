@@ -27,7 +27,9 @@ type CoverageResult struct {
 	Proposals         []MaterialProposal
 }
 
-func EvaluateCoverage(definition []byte, evidence []EvidenceItem, excerpts []Excerpt, source SourceSnapshot) CoverageResult {
+// decided (optional): content keys of proposals an Admin kept without a
+// source; they count as covered and are reported as a warning instead.
+func EvaluateCoverage(definition []byte, evidence []EvidenceItem, excerpts []Excerpt, source SourceSnapshot, decided ...map[string]bool) CoverageResult {
 	out := CoverageResult{
 		Issues:    make([]decision.DraftIssue, 0),
 		Evidence:  append([]EvidenceItem{}, evidence...),
@@ -135,7 +137,23 @@ func EvaluateCoverage(definition []byte, evidence []EvidenceItem, excerpts []Exc
 		}
 	}
 
+	adminKept := map[string]bool{}
+	for _, d := range decided {
+		for k, v := range d {
+			adminKept[k] = adminKept[k] || v
+		}
+	}
 	for _, prop := range proposals {
+		if !covered[prop.ID] && adminKept[proposalContentKey(prop)] {
+			covered[prop.ID] = true
+			out.Issues = append(out.Issues, decision.DraftIssue{
+				Code:       "ADMIN_DECISION_NO_SOURCE",
+				Severity:   "warning",
+				Message:    "kept by an Admin decision; the source document does not state it",
+				ProposalID: prop.ID,
+			})
+			continue
+		}
 		if !covered[prop.ID] {
 			out.Missing++
 			out.Issues = append(out.Issues, decision.DraftIssue{
@@ -167,6 +185,7 @@ func verifyQuotes(evidence []EvidenceItem, excerpts []Excerpt, source SourceSnap
 	for _, item := range excerpts {
 		byID[item.ExcerptID] = item
 	}
+	neighbours := newExcerptIndex(excerpts)
 	for i := range out.items {
 		item := &out.items[i]
 		if item.ReviewStatus == "" {
@@ -219,7 +238,8 @@ func verifyQuotes(evidence []EvidenceItem, excerpts []Excerpt, source SourceSnap
 			})
 			continue
 		}
-		if item.Page < excerpt.PageStart || item.Page > excerpt.PageEnd {
+		spansBoundary := !quotationInText(item.Quotation, excerpt.Content) && neighbours.quoteFound(item.Quotation, item.Page, excerpt)
+		if !spansBoundary && (item.Page < excerpt.PageStart || item.Page > excerpt.PageEnd) {
 			out.invalid++
 			item.QuoteValid = false
 			item.Status = "source_reference_invalid"
@@ -240,7 +260,7 @@ func verifyQuotes(evidence []EvidenceItem, excerpts []Excerpt, source SourceSnap
 			})
 			continue
 		}
-		if !quotationInText(item.Quotation, excerpt.Content) {
+		if !spansBoundary && !quotationInText(item.Quotation, excerpt.Content) {
 			out.invalid++
 			item.QuoteValid = false
 			item.Status = "quotation_not_found"

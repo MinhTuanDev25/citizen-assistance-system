@@ -13,7 +13,7 @@ from app.config import Settings
 from app.grounding.quotes import annotate_evidence, classify_evidence, rewrite_canonical_ids
 from app.models.draft import DraftRequest, DraftResponse, ModelDraft, UsageMeta, ValidationBlock
 from app.providers.base import ProviderError
-from app.providers.prompt_draft import DRAFT_PROMPT_VERSION, prompt_hash
+from app.providers.prompt_draft import prompt_hash, prompt_version
 
 logger = logging.getLogger("ai_service.draft")
 
@@ -103,8 +103,8 @@ class DraftService:
             validation=validation,
             provider=provider.name,
             model=getattr(provider, "draft_model", None) or provider.model,
-            prompt_version=DRAFT_PROMPT_VERSION,
-            prompt_hash=prompt_hash(),
+            prompt_version=prompt_version(request.partial),
+            prompt_hash=prompt_hash(request.partial),
             usage=usage,
             latency_ms=latency_ms,
             http_status=http_status,

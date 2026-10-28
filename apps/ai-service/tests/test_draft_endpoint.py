@@ -56,7 +56,7 @@ def test_draft_happy_path_mock():
     assert "noi_sinh" in body["definition"]["slots"]
     assert body["validation"]["semantic_approved"] is False
     assert body["validation"]["schema_valid"] is True
-    assert body["prompt_version"] == "draft.prompt.v2"
+    assert body["prompt_version"] == "draft.prompt.v5"
 
 
 def test_draft_rejects_unauthorized():

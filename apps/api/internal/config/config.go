@@ -46,13 +46,18 @@ type Config struct {
 	AIDraftTimeoutMS    int
 
 	// Admin PDF intake (P3.1). Off by default: the API does not open object storage.
-	AdminIngestionEnabled         bool
-	AdminIndexingEnabled          bool
-	IndexMode                     string
-	IndexClaimTTL                 time.Duration
-	IndexTimeout                  time.Duration
-	IndexPipelineTimeout          time.Duration
-	IndexPublishTimeout           time.Duration
+	AdminIngestionEnabled bool
+	AdminIndexingEnabled  bool
+	IndexMode             string
+	IndexClaimTTL         time.Duration
+	IndexTimeout          time.Duration
+	IndexPipelineTimeout  time.Duration
+	IndexPublishTimeout   time.Duration
+	// IndexAsync runs pipeline indexing as a background job: the admin request
+	// returns once the job is claimed, and a heartbeat renews the lease.
+	IndexAsync                    bool
+	IndexHeartbeat                time.Duration
+	IndexMaxConcurrent            int
 	ObjectStorageEndpoint         string
 	ObjectStorageAccessKey        string
 	ObjectStorageSecretKey        string
@@ -85,7 +90,7 @@ const AIRetrieveTimeoutHardMaxMS = 10000
 
 // AIDraftTimeoutHardMaxMS is the Admin drafting ceiling. This is independent
 // of the citizen extract 8s cap.
-const AIDraftTimeoutHardMaxMS = 120000
+const AIDraftTimeoutHardMaxMS = 310000
 
 // SpeechTimeoutHardMaxMS is above the upstream SPEECH_REQUEST_TIMEOUT_S (120s)
 // so a legitimate GPU call is not cut by the Go client first.
@@ -177,6 +182,8 @@ func Load() (Config, error) {
 		IndexTimeout:                  3 * time.Second,
 		IndexPipelineTimeout:          2 * time.Minute,
 		IndexPublishTimeout:           10 * time.Second,
+		IndexHeartbeat:                15 * time.Second,
+		IndexMaxConcurrent:            1,
 		ObjectStorageAutoCreateBucket: true,
 		SpeechEnabled:                 false,
 		SpeechTimeoutMS:               130000,
@@ -233,7 +240,30 @@ func Load() (Config, error) {
 // IndexLeaseSafetyMargin keeps a crashed claim recoverable after the worker timeout.
 const IndexLeaseSafetyMargin = time.Second
 
+// IndexAsyncMaxPipelineTimeout bounds one background job, matching the AI service ceiling.
+const IndexAsyncMaxPipelineTimeout = 2 * time.Hour
+
 func validateIndexLease(cfg Config) error {
+	if cfg.IndexMode == "pipeline" && cfg.IndexAsync {
+		// The heartbeat renews the lease, so the TTL only has to outlive a few
+		// missed beats; a crashed API frees the link for Retry within one TTL.
+		if cfg.IndexPipelineTimeout <= 0 || cfg.IndexPipelineTimeout > IndexAsyncMaxPipelineTimeout {
+			return fmt.Errorf("INDEX_PIPELINE_TIMEOUT_SECONDS must be in (0, 7200] when INDEX_ASYNC=true")
+		}
+		if cfg.IndexHeartbeat < time.Second || cfg.IndexHeartbeat > 2*time.Minute {
+			return fmt.Errorf("INDEX_HEARTBEAT_SECONDS must be in [1, 120]")
+		}
+		if cfg.IndexClaimTTL < 3*cfg.IndexHeartbeat || cfg.IndexClaimTTL > 16*time.Minute {
+			return fmt.Errorf("INDEX_CLAIM_TTL_SECONDS must be at least 3x INDEX_HEARTBEAT_SECONDS and at most 960 when INDEX_ASYNC=true")
+		}
+		if cfg.IndexMaxConcurrent < 1 || cfg.IndexMaxConcurrent > 4 {
+			return fmt.Errorf("INDEX_MAX_CONCURRENT must be in [1, 4]")
+		}
+		if cfg.IndexPublishTimeout <= 0 || cfg.IndexPublishTimeout > time.Minute {
+			return fmt.Errorf("INDEX_PUBLISH_TIMEOUT_MS must be in (0, 60000]")
+		}
+		return nil
+	}
 	if cfg.IndexMode == "pipeline" {
 		if cfg.IndexPipelineTimeout <= 0 || cfg.IndexPipelineTimeout > 15*time.Minute {
 			return fmt.Errorf("INDEX_PIPELINE_TIMEOUT_SECONDS must be in (0, 900]")
@@ -726,6 +756,30 @@ func applyEnvOverrides(cfg *Config) error {
 			return fmt.Errorf("INDEX_PUBLISH_TIMEOUT_MS must be an integer")
 		}
 		cfg.IndexPublishTimeout = time.Duration(n) * time.Millisecond
+	}
+	if v, ok := os.LookupEnv("INDEX_ASYNC"); ok && strings.TrimSpace(v) != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			cfg.IndexAsync = true
+		case "0", "false", "no", "off":
+			cfg.IndexAsync = false
+		default:
+			return fmt.Errorf("INDEX_ASYNC must be true or false")
+		}
+	}
+	if v, ok := os.LookupEnv("INDEX_HEARTBEAT_SECONDS"); ok && strings.TrimSpace(v) != "" {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("INDEX_HEARTBEAT_SECONDS must be an integer")
+		}
+		cfg.IndexHeartbeat = time.Duration(n) * time.Second
+	}
+	if v, ok := os.LookupEnv("INDEX_MAX_CONCURRENT"); ok && strings.TrimSpace(v) != "" {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("INDEX_MAX_CONCURRENT must be an integer")
+		}
+		cfg.IndexMaxConcurrent = n
 	}
 	if v, ok := os.LookupEnv("SPEECH_ENABLED"); ok && strings.TrimSpace(v) != "" {
 		switch strings.ToLower(strings.TrimSpace(v)) {

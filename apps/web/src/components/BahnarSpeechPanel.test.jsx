@@ -12,7 +12,13 @@ function tone(n) {
 }
 
 function buttonNamed(host, label) {
-  return [...host.querySelectorAll('button')].find((node) => node.textContent.replace(/\s+/g, ' ').trim() === label)
+  const translated = {
+    'Micro Bahnar': 'Ghi tiếng Bahnar',
+    'Tải file WAV': 'Tải tệp âm thanh',
+    'Dừng & Dịch': 'Dừng và dịch',
+    'Gỡ file': 'Gỡ tệp',
+  }[label] || label
+  return [...host.querySelectorAll('button')].find((node) => node.textContent.replace(/\s+/g, ' ').trim() === translated)
 }
 
 async function renderPanel(props) {
@@ -560,7 +566,7 @@ describe('BahnarSpeechPanel', () => {
       input.dispatchEvent(new Event('change', { bubbles: true }))
     })
     await flush()
-    expect(host.textContent).toMatch(/Không đọc được file/)
+    expect(host.textContent).toMatch(/Không đọc được tệp/)
     expect(translate).not.toHaveBeenCalled()
   })
 

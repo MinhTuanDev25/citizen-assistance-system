@@ -469,7 +469,9 @@ def retrieve_evidence(body: RetrieveRequest, http_request: Request) -> RetrieveR
 
 def _run_v2(body: IndexRequestV2, settings: Settings, deadline=None) -> IndexResponseV2:
     from app.indexing.chunk import ChunkConfig
+    from app.indexing.pipeline import OcrQuality
     from app.indexing.postgres import PostgresChunks
+    from app.indexing.progress import PostgresPageCache, PostgresProgress
     from app.indexing.qdrant import QdrantWriter
 
     if _models is None:
@@ -490,6 +492,8 @@ def _run_v2(body: IndexRequestV2, settings: Settings, deadline=None) -> IndexRes
         page_range=body.page_range,
         pipeline_version=body.pipeline_version or PIPELINE_VERSION,
     )
+    progress = PostgresProgress(settings.database_url)
+    page_cache = PostgresPageCache(settings.database_url)
     try:
         deps = _Deps(
             objects=_minio_objects(settings),
@@ -499,6 +503,8 @@ def _run_v2(body: IndexRequestV2, settings: Settings, deadline=None) -> IndexRes
             chunks=PostgresChunks(settings.database_url),
             renderer=renderer,
         )
+        deps.progress = progress
+        deps.page_cache = page_cache
         result = run_pipeline(
             job,
             deps,
@@ -507,10 +513,20 @@ def _run_v2(body: IndexRequestV2, settings: Settings, deadline=None) -> IndexRes
             bucket=settings.object_bucket,
             max_pages=settings.max_pdf_pages,
             max_ocr_pages=settings.max_ocr_pages,
+            ocr_timeout_s=settings.ocr_page_timeout_s,
+            dpi=settings.ocr_dpi,
             deadline=deadline,
+            quality=OcrQuality(
+                min_mean_confidence=settings.ocr_min_mean_confidence,
+                max_low_confidence_ratio=settings.ocr_max_low_confidence_ratio,
+                max_rejected_pages=settings.index_max_rejected_pages,
+            ),
         )
     except IndexFailure as exc:
         return _failed(body, exc.code)
+    finally:
+        progress.close()
+        page_cache.close()
     return IndexResponseV2(
         schema_version="index.v2",
         document_id=body.document_id,

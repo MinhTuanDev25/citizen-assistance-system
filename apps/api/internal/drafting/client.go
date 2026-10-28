@@ -18,13 +18,15 @@ import (
 
 const (
 	DefaultDraftMaxResponseBytes = 512 << 10
-	HardMaxDraftTimeout          = 120 * time.Second
+	HardMaxDraftTimeout          = 310 * time.Second
 	DefaultDraftTimeout          = 45 * time.Second
 )
 
 var (
-	ErrDisabled     = errors.New("drafting: client not configured")
-	ErrRateLimited  = errors.New("drafting: rate limited")
+	ErrDisabled    = errors.New("drafting: client not configured")
+	ErrRateLimited = errors.New("drafting: rate limited")
+	// ErrDraftTimeout means the model did not answer in time (AI 504 or client deadline).
+	ErrDraftTimeout = errors.New("drafting: ai draft timed out")
 	ErrInvalidDraft = errors.New("drafting: invalid provider response")
 )
 
@@ -37,16 +39,34 @@ type Client struct {
 }
 
 type providerRequest struct {
-	SchemaVersion   string    `json:"schema_version"`
-	RequestID       string    `json:"request_id"`
-	ProcedureCode   string    `json:"procedure_code"`
-	ProcedureName   string    `json:"procedure_name"`
-	XaID            string    `json:"xa_id"`
-	DocumentID      string    `json:"document_id"`
-	GenerationID    string    `json:"generation_id"`
-	SourcePageStart int       `json:"source_page_start"`
-	SourcePageEnd   int       `json:"source_page_end"`
-	Excerpts        []Excerpt `json:"excerpts"`
+	SchemaVersion   string        `json:"schema_version"`
+	RequestID       string        `json:"request_id"`
+	ProcedureCode   string        `json:"procedure_code"`
+	ProcedureName   string        `json:"procedure_name"`
+	XaID            string        `json:"xa_id"`
+	DocumentID      string        `json:"document_id"`
+	GenerationID    string        `json:"generation_id"`
+	SourcePageStart int           `json:"source_page_start"`
+	SourcePageEnd   int           `json:"source_page_end"`
+	Excerpts        []Excerpt     `json:"excerpts"`
+	Context         *BatchContext `json:"context,omitempty"`
+}
+
+// BatchContext tells the model it sees one part of a longer procedure section.
+type BatchContext struct {
+	Partial      bool        `json:"partial"`
+	SectionTitle string      `json:"section_title,omitempty"`
+	BatchIndex   int         `json:"batch_index"`
+	BatchCount   int         `json:"batch_count"`
+	KnownSlots   []KnownSlot `json:"known_slots"`
+}
+
+// KnownSlot is a slot an earlier batch already proposed; reusing its key lets
+// the merge recognise the same question.
+type KnownSlot struct {
+	Key      string `json:"key"`
+	Type     string `json:"type"`
+	Question string `json:"question"`
 }
 
 type ProviderResponse struct {
@@ -89,6 +109,12 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 }
 
 func (c *Client) Draft(ctx context.Context, requestID uuid.UUID, snap SourceSnapshot) (*ProviderResponse, error) {
+	return c.DraftBatch(ctx, requestID, snap, nil)
+}
+
+// DraftBatch drafts from one batch of a longer section (bctx != nil) or from a
+// whole small source (bctx == nil).
+func (c *Client) DraftBatch(ctx context.Context, requestID uuid.UUID, snap SourceSnapshot, bctx *BatchContext) (*ProviderResponse, error) {
 	if c == nil || c.BaseURL == "" {
 		return nil, ErrDisabled
 	}
@@ -103,6 +129,7 @@ func (c *Client) Draft(ctx context.Context, requestID uuid.UUID, snap SourceSnap
 		SourcePageStart: snap.SourcePageStart,
 		SourcePageEnd:   snap.SourcePageEnd,
 		Excerpts:        snap.Excerpts,
+		Context:         bctx,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -129,12 +156,19 @@ func (c *Client) Draft(ctx context.Context, requestID uuid.UUID, snap SourceSnap
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("%w: %v", ErrDraftTimeout, err)
+		}
 		return nil, fmt.Errorf("drafting: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	maxBytes := c.MaxResponseBytes
 	if maxBytes <= 0 {
 		maxBytes = DefaultDraftMaxResponseBytes
+	}
+	if resp.StatusCode == http.StatusGatewayTimeout {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxBytes))
+		return nil, ErrDraftTimeout
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxBytes))

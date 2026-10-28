@@ -144,7 +144,7 @@ describe('DocumentsPage', () => {
       root.render(createElement(MemoryRouter, null, createElement(DocumentsPage)))
     })
     await act(async () => {})
-    const button = [...host.querySelectorAll('button')].find((el) => el.textContent === 'Tải PDF')
+    const button = [...host.querySelectorAll('button')].find((el) => el.textContent === 'Tải tài liệu')
     await act(async () => {
       button.click()
     })

@@ -2,6 +2,7 @@ package aiextract
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -167,6 +168,12 @@ func containsFoldedSpan(folded, span string) bool {
 // GroundSlot reports whether a contract-valid proposal is supported by the
 // citizen message. Invented evidence spans and unsupported inferences fail.
 func GroundSlot(message string, spec SlotSpec, key string, value any, evidence string) (bool, dropReason) {
+	return GroundSlotFor("", message, spec, key, value, evidence)
+}
+
+// GroundSlotFor is GroundSlot with the procedure's name, whose words do not
+// count as naming a question's topic.
+func GroundSlotFor(procedureName, message string, spec SlotSpec, key string, value any, evidence string) (bool, dropReason) {
 	foldedMsg := foldMessage(message)
 	foldedEv := foldMessage(evidence)
 	if foldedEv == "" {
@@ -181,10 +188,13 @@ func GroundSlot(message string, spec SlotSpec, key string, value any, evidence s
 		if !ok {
 			return false, dropPolarityMismatch
 		}
+		if _, known := booleanCueTable[key]; !known {
+			return groundQuestionBoolean(spec.Question, procedureName, foldedEv, b)
+		}
 		return groundBoolean(message, key, b)
 	case "enum":
 		s, _ := value.(string)
-		return groundEnum(message, key, s)
+		return groundEnum(message, key, s, spec, foldedEv)
 	case "string":
 		s, _ := value.(string)
 		foldedVal := foldMessage(s)
@@ -256,16 +266,78 @@ func groundBoolean(message, key string, proposed bool) (bool, dropReason) {
 	return false, dropPolarityMismatch
 }
 
-func groundEnum(message, key, value string) (bool, dropReason) {
+// questionFiller: words of a yes/no question that do not say what it is about.
+var questionFiller = map[string]bool{
+	"anh": true, "chi": true, "co": true, "khong": true, "hay": true, "da": true,
+	"chua": true, "la": true, "phai": true, "cua": true, "cho": true, "duoc": true, "nay": true,
+	"nao": true, "gi": true, "toi": true, "minh": true, "can": true, "muon": true, "hoac": true,
+	"va": true, "voi": true, "thi": true, "se": true, "dang": true, "roi": true, "nguoi": true,
+	"thuc": true, "hien": true, "thu": true, "tuc": true, "yeu": true, "cau": true,
+}
+
+var answerNegation = map[string]bool{"khong": true, "chua": true, "ko": true, "k": true, "chang": true}
+
+// groundQuestionBoolean grounds a yes/no answer for a question without a
+// hand-written cue table (Admin/AI-drafted procedures). The evidence span is
+// verbatim in the message (checked before). It must name what the question is
+// about: at least half of the question's distinctive words, i.e. its words
+// minus filler and minus the procedure's own name ("bản sao", not "giấy khai
+// sinh", for "Bạn có yêu cầu cấp bản sao Giấy khai sinh?"). Its polarity must
+// match: a negation word (không, chưa) means false, none means true. Hedged
+// spans ("không biết") are dropped.
+func groundQuestionBoolean(question, procedureName, foldedEv string, proposed bool) (bool, dropReason) {
+	words := strings.Fields(foldMessage(question))
+	if len(words) > 0 && words[0] == "ban" { // "Bạn có …": the address, not "bản"
+		words = words[1:]
+	}
+	generic := map[string]bool{}
+	for _, w := range strings.Fields(foldMessage(procedureName)) {
+		generic[w] = true
+	}
+	topic, distinct := map[string]bool{}, map[string]bool{}
+	for _, w := range words {
+		if questionFiller[w] || len(w) < 2 {
+			continue
+		}
+		topic[w] = true
+		if !generic[w] {
+			distinct[w] = true
+		}
+	}
+	if len(distinct) == 0 {
+		distinct = topic
+	}
+	if len(distinct) == 0 {
+		return false, dropUnknownBoolean
+	}
+	hits, negated := map[string]bool{}, false
+	for _, w := range strings.Fields(foldedEv) {
+		if distinct[w] {
+			hits[w] = true
+		}
+		if answerNegation[w] {
+			negated = true
+		}
+	}
+	if len(hits) == 0 || len(hits)*2 < len(distinct) {
+		return false, dropNoBooleanCues
+	}
+	if classifyClause(foldedEv).uncertain {
+		return false, dropUncertain
+	}
+	if proposed == !negated {
+		return true, ""
+	}
+	return false, dropPolarityMismatch
+}
+
+func groundEnum(message, key, value string, spec SlotSpec, foldedEv string) (bool, dropReason) {
 	table, ok := enumCueTable[key]
 	var phrases []string
 	if ok {
 		phrases = table[value]
 	} else {
-		foldedVal := foldMessage(strings.ReplaceAll(value, "_", " "))
-		if foldedVal != "" {
-			phrases = []string{foldedVal}
-		}
+		phrases = enumPhrases(spec, value, foldedEv)
 	}
 	if len(phrases) == 0 {
 		return false, dropNoEnumCue
@@ -414,6 +486,75 @@ func enumDisjunction(folded, key string) bool {
 		}
 	}
 	return hits >= 2
+}
+
+// enumPhrases: the cues of an enum value for a slot without a hand-written
+// cue table (Admin/AI-drafted procedures): its code ("tre sinh thuong"), its
+// label ("tre sinh binh thuong"), and the model's evidence span when that span
+// clearly names this value and no other ("sinh thuong": its words belong to
+// tre_sinh_thuong, and at least one of them to no other choice). The span is
+// verbatim in the message (checked before), so this never accepts invented
+// text; negation and hedging are still checked clause by clause.
+func enumPhrases(spec SlotSpec, value, foldedEv string) []string {
+	idx := -1
+	for i, v := range spec.EnumValues {
+		if v == value {
+			idx = i
+		}
+	}
+	words := func(i int) map[string]bool {
+		out := map[string]bool{}
+		text := strings.ReplaceAll(spec.EnumValues[i], "_", " ")
+		if i < len(spec.EnumLabels) {
+			text += " " + spec.EnumLabels[i]
+		}
+		for _, w := range strings.Fields(foldMessage(text)) {
+			out[w] = true
+		}
+		return out
+	}
+	phrases := []string{}
+	add := func(p string) {
+		if p != "" && !slices.Contains(phrases, p) {
+			phrases = append(phrases, p)
+		}
+	}
+	add(foldMessage(strings.ReplaceAll(value, "_", " ")))
+	if idx < 0 {
+		return phrases
+	}
+	if idx < len(spec.EnumLabels) {
+		add(foldMessage(spec.EnumLabels[idx]))
+	}
+	own := words(idx)
+	others := map[string]bool{}
+	for i := range spec.EnumValues {
+		if i != idx {
+			for w := range words(i) {
+				others[w] = true
+			}
+		}
+	}
+	ev := strings.Fields(foldedEv)
+	if len(ev) == 0 {
+		return phrases
+	}
+	inOwn, distinctive := 0, false
+	for _, w := range ev {
+		if others[w] && !own[w] {
+			return phrases // the span also names another choice
+		}
+		if own[w] {
+			inOwn++
+			if !others[w] {
+				distinctive = true
+			}
+		}
+	}
+	if distinctive && inOwn*2 >= len(ev) {
+		add(foldedEv)
+	}
+	return phrases
 }
 
 func splitClauses(message string) []string {

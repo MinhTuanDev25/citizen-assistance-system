@@ -217,7 +217,7 @@ export function BahnarSpeechPanel({
     clearTick()
     if (stillValid(op)) {
       setPhase('encoding')
-      setStatus(auto ? 'Đã đủ thời lượng tối đa. Đang tạo WAV…' : 'Đang tạo file WAV 16 kHz…')
+      setStatus(auto ? 'Đã đủ thời lượng tối đa. Đang tạo tệp âm thanh…' : 'Đang tạo tệp âm thanh…')
     }
     try {
       const encoded = await cap.stopAndEncode()
@@ -242,7 +242,7 @@ export function BahnarSpeechPanel({
       pendingRef.current = null
       setRetryAllowed(false)
       setPhase('translation_error')
-      setError(err.message || 'Không tạo được file ghi âm.')
+      setError(err.message || 'Không tạo được tệp ghi âm.')
       setStatus('')
     } finally {
       if (op === opRef.current) stopLockRef.current = false
@@ -288,7 +288,7 @@ export function BahnarSpeechPanel({
       resetResult()
       setFileMeta({ name: file.name, size: sized.size, duration: 0 })
       setPhase('reading_file')
-      setStatus('Đang đọc file…')
+      setStatus('Đang đọc tệp…')
     }
     let raw
     try {
@@ -297,7 +297,7 @@ export function BahnarSpeechPanel({
       if (gen !== fileGenRef.current || !aliveRef.current) return
       resetPending()
       setPhase('translation_error')
-      setError('Không đọc được file.')
+      setError('Không đọc được tệp.')
       setStatus('')
       return
     }
@@ -330,7 +330,7 @@ export function BahnarSpeechPanel({
       duration: check.duration,
     })
     setPhase('upload_ready')
-    setStatus('Đã chọn file. Bấm Dịch âm thanh để gửi.')
+    setStatus('Đã chọn tệp. Bấm Dịch âm thanh để gửi.')
   }
 
   function clearFile() {
@@ -394,7 +394,7 @@ export function BahnarSpeechPanel({
     const pending = currentPending()
     if (!pending) {
       setRetryAllowed(false)
-      setError('Không còn bản ghi hợp lệ để dịch. Ghi âm hoặc chọn file lại.')
+      setError('Không còn bản ghi hợp lệ để dịch. Hãy ghi âm hoặc chọn lại tệp.')
       setStatus('')
       return
     }
@@ -458,7 +458,7 @@ export function BahnarSpeechPanel({
     if (currentPending()) {
       setRetryAllowed(true)
       setPhase('upload_ready')
-      setStatus('Có thể dịch lại file hiện tại hoặc ghi/chọn file mới.')
+      setStatus('Có thể dịch lại tệp hiện tại hoặc ghi âm, chọn tệp mới.')
       return
     }
     setPhase('idle')
@@ -479,7 +479,7 @@ export function BahnarSpeechPanel({
           disabled={disabled || phase === 'encoding' || phase === 'submitting_chat'}
           onClick={() => openMode(mode === 'mic' ? 'closed' : 'mic')}
         >
-          Micro Bahnar
+          Ghi tiếng Bahnar
         </button>
         <button
           type="button"
@@ -487,7 +487,7 @@ export function BahnarSpeechPanel({
           disabled={disabled || phase === 'encoding' || phase === 'submitting_chat'}
           onClick={() => openMode(mode === 'upload' ? 'closed' : 'upload')}
         >
-          Tải file WAV
+          Tải tệp âm thanh
         </button>
       </div>
 
@@ -498,7 +498,7 @@ export function BahnarSpeechPanel({
       {mode === 'mic' ? (
         <div className="bahnar-speech-body">
           <p className="bahnar-speech-hint">
-            Không dùng nhận giọng trình duyệt. Bấm Dừng &amp; Dịch mới gửi Go Backend.
+            Âm thanh chỉ được gửi tới máy chủ sau khi bạn bấm Dừng và dịch.
           </p>
           <div className="bahnar-speech-actions">
             <button
@@ -514,7 +514,7 @@ export function BahnarSpeechPanel({
               disabled={disabled || phase !== 'recording'}
               onClick={() => void finalizeRecord()}
             >
-              Dừng &amp; Dịch
+              Dừng và dịch
             </button>
             <button
               type="button"
@@ -527,7 +527,7 @@ export function BahnarSpeechPanel({
           </div>
           {recording ? (
             <p className="bahnar-speech-live" role="status" aria-live="polite">
-              Đang ghi {formatClock(elapsedMs)} / {SPEECH_MAX_AUDIO_SECONDS}s — chưa gửi máy chủ
+              Đang ghi {formatClock(elapsedMs)} / {SPEECH_MAX_AUDIO_SECONDS} giây — chưa gửi máy chủ
             </p>
           ) : null}
         </div>
@@ -536,12 +536,12 @@ export function BahnarSpeechPanel({
       {mode === 'upload' ? (
         <div className="bahnar-speech-body">
           <p className="bahnar-speech-hint">
-            Chỉ nhận WAV PCM 16-bit mono 16 kHz, tối đa {SPEECH_MAX_AUDIO_SECONDS}s /{' '}
-            {formatBytes(SPEECH_MAX_WAV_BYTES)}. Chọn file chưa gửi dịch.
+            Chỉ nhận tệp âm thanh đơn kênh, tối đa {SPEECH_MAX_AUDIO_SECONDS} giây /{' '}
+            {formatBytes(SPEECH_MAX_WAV_BYTES)}. Tệp chỉ được gửi khi bạn yêu cầu dịch.
           </p>
           <div className="bahnar-speech-actions">
             <label className="hint bahnar-file">
-              Chọn file WAV
+              Chọn tệp âm thanh
               <input
                 ref={fileRef}
                 type="file"
@@ -563,13 +563,13 @@ export function BahnarSpeechPanel({
               disabled={disabled || (busy && phase !== 'reading_file') || !fileMeta}
               onClick={clearFile}
             >
-              Gỡ file
+              Gỡ tệp
             </button>
           </div>
           {fileMeta ? (
             <p className="bahnar-speech-meta">
               {fileMeta.name} · {formatBytes(fileMeta.size)}
-              {fileMeta.duration ? ` · ${fileMeta.duration.toFixed(1)}s` : ''}
+              {fileMeta.duration ? ` · ${fileMeta.duration.toFixed(1)} giây` : ''}
             </p>
           ) : null}
         </div>

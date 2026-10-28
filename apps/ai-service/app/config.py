@@ -38,7 +38,8 @@ DEFAULT_MAX_OUTPUT_TOKENS = 1024
 DEFAULT_DRAFT_MAX_OUTPUT_TOKENS = 8192
 MAX_OUTPUT_TOKENS_LIMIT = 8192
 DEFAULT_DRAFT_TIMEOUT_S = 45.0
-MAX_DRAFT_TIMEOUT_S = 120.0
+# A ~10-page legal source (60-80 excerpts) can take Gemini 1-3 minutes.
+MAX_DRAFT_TIMEOUT_S = 300.0
 MIN_SERVICE_TOKEN_LEN = 16
 MAX_SERVICE_TOKEN_LEN = 256
 
@@ -122,6 +123,11 @@ class Settings:
     pipeline_timeout_s: float = 120
     max_pdf_pages: int = 50
     max_ocr_pages: int = 20
+    ocr_min_mean_confidence: float = 85.0
+    ocr_max_low_confidence_ratio: float = 0.10
+    index_max_rejected_pages: int = 0
+    ocr_page_timeout_s: float = 30
+    ocr_dpi: int = 150
     embed_batch_size: int = 8
     termination_grace_s: float = 1.0
     object_region: str = ""
@@ -267,9 +273,16 @@ def load_settings() -> Settings:
         embedding_provider=embedding_provider,
         ocr_provider=ocr_provider,
         index_max_inflight=_bounded_int("INDEX_MAX_INFLIGHT", 1, 1, 4),
-        pipeline_timeout_s=float(_bounded_int("INDEX_PIPELINE_TIMEOUT_SECONDS", 120, 1, 900)),
-        max_pdf_pages=_bounded_int("INDEX_MAX_PDF_PAGES", 50, 1, 500),
-        max_ocr_pages=_bounded_int("INDEX_MAX_OCR_PAGES", 20, 1, 100),
+        # Long PDFs run as a background job (Go INDEX_ASYNC); these are hard ceilings.
+        pipeline_timeout_s=float(_bounded_int("INDEX_PIPELINE_TIMEOUT_SECONDS", 120, 1, 7200)),
+        max_pdf_pages=_bounded_int("INDEX_MAX_PDF_PAGES", 50, 1, 2000),
+        max_ocr_pages=_bounded_int("INDEX_MAX_OCR_PAGES", 20, 1, 2000),
+        ocr_min_mean_confidence=_bounded_float("OCR_MIN_MEAN_CONFIDENCE", 85.0, 50.0, 100.0),
+        ocr_max_low_confidence_ratio=_bounded_float("OCR_MAX_LOW_CONFIDENCE_RATIO", 0.10, 0.0, 0.5),
+        index_max_rejected_pages=_bounded_int("INDEX_MAX_REJECTED_PAGES", 0, 0, 2000),
+        ocr_page_timeout_s=float(_bounded_int("OCR_PAGE_TIMEOUT_SECONDS", 30, 1, 300)),
+        # Page render resolution for OCR. 200 measured fewer Vietnamese tone-mark errors than 150.
+        ocr_dpi=_bounded_int("OCR_DPI", 150, 72, 300),
         embed_batch_size=_bounded_int("EMBED_BATCH_SIZE", 8, 1, 32),
         termination_grace_s=_bounded_float("INDEX_TERMINATION_GRACE_SECONDS", 1.0, 0.05, 5.0),
         object_region=os.getenv("OBJECT_STORAGE_REGION", "").strip(),
@@ -301,8 +314,8 @@ def _pipeline_settings() -> tuple[str, str, str]:
         return mode, embedding_provider or "fake", ocr_provider or "fake"
     if embedding_provider not in ("onnx", "fake"):
         raise ConfigError("EMBEDDING_PROVIDER must be onnx or fake")
-    if ocr_provider not in ("paddle", "fake"):
-        raise ConfigError("OCR_PROVIDER must be paddle or fake")
+    if ocr_provider not in ("paddle", "tesseract", "fake"):
+        raise ConfigError("OCR_PROVIDER must be paddle, tesseract or fake")
     if embedding_provider == "onnx" and not os.getenv("EMBEDDING_MODEL_DIR", "").strip():
         raise ConfigError("EMBEDDING_MODEL_DIR is required when EMBEDDING_PROVIDER=onnx")
     if ocr_provider == "paddle" and not os.getenv("OCR_MODEL_DIR", "").strip():

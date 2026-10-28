@@ -49,8 +49,13 @@ vi.mock('../components/CitizenLayout.jsx', () => ({
 }))
 
 function buttonNamed(host, label) {
+  const translated = {
+    'Micro Bahnar': 'Ghi tiếng Bahnar',
+    'Tải file WAV': 'Tải tệp âm thanh',
+    'Dừng & Dịch': 'Dừng và dịch',
+  }[label] || label
   return [...host.querySelectorAll('button')].find(
-    (node) => node.textContent.replace(/\s+/g, ' ').trim() === label,
+    (node) => node.textContent.replace(/\s+/g, ' ').trim() === translated,
   )
 }
 
@@ -116,7 +121,7 @@ describe('CitizenChatPage speech confirmation', () => {
     const host = await renderPage()
     const viMic = host.querySelector('button[aria-label="Nói câu hỏi bằng tiếng Việt"]')
     expect(viMic).toBeTruthy()
-    expect(host.textContent).toContain('Micro Bahnar')
+    expect(host.textContent).toContain('Ghi tiếng Bahnar')
     const composer = host.querySelector('textarea[aria-label="Nội dung câu hỏi"]')
     await act(async () => {
       setInputValue(composer, 'xin chào cán bộ')

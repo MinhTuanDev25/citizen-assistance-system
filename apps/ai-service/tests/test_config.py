@@ -95,6 +95,40 @@ def _pipeline_env(monkeypatch):
     monkeypatch.setenv("OBJECT_STORAGE_AUTO_CREATE_BUCKET", "false")
 
 
+def test_tesseract_ocr_needs_no_model_dir_and_reads_quality_limits(monkeypatch):
+    _pipeline_env(monkeypatch)
+    monkeypatch.setenv("OCR_PROVIDER", "tesseract")
+    monkeypatch.delenv("OCR_MODEL_DIR")
+    monkeypatch.setenv("INDEX_PIPELINE_TIMEOUT_SECONDS", "3600")
+    monkeypatch.setenv("INDEX_MAX_PDF_PAGES", "1000")
+    monkeypatch.setenv("INDEX_MAX_OCR_PAGES", "1000")
+    monkeypatch.setenv("OCR_MIN_MEAN_CONFIDENCE", "88")
+    monkeypatch.setenv("OCR_MAX_LOW_CONFIDENCE_RATIO", "0.05")
+    monkeypatch.setenv("INDEX_MAX_REJECTED_PAGES", "2")
+    monkeypatch.setenv("OCR_DPI", "200")
+    settings = load_settings()
+    assert settings.ocr_provider == "tesseract"
+    assert settings.pipeline_timeout_s == 3600 and settings.max_pdf_pages == 1000 and settings.max_ocr_pages == 1000
+    assert settings.ocr_min_mean_confidence == 88 and settings.ocr_max_low_confidence_ratio == 0.05
+    assert settings.index_max_rejected_pages == 2
+    assert settings.ocr_dpi == 200
+    assert settings.index_ready() == (True, None)
+    for name, value in (
+        ("INDEX_PIPELINE_TIMEOUT_SECONDS", "7201"),
+        ("INDEX_MAX_PDF_PAGES", "2001"),
+        ("OCR_MIN_MEAN_CONFIDENCE", "40"),
+        ("OCR_MAX_LOW_CONFIDENCE_RATIO", "0.9"),
+        ("OCR_DPI", "400"),
+    ):
+        monkeypatch.setenv(name, value)
+        with pytest.raises(ConfigError):
+            load_settings()
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("OCR_PROVIDER", "easyocr")
+    with pytest.raises(ConfigError, match="paddle, tesseract or fake"):
+        load_settings()
+
+
 def test_pipeline_requires_storage_credentials(monkeypatch):
     from app.indexing.object_storage import storage_config
 
@@ -328,4 +362,4 @@ def test_status_dict_does_not_include_token():
     )
     blob = str(s.status_dict())
     assert "test-service-token" not in blob
-    assert s.status_dict()["extract_prompt_version"] == "extract.prompt.v2"
+    assert s.status_dict()["extract_prompt_version"] == "extract.prompt.v3"

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { ROUTES } from '../routes.js'
+import { ServiceMark, UiIcon } from '../components/UiIcon.jsx'
 
 // Compile-time flag: production builds leave VITE_DEMO_LOGIN unset → dead branch tree-shaken.
 const DEMO_ON =
@@ -66,20 +67,19 @@ export default function LoginPage() {
     mode === 'admin' ? 'Đăng nhập cán bộ' : 'Đăng nhập công dân'
   const blurb =
     mode === 'admin'
-      ? 'Tài khoản Admin dùng để quản lý thủ tục. Không có mật khẩu mặc định trên production.'
+      ? 'Tài khoản cán bộ dùng để quản lý thủ tục. Hệ thống chính thức không sử dụng mật khẩu mặc định.'
       : 'Đăng nhập để lưu phiên hỏi thủ tục. Bạn vẫn có thể hỏi như khách nếu chưa có tài khoản.'
 
   return (
     <div className="login-screen">
       <aside className="login-hero">
         <div className="login-hero-brand">
-          <div className="brand-icon" aria-hidden>
-            CS
-          </div>
-          <span>Citizen Assistance</span>
+          <ServiceMark />
+          <span>Trợ lý hành chính</span>
         </div>
+        <span className="login-hero-kicker"><UiIcon name="shield" size={18} /> Dịch vụ công trực tuyến</span>
         <h2>Công dân số phục vụ người dân</h2>
-        <p>Hỏi · Tra cứu · Làm thủ tục — tại xã, bằng tiếng Việt.</p>
+        <p>Hỏi đáp, tra cứu và chuẩn bị hồ sơ ngay tại xã, hoàn toàn bằng tiếng Việt.</p>
       </aside>
       <main className="login-panel">
         <form className="login-card" onSubmit={onSubmit}>
@@ -108,13 +108,13 @@ export default function LoginPage() {
           <p className="muted">{blurb}</p>
 
           <label>
-            Email
+            Thư điện tử
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="username"
-              placeholder="email@example.com"
+              placeholder="Nhập địa chỉ thư điện tử"
               required
             />
           </label>
@@ -139,8 +139,7 @@ export default function LoginPage() {
           <div className="login-hint">
             {DEMO_ON ? (
               <p className="cell-muted">
-                Dev demo login enabled (VITE_DEMO_LOGIN). Not present in
-                production builds.
+                Chế độ đăng nhập dùng thử đang được bật và không xuất hiện trên hệ thống chính thức.
               </p>
             ) : null}
             <Link to={ROUTES.home}>Tiếp tục hỏi thủ tục (khách)</Link>

@@ -187,6 +187,7 @@ func (h *Handler) Unlink(c *gin.Context) {
 //	@Param		versionId		path	string	true	"Procedure version id"
 //	@Param		X-Request-ID	header	string	true	"Idempotency key"
 //	@Success	200				{object}	response.Envelope
+//	@Success	202				{object}	response.Envelope	"Job claimed and running in the background (INDEX_ASYNC)"
 //	@Failure	400				{object}	response.Envelope
 //	@Failure	401				{object}	response.Envelope
 //	@Failure	403				{object}	response.Envelope
@@ -209,6 +210,7 @@ func (h *Handler) RequestIndex(c *gin.Context) {
 //	@Param		versionId		path	string	true	"Procedure version id"
 //	@Param		X-Request-ID	header	string	true	"Idempotency key"
 //	@Success	200				{object}	response.Envelope
+//	@Success	202				{object}	response.Envelope	"Job claimed and running in the background (INDEX_ASYNC)"
 //	@Failure	400				{object}	response.Envelope
 //	@Failure	401				{object}	response.Envelope
 //	@Failure	403				{object}	response.Envelope
@@ -231,6 +233,7 @@ func (h *Handler) RetryIndex(c *gin.Context) {
 //	@Param		versionId		path	string	true	"Procedure version id"
 //	@Param		X-Request-ID	header	string	true	"Idempotency key"
 //	@Success	200				{object}	response.Envelope
+//	@Success	202				{object}	response.Envelope	"Job claimed and running in the background (INDEX_ASYNC)"
 //	@Failure	400				{object}	response.Envelope
 //	@Failure	401				{object}	response.Envelope
 //	@Failure	403				{object}	response.Envelope
@@ -315,6 +318,10 @@ func (h *Handler) runIndex(c *gin.Context, retry bool, reindex bool) {
 	}
 	if err != nil {
 		writeIndexErr(c, err)
+		return
+	}
+	if result.Accepted {
+		response.Accepted(c, result)
 		return
 	}
 	response.OK(c, result)

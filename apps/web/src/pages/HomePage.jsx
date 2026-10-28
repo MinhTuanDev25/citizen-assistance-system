@@ -5,10 +5,11 @@ import { CitizenLayout } from '../components/CitizenLayout.jsx'
 import { useAuth } from '../auth/AuthContext.jsx'
 import { useCommune } from '../commune/CommuneContext.jsx'
 import { ROUTES } from '../routes.js'
+import { UiIcon } from '../components/UiIcon.jsx'
 
 const CARDS = [
-  { to: ROUTES.chat, title: 'Hỏi về thủ tục', text: 'Gõ hoặc nói để hỏi giấy tờ, phí, hạn và nơi nộp.', icon: '💬', bg: '#dbeafe' },
-  { to: ROUTES.procedures, title: 'Hướng dẫn hồ sơ', text: 'Danh mục thủ tục đang hỗ trợ tại xã.', icon: '📁', bg: '#dcfce7' },
+  { to: ROUTES.chat, title: 'Hỏi về thủ tục', text: 'Gõ hoặc nói để hỏi giấy tờ, lệ phí, thời hạn và nơi nộp.', icon: 'chat', tone: 'blue' },
+  { to: ROUTES.procedures, title: 'Tra cứu hồ sơ', text: 'Xem danh mục thủ tục đang được hỗ trợ tại xã.', icon: 'documents', tone: 'teal' },
 ]
 
 export default function HomePage() {
@@ -39,9 +40,10 @@ export default function HomePage() {
     <CitizenLayout>
       <section className="home-hero">
         <div>
+          <span className="home-kicker"><UiIcon name="sparkle" size={16} /> Hỗ trợ trực tuyến</span>
           <h1>Xin chào{user?.name ? `, ${user.name}` : ''}!</h1>
           <p>
-            Tôi là trợ lý AI hỗ trợ thủ tục hành chính của xã {commune?.name || '…'}.
+            Tôi là trợ lý thông minh hỗ trợ thủ tục hành chính của xã {commune?.name || '…'}.
             Bạn cần tôi giúp gì hôm nay?
           </p>
         </div>
@@ -63,11 +65,12 @@ export default function HomePage() {
       <div className="home-grid">
         {CARDS.map((card) => (
           <Link key={card.to} to={card.to} className="home-card">
-            <div className="icon" style={{ background: card.bg }} aria-hidden>
-              {card.icon}
+            <div className={`icon ${card.tone}`} aria-hidden>
+              <UiIcon name={card.icon} size={22} />
             </div>
             <strong>{card.title}</strong>
             <span>{card.text}</span>
+            <span className="home-card-link">Mở chức năng <UiIcon name="arrow" size={16} /></span>
           </Link>
         ))}
       </div>

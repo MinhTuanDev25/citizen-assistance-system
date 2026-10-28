@@ -6,7 +6,7 @@ import (
 )
 
 func TestDraftTimeoutIsNotExtractCap(t *testing.T) {
-	if HardMaxDraftTimeout != 120*time.Second {
+	if HardMaxDraftTimeout != 310*time.Second {
 		t.Fatalf("draft hard max = %s", HardMaxDraftTimeout)
 	}
 	c := NewClient("http://ai-service", 45*time.Second)

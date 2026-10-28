@@ -34,7 +34,9 @@ func Decide(in TurnInput) TurnOutput {
 	extracted, rejected := Extract(in.Definition, missingBefore, in.Message)
 	corrections := extractExplicit(in.Definition, filledChoices(in.Definition, state), in.Message)
 	if in.HadPriorState && len(extracted) == 0 && len(rejected) == 0 && len(corrections) == 0 {
-		if key, value, ok := LoneStringAnswer(in.Definition, missingBefore, in.Message); ok {
+		if key, value, ok := LoneChoiceAnswer(in.Definition, missingBefore, in.Message); ok {
+			extracted[key] = value
+		} else if key, value, ok := LoneStringAnswer(in.Definition, missingBefore, in.Message); ok {
 			extracted[key] = value
 		}
 	}
@@ -54,6 +56,8 @@ func Decide(in TurnInput) TurnOutput {
 		state[key] = SlotValue{Value: value, Status: StatusKnown}
 		updated = append(updated, changeLine(in.Definition, key, value))
 	}
+
+	dropInapplicable(in.Definition, in.Prior, state)
 
 	// A conditional slot can become required only after this message is merged.
 	// Read it from the same utterance when the citizen already answered it.
@@ -98,8 +102,9 @@ func Decide(in TurnInput) TurnOutput {
 	}
 
 	out.FilledSlots = filledSlots(state, in.Definition.EffectiveRequired(state))
-	out.Guidance = &in.Definition.Guidance
-	out.ReplyText = prefaceReply(updated, rejected, guidanceReply(in.Definition.Guidance, in.Definition.Citations))
+	guidance := in.Definition.GuidanceFor(state)
+	out.Guidance = &guidance
+	out.ReplyText = prefaceReply(updated, rejected, guidanceReply(guidance, in.Definition.Citations))
 	if len(in.Definition.RequiredSlots) == 0 || !in.HadPriorState {
 		out.Action = ActionDirect
 		return out
@@ -144,8 +149,43 @@ func changeLine(def Definition, key string, value any) string {
 			return question + " — Chưa."
 		}
 		return question + " — Không."
+	case string:
+		slot := def.Slots[key]
+		for i, value := range slot.EnumValues {
+			if value == v {
+				return question + " — " + slot.OptionLabel(i) + "."
+			}
+		}
+		return question + " — " + v + "."
 	default:
 		return question + " — " + fmt.Sprint(v) + "."
+	}
+}
+
+// dropInapplicable removes the answer to a conditional question whose
+// condition held before this turn and no longer does (the citizen changed the
+// answer that triggered it), so a stale "Có Giấy chứng sinh" does not stay
+// after switching to "trẻ bị bỏ rơi". Information the citizen volunteered for
+// a question that was never asked is kept.
+func dropInapplicable(def Definition, before, state map[string]SlotValue) {
+	always := map[string]bool{}
+	for _, key := range def.RequiredSlots {
+		always[key] = true
+	}
+	neededBefore := map[string]bool{}
+	for _, key := range def.EffectiveRequired(before) {
+		neededBefore[key] = true
+	}
+	neededNow := map[string]bool{}
+	for _, key := range def.EffectiveRequired(state) {
+		neededNow[key] = true
+	}
+	for _, c := range def.Conditional {
+		for _, key := range c.Require {
+			if !always[key] && neededBefore[key] && !neededNow[key] {
+				delete(state, key)
+			}
+		}
 	}
 }
 
@@ -176,16 +216,27 @@ func questionsFor(def Definition, keys []string) []Question {
 		if !ok || strings.TrimSpace(slot.Question) == "" {
 			continue
 		}
-		out = append(out, Question{Slot: key, Text: slot.Question})
+		q := Question{Slot: key, Text: slot.Question}
+		if slot.Type == "enum" {
+			for i, value := range slot.EnumValues {
+				q.Options = append(q.Options, QuestionOption{Value: value, Label: slot.OptionLabel(i)})
+			}
+		}
+		out = append(out, q)
 	}
 	return out
 }
 
+// askReply lists every question, and under an enum question its choices
+// (a, b, c…), so the citizen knows what can be answered.
 func askReply(name string, questions []Question) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Để hướng dẫn thủ tục %s, anh/chị cho mình biết:\n", name)
 	for i, q := range questions {
 		fmt.Fprintf(&b, "%d) %s\n", i+1, q.Text)
+		for j, opt := range q.Options {
+			fmt.Fprintf(&b, "   %c) %s\n", 'a'+rune(j), opt.Label)
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

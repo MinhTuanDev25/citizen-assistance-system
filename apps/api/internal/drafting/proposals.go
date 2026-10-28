@@ -22,6 +22,8 @@ const (
 	ProposalChecklist   = "checklist"
 	ProposalConditional = "conditional"
 	ProposalGuidance    = "guidance"
+	// ProposalConditionalChecklist: a checklist item shown only for one answer.
+	ProposalConditionalChecklist = "conditional_checklist"
 
 	ReviewPending         = "pending"
 	ReviewAccepted        = "accepted"
@@ -45,6 +47,9 @@ func RequiredProposalID(key string) string   { return "required:" + key }
 func ChecklistProposalID(i int) string       { return fmt.Sprintf("checklist:%d", i) }
 func ConditionalProposalID(i int) string     { return fmt.Sprintf("conditional:%d", i) }
 func GuidanceProposalID(field string) string { return "guidance:" + field }
+func ConditionalChecklistProposalID(i int) string {
+	return fmt.Sprintf("conditional_checklist:%d", i)
+}
 
 // EnumerateMaterialProposals lists every Definition claim that requires source
 // coverage before Admin approval. Pure UI/identity metadata is omitted:
@@ -67,6 +72,9 @@ func EnumerateMaterialProposals(raw []byte) ([]MaterialProposal, error) {
 		if len(slot.EnumValues) > 0 {
 			content += "\t" + strings.Join(slot.EnumValues, ",")
 		}
+		if len(slot.EnumLabels) > 0 {
+			content += "\t" + strings.Join(slot.EnumLabels, "|")
+		}
 		out = append(out, newProposal(SlotProposalID(key), ProposalSlot, "slots."+key, content))
 	}
 	for _, key := range def.RequiredSlots {
@@ -78,6 +86,10 @@ func EnumerateMaterialProposals(raw []byte) ([]MaterialProposal, error) {
 	}
 	for i, item := range def.Guidance.Checklist {
 		out = append(out, newProposal(ChecklistProposalID(i), ProposalChecklist, fmt.Sprintf("guidance.checklist[%d]", i), strings.TrimSpace(item)))
+	}
+	for i, item := range def.Guidance.ConditionalChecklist {
+		content := fmt.Sprintf("%s=%s\t%s", item.When.Slot, string(item.When.Equals), strings.TrimSpace(item.Item))
+		out = append(out, newProposal(ConditionalChecklistProposalID(i), ProposalConditionalChecklist, fmt.Sprintf("guidance.conditional_checklist[%d]", i), content))
 	}
 	addGuidance := func(field, value string) {
 		value = strings.TrimSpace(value)

@@ -8,10 +8,17 @@ import (
 )
 
 const (
-	ActionActivate = "ACTIVATE_VERSION"
-	ActionCreate   = "CREATE_VERSION"
-	AuditAction    = "PROCEDURE_VERSION_ACTIVATED"
-	AuditCreate    = "PROCEDURE_VERSION_CREATED"
+	ActionActivate        = "ACTIVATE_VERSION"
+	ActionCreate          = "CREATE_VERSION"
+	ActionCreateProcedure = "CREATE_PROCEDURE"
+	AuditAction           = "PROCEDURE_VERSION_ACTIVATED"
+	AuditCreate           = "PROCEDURE_VERSION_CREATED"
+	AuditCreateProcedure  = "PROCEDURE_CREATED"
+
+	// StatusSource marks the version a new procedure gets for linking and
+	// indexing its first PDF. Empty definition; never activatable.
+	StatusSource       = "SOURCE"
+	SourceVersionLabel = "0.0.0"
 
 	RequiredVectorDim = 384
 )
@@ -89,6 +96,23 @@ type CreateVersionRequest struct {
 	SourceDraftID     *uuid.UUID      `json:"source_draft_id,omitempty"`
 	Definition        json.RawMessage `json:"definition"`
 	Confirm           bool            `json:"confirm"`
+}
+
+type CreateProcedureRequest struct {
+	ProcedureCode string `json:"procedure_code"`
+	Name          string `json:"name"`
+	DomainID      string `json:"domain_id"`
+}
+
+type CreateProcedureResult struct {
+	ID              uuid.UUID `json:"id"`
+	ProcedureCode   string    `json:"procedure_code"`
+	Name            string    `json:"name"`
+	DomainID        string    `json:"domain_id"`
+	XaID            string    `json:"xa_id"`
+	SourceVersionID uuid.UUID `json:"source_version_id"`
+	SourceVersion   string    `json:"source_version"`
+	Replayed        bool      `json:"replayed"`
 }
 
 type CreateVersionResult struct {

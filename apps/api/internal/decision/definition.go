@@ -54,6 +54,22 @@ type SlotDef struct {
 	Type       string
 	Question   string
 	EnumValues []string
+	// EnumLabels: what a citizen reads for each enum value (same order), e.g.
+	// truc_tiep → "Trực tiếp". Optional; missing labels fall back to the value.
+	EnumLabels []string
+}
+
+// OptionLabel is the citizen-facing text of enum value i.
+func (s SlotDef) OptionLabel(i int) string {
+	if i < len(s.EnumLabels) {
+		if label := strings.TrimSpace(s.EnumLabels[i]); label != "" {
+			return label
+		}
+	}
+	if i < len(s.EnumValues) {
+		return strings.ReplaceAll(s.EnumValues[i], "_", " ")
+	}
+	return ""
 }
 
 type ConditionalSlot struct {
@@ -69,6 +85,47 @@ type Guidance struct {
 	Notes              []string `json:"notes,omitempty"`
 	FeeHint            string   `json:"fee_hint,omitempty"`
 	ProcessingTimeHint string   `json:"processing_time_hint,omitempty"`
+	// ConditionalChecklist / ConditionalNotes apply only when the citizen's
+	// answer matches (e.g. "Biên bản trẻ bị bỏ rơi" when truong_hop_tre =
+	// tre_bi_bo_roi). GuidanceFor folds the matching ones into Checklist/Notes.
+	ConditionalChecklist []GuidanceItem `json:"conditional_checklist,omitempty"`
+	ConditionalNotes     []GuidanceItem `json:"conditional_notes,omitempty"`
+}
+
+// GuidanceItem is a checklist item or note shown only when When matches.
+type GuidanceItem struct {
+	When GuidanceWhen `json:"when"`
+	Item string       `json:"item"`
+}
+
+type GuidanceWhen struct {
+	Slot   string          `json:"slot"`
+	Equals json.RawMessage `json:"equals"`
+}
+
+// GuidanceFor is the guidance for this citizen: the common checklist and notes
+// plus the conditional items whose answer matches. An item whose question is
+// not answered is not shown.
+func (d Definition) GuidanceFor(state map[string]SlotValue) Guidance {
+	g := d.Guidance
+	g.Checklist = append([]string{}, d.Guidance.Checklist...)
+	g.Notes = append([]string{}, d.Guidance.Notes...)
+	matches := func(w GuidanceWhen) bool {
+		current, ok := state[w.Slot]
+		return ok && current.Filled() && equalsValue(current.Value, w.Equals)
+	}
+	for _, item := range d.Guidance.ConditionalChecklist {
+		if matches(item.When) && strings.TrimSpace(item.Item) != "" {
+			g.Checklist = append(g.Checklist, item.Item)
+		}
+	}
+	for _, item := range d.Guidance.ConditionalNotes {
+		if matches(item.When) && strings.TrimSpace(item.Item) != "" {
+			g.Notes = append(g.Notes, item.Item)
+		}
+	}
+	g.ConditionalChecklist, g.ConditionalNotes = nil, nil
+	return g
 }
 
 type Citation struct {
@@ -96,6 +153,13 @@ type Citation struct {
 type Question struct {
 	Slot string `json:"slot"`
 	Text string `json:"text"`
+	// Options: the choices of an enum question, in order.
+	Options []QuestionOption `json:"options,omitempty"`
+}
+
+type QuestionOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
 }
 
 type definitionWire struct {
@@ -113,6 +177,7 @@ type slotWire struct {
 	Type       string   `json:"type"`
 	Question   string   `json:"question"`
 	EnumValues []string `json:"enum_values"`
+	EnumLabels []string `json:"enum_labels"`
 }
 
 type conditionalWire struct {
@@ -124,12 +189,14 @@ type conditionalWire struct {
 }
 
 type guidanceWire struct {
-	Summary            string   `json:"summary"`
-	Checklist          []string `json:"checklist"`
-	WhereToSubmit      string   `json:"where_to_submit"`
-	Notes              []string `json:"notes"`
-	FeeHint            string   `json:"fee_hint"`
-	ProcessingTimeHint string   `json:"processing_time_hint"`
+	Summary              string         `json:"summary"`
+	Checklist            []string       `json:"checklist"`
+	WhereToSubmit        string         `json:"where_to_submit"`
+	Notes                []string       `json:"notes"`
+	FeeHint              string         `json:"fee_hint"`
+	ProcessingTimeHint   string         `json:"processing_time_hint"`
+	ConditionalChecklist []GuidanceItem `json:"conditional_checklist"`
+	ConditionalNotes     []GuidanceItem `json:"conditional_notes"`
 }
 
 // ParseDefinition decodes a procedure_versions.definition document.
@@ -148,12 +215,14 @@ func ParseDefinition(raw []byte) (Definition, error) {
 		Slots:          make(map[string]SlotDef, len(w.Slots)),
 		RequiredSlots:  w.RequiredSlots,
 		Guidance: Guidance{
-			Summary:            w.Guidance.Summary,
-			Checklist:          w.Guidance.Checklist,
-			WhereToSubmit:      w.Guidance.WhereToSubmit,
-			Notes:              w.Guidance.Notes,
-			FeeHint:            w.Guidance.FeeHint,
-			ProcessingTimeHint: w.Guidance.ProcessingTimeHint,
+			Summary:              w.Guidance.Summary,
+			Checklist:            w.Guidance.Checklist,
+			WhereToSubmit:        w.Guidance.WhereToSubmit,
+			Notes:                w.Guidance.Notes,
+			FeeHint:              w.Guidance.FeeHint,
+			ProcessingTimeHint:   w.Guidance.ProcessingTimeHint,
+			ConditionalChecklist: w.Guidance.ConditionalChecklist,
+			ConditionalNotes:     w.Guidance.ConditionalNotes,
 		},
 		Citations: w.Citations,
 	}
@@ -162,6 +231,7 @@ func ParseDefinition(raw []byte) (Definition, error) {
 			Type:       slot.Type,
 			Question:   slot.Question,
 			EnumValues: slot.EnumValues,
+			EnumLabels: slot.EnumLabels,
 		}
 	}
 	for _, c := range w.Conditional {

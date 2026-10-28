@@ -8,12 +8,12 @@ export default function DeferredIngestionPage({ title }) {
       <header className="admin-page-head">
         <h1>{title || 'Pipeline tri thức'}</h1>
         <p>
-          OCR, extract bản nháp và publish <strong>chưa triển khai</strong>.
+          Nhận dạng chữ, tạo bản nháp và phát hành <strong>chưa được triển khai</strong>.
         </p>
       </header>
       <div className="panel">
         <p className="muted">
-          Không có dữ liệu giả. Upload PDF và kích hoạt phiên bản nằm ở Tài liệu và Thủ tục.
+          Không có dữ liệu minh họa. Tải tài liệu lên và kích hoạt phiên bản tại mục Tài liệu và Thủ tục.
         </p>
       </div>
     </div>

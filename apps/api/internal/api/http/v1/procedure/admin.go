@@ -79,6 +79,49 @@ func (h *Handler) ListAdmin(c *gin.Context) {
 	response.OK(c, gin.H{"items": items, "count": len(items)})
 }
 
+// CreateProcedure godoc
+//
+//	@Summary	Create a procedure in the server commune
+//	@Description	Admin-only. Body: procedure_code (^[a-z0-9_]{2,64}$, unique per commune), name, domain_id (active domain). Creates one SOURCE version 0.0.0 with an empty definition so the first PDF can be linked and indexed for an AI draft. Never creates an ACTIVE version. Idempotent per X-Request-ID; 409 PROCEDURE_CODE_EXISTS.
+//	@Tags		admin-procedures
+//	@Accept		json
+//	@Produce	json
+//	@Param		X-Request-ID	header		string	true	"Idempotency UUID"
+//	@Success	201				{object}	response.Envelope
+//	@Failure	400				{object}	response.Envelope
+//	@Failure	401				{object}	response.Envelope
+//	@Failure	403				{object}	response.Envelope
+//	@Failure	409				{object}	response.Envelope
+//	@Failure	422				{object}	response.Envelope
+//	@Failure	500				{object}	response.Envelope
+//	@Security	BearerAuth
+//	@Router		/api/v1/admin/procedures [post]
+func (h *Handler) CreateProcedure(c *gin.Context) {
+	actor, requestID, ok := h.adminRequest(c)
+	if !ok {
+		return
+	}
+	if h.Activation == nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	var body activation.CreateProcedureRequest
+	if err := decodeJSON(c.Request.Body, &body); err != nil {
+		response.Fail(c, http.StatusBadRequest, "VALIDATION", "invalid request body")
+		return
+	}
+	out, err := h.Activation.CreateProcedure(c.Request.Context(), actor, requestID, body)
+	if err != nil {
+		writeActivationErr(c, err)
+		return
+	}
+	if out.Replayed {
+		response.OK(c, out)
+		return
+	}
+	response.Created(c, out)
+}
+
 // ListVersions godoc
 //
 //	@Summary	List procedure versions with indexing eligibility
@@ -303,6 +346,8 @@ func writeActivationErr(c *gin.Context, err error) {
 		response.Fail(c, http.StatusConflict, "STALE_ACTIVE_VERSION", "active version changed")
 	case errors.Is(err, activation.ErrConflict):
 		response.Fail(c, http.StatusConflict, "ACTIVATION_CONFLICT", "activation conflict")
+	case errors.Is(err, activation.ErrDuplicateCode):
+		response.Fail(c, http.StatusConflict, "PROCEDURE_CODE_EXISTS", "procedure_code already exists in this commune")
 	case errors.Is(err, activation.ErrDuplicateVersion):
 		response.Fail(c, http.StatusConflict, "ACTIVATION_CONFLICT", "version already exists")
 	case errors.Is(err, activation.ErrNotApproved):

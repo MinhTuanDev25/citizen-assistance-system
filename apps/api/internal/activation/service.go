@@ -7,12 +7,18 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
 var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// procedureCodePattern matches procedure_definition.schema.json (^[a-z0-9_]+$) with a length bound.
+var procedureCodePattern = regexp.MustCompile(`^[a-z0-9_]{2,64}$`)
+
+const maxProcedureNameRunes = 300
 
 type Service struct {
 	Store *Store
@@ -105,6 +111,9 @@ func (s *Service) CreateVersion(ctx context.Context, actor, requestID, procedure
 		if err != nil {
 			return CreateVersionResult{}, err
 		}
+		if src.Status == StatusSource {
+			return CreateVersionResult{}, fmt.Errorf("%w: a SOURCE version has no definition to copy", ErrValidation)
+		}
 		raw = src.Definition
 	}
 	label := strings.TrimSpace(in.Version)
@@ -184,6 +193,87 @@ func (s *Service) CreateVersion(ctx context.Context, actor, requestID, procedure
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return CreateVersionResult{}, err
+	}
+	return out, nil
+}
+
+// CreateProcedure adds a procedure in the server commune with one SOURCE
+// version (empty definition) that the first PDF can be linked to. It never
+// creates an ACTIVE version or a definition; the first real version comes from
+// an approved AI draft or CreateVersion with a definition.
+func (s *Service) CreateProcedure(ctx context.Context, actor, requestID uuid.UUID, in CreateProcedureRequest) (CreateProcedureResult, error) {
+	code := strings.TrimSpace(in.ProcedureCode)
+	name := strings.TrimSpace(in.Name)
+	domainID := strings.TrimSpace(in.DomainID)
+	if !procedureCodePattern.MatchString(code) {
+		return CreateProcedureResult{}, fmt.Errorf("%w: procedure_code must be 2-64 characters of a-z, 0-9 or _", ErrValidation)
+	}
+	if name == "" || utf8.RuneCountInString(name) > maxProcedureNameRunes {
+		return CreateProcedureResult{}, fmt.Errorf("%w: name is required (max %d characters)", ErrValidation, maxProcedureNameRunes)
+	}
+	if domainID == "" {
+		return CreateProcedureResult{}, fmt.Errorf("%w: domain_id is required", ErrValidation)
+	}
+	hash := hashPayload(code, name, domainID)
+	tx, err := s.Store.begin(ctx)
+	if err != nil {
+		return CreateProcedureResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	replay, ok, err := claimIdempotency(ctx, tx, s.XAID, requestID, ActionCreateProcedure, hash)
+	if err != nil {
+		return CreateProcedureResult{}, err
+	}
+	if ok {
+		var out CreateProcedureResult
+		if err := json.Unmarshal(replay, &out); err != nil {
+			return CreateProcedureResult{}, err
+		}
+		out.Replayed = true
+		return out, nil
+	}
+	var domainActive bool
+	err = tx.QueryRow(ctx, `SELECT is_active FROM domains WHERE id = $1`, domainID).Scan(&domainActive)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !domainActive) {
+		return CreateProcedureResult{}, fmt.Errorf("%w: domain_id is not an active domain", ErrValidation)
+	}
+	if err != nil {
+		return CreateProcedureResult{}, err
+	}
+	out := CreateProcedureResult{
+		ProcedureCode: code, Name: name, DomainID: domainID, XaID: s.XAID, SourceVersion: SourceVersionLabel,
+	}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO procedures (procedure_code, domain_id, name, xa_id)
+		VALUES ($1,$2,$3,$4)
+		RETURNING id`, code, domainID, name, s.XAID).Scan(&out.ID)
+	if isUniqueViolation(err) {
+		return CreateProcedureResult{}, ErrDuplicateCode
+	}
+	if err != nil {
+		return CreateProcedureResult{}, err
+	}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO procedure_versions (procedure_id, version, status, definition, created_by)
+		VALUES ($1,$2,$3,'{}'::jsonb,$4)
+		RETURNING id`, out.ID, SourceVersionLabel, StatusSource, actor).Scan(&out.SourceVersionID)
+	if err != nil {
+		return CreateProcedureResult{}, err
+	}
+	rawOut, err := json.Marshal(out)
+	if err != nil {
+		return CreateProcedureResult{}, err
+	}
+	if err := writeAudit(ctx, tx, requestID, actor, AuditCreateProcedure, "procedure", out.ID.String(), map[string]any{
+		"xa_id": s.XAID, "procedure_code": code, "domain_id": domainID, "source_version_id": out.SourceVersionID.String(),
+	}); err != nil {
+		return CreateProcedureResult{}, err
+	}
+	if err := storeIdempotency(ctx, tx, s.XAID, requestID, ActionCreateProcedure, hash, 201, rawOut); err != nil {
+		return CreateProcedureResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CreateProcedureResult{}, err
 	}
 	return out, nil
 }

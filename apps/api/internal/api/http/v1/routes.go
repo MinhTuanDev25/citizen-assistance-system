@@ -81,6 +81,7 @@ func MapRoutes(
 		adminProcs.Use(requireAdmin)
 		{
 			adminProcs.GET("", procedureHandler.ListAdmin)
+			adminProcs.POST("", procedureHandler.CreateProcedure)
 			adminProcs.GET("/:procedureId/versions", procedureHandler.ListVersions)
 			adminProcs.GET("/:procedureId/versions/:versionId", procedureHandler.GetVersion)
 			adminProcs.POST("/:procedureId/versions", procedureHandler.CreateVersion)
@@ -89,6 +90,16 @@ func MapRoutes(
 			adminProcs.POST("/:procedureId/ai-drafts", procedureHandler.GenerateAIDraft)
 			adminProcs.GET("/:procedureId/drafts", procedureHandler.ListDrafts)
 			adminProcs.GET("/:procedureId/draft-sources", procedureHandler.ListDraftSources)
+			adminProcs.POST("/:procedureId/draft-plan", procedureHandler.PlanAIDraft)
+			adminProcs.POST("/:procedureId/draft-jobs", procedureHandler.CreateAIDraftJob)
+			adminProcs.GET("/:procedureId/draft-jobs", procedureHandler.ListAIDraftJobs)
+		}
+
+		adminDraftJobs := v1.Group("/admin/procedure-draft-jobs")
+		adminDraftJobs.Use(requireAdmin)
+		{
+			adminDraftJobs.GET("/:jobId", procedureHandler.GetAIDraftJob)
+			adminDraftJobs.POST("/:jobId/retry", procedureHandler.RetryAIDraftJob)
 		}
 
 		adminDrafts := v1.Group("/admin/procedure-drafts")
@@ -101,6 +112,11 @@ func MapRoutes(
 			adminDrafts.POST("/:draftId/review", procedureHandler.ReviewDraft)
 			adminDrafts.POST("/:draftId/approve", procedureHandler.ApproveDraft)
 			adminDrafts.POST("/:draftId/activate", procedureHandler.ActivateDraft)
+			adminDrafts.POST("/:draftId/clone", procedureHandler.CloneDraft)
+			adminDrafts.POST("/:draftId/admin-decision", procedureHandler.DecideDraftWithoutSource)
+			adminDrafts.POST("/:draftId/resolve-conflict", procedureHandler.ResolveDraftConflict)
+			adminDrafts.POST("/:draftId/acknowledge-gap", procedureHandler.AcknowledgeDraftGap)
+			adminDrafts.POST("/:draftId/keep-citation", procedureHandler.KeepDraftCitation)
 		}
 
 		if documentHandler != nil {

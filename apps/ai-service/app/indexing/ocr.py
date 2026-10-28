@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.indexing.errors import IndexFailure
@@ -40,6 +43,11 @@ class PdfiumRenderer:
                 raise IndexFailure("page_range_invalid")
             page = pdf[page_number - 1]
             scale = dpi / 72
+            # Large sheets (A3, posters) would exceed MAX_PIXELS at the OCR DPI:
+            # render them smaller instead of failing the whole document.
+            width_pt, height_pt = page.get_size()
+            if width_pt > 0 and height_pt > 0 and width_pt * height_pt * scale * scale > MAX_PIXELS:
+                scale = (MAX_PIXELS / (width_pt * height_pt)) ** 0.5 * 0.999
             bitmap = page.render(scale=scale)
             image = bitmap.to_numpy()
         finally:
@@ -50,6 +58,127 @@ class PdfiumRenderer:
         if pixels > MAX_PIXELS:
             raise IndexFailure("pdf_oversized")
         return image[:, :, :3]
+
+
+@dataclass(frozen=True)
+class OcrPage:
+    """OCR text plus word-confidence statistics for the quality gate."""
+
+    text: str
+    mean_confidence: float
+    low_confidence_ratio: float
+    word_count: int
+
+
+# Tesseract word confidence (0-100) under which a word counts as uncertain.
+TESSERACT_LOW_CONFIDENCE = 60.0
+# Table rules and scan specks come back as symbol-only tokens ("|", "¬", "„").
+_NOISE_TOKEN = re.compile(r"^[^\w]+$", re.UNICODE)
+_KEEP_SYMBOL_TOKEN = re.compile(r"^[.,;:()\[\]/%+\-–—\"'“”‘’…!?]+$")
+
+
+def parse_tesseract_tsv(tsv: str) -> OcrPage:
+    """Rebuild reading-order lines from `tesseract ... tsv` and score letter words."""
+    lines: dict[tuple[str, str, str, str], list[str]] = {}
+    order: list[tuple[str, str, str, str]] = []
+    confidences: list[float] = []
+    for row in tsv.splitlines()[1:]:
+        cols = row.split("\t")
+        if len(cols) < 12:
+            continue
+        word = cols[11].strip()
+        try:
+            conf = float(cols[10])
+        except ValueError:
+            continue
+        if not word or conf < 0:
+            continue
+        if _NOISE_TOKEN.match(word) and not _KEEP_SYMBOL_TOKEN.match(word):
+            continue
+        key = (cols[1], cols[2], cols[3], cols[4])
+        if key not in lines:
+            lines[key] = []
+            order.append(key)
+        lines[key].append(word)
+        if any(ch.isalpha() for ch in word):
+            confidences.append(conf)
+    text = "\n".join(" ".join(lines[key]) for key in order)
+    if not confidences:
+        return OcrPage(text=text, mean_confidence=0.0, low_confidence_ratio=1.0, word_count=0)
+    low = sum(1 for conf in confidences if conf < TESSERACT_LOW_CONFIDENCE)
+    return OcrPage(
+        text=text,
+        mean_confidence=sum(confidences) / len(confidences),
+        low_confidence_ratio=low / len(confidences),
+        word_count=len(confidences),
+    )
+
+
+class TesseractOCR:
+    """Tesseract 5 with the `vie` model, run as a child process per page.
+
+    The child stays in the pipeline worker's process group, so cancelling the
+    index job kills it. Rendering stays in PdfiumRenderer; only images reach OCR.
+    """
+
+    vietnamese_capable = True
+
+    def __init__(self, lang: str = "vie", psm: int = 3, binary: str = "tesseract") -> None:
+        self.lang = lang
+        self.psm = psm
+        self.binary = binary
+        try:
+            version_out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=10)
+            langs_out = subprocess.run([binary, "--list-langs"], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise IndexFailure("ocr_model_missing") from exc
+        first = (version_out.stdout or version_out.stderr).strip().splitlines()
+        match = re.match(r"tesseract\s+v?(\S+)", first[0]) if first else None
+        langs = langs_out.stdout.strip().splitlines()
+        if version_out.returncode != 0 or match is None or lang not in [item.strip() for item in langs[1:]]:
+            raise IndexFailure("ocr_model_missing")
+        tessdata = re.search(r'"([^"]+)"', langs[0]) if langs else None
+        model = Path(tessdata.group(1)) / f"{lang}.traineddata" if tessdata else None
+        if model is None or not model.is_file():
+            raise IndexFailure("ocr_model_missing")
+        digest = hashlib.sha256(model.read_bytes()).hexdigest()[:12]
+        self.version = f"tesseract-{match.group(1)}-{lang}-{digest}-psm{psm}"
+
+    def read_page_scored(self, image, page_number: int, timeout_s: float = 30, deadline=None) -> OcrPage:
+        if deadline is not None:
+            deadline.check()
+            timeout_s = min(timeout_s, max(0.5, deadline.remaining()))
+        if page_number < 1:
+            raise IndexFailure("page_range_invalid")
+        ppm = _ppm_bytes(image)
+        try:
+            proc = subprocess.run(
+                [self.binary, "stdin", "stdout", "-l", self.lang, "--psm", str(self.psm), "tsv"],
+                input=ppm,
+                capture_output=True,
+                timeout=timeout_s,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError("tesseract timeout") from exc
+        except OSError as exc:
+            raise IndexFailure("ocr_failed") from exc
+        if proc.returncode != 0:
+            raise IndexFailure("ocr_failed")
+        return parse_tesseract_tsv(proc.stdout.decode("utf-8", errors="replace"))
+
+    def read_page(self, image, page_number: int, timeout_s: float = 30, deadline=None) -> str:
+        return self.read_page_scored(image, page_number, timeout_s=timeout_s, deadline=deadline).text
+
+
+def _ppm_bytes(image) -> bytes:
+    """Binary PPM (P6) from an RGB uint8 array. Tesseract reads it via Leptonica; no Pillow needed."""
+    try:
+        height, width, channels = image.shape
+    except (AttributeError, ValueError) as exc:
+        raise IndexFailure("ocr_failed") from exc
+    if channels != 3 or str(getattr(image, "dtype", "")) != "uint8":
+        raise IndexFailure("ocr_failed")
+    return f"P6\n{width} {height}\n255\n".encode("ascii") + image.tobytes()
 
 
 VIETNAMESE_REC_PROBE = "ăơư"

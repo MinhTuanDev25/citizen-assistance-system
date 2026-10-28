@@ -89,11 +89,11 @@ export default function App() {
                 index
                 element={
                   ingestionOn && AdminDashboardPage ? (
-                    <SuspenseAdmin title="Tổng quan admin">
+                    <SuspenseAdmin title="Tổng quan cán bộ">
                       <AdminDashboardPage />
                     </SuspenseAdmin>
                   ) : (
-                    <DeferredIngestionPage title="Tổng quan admin" />
+                    <DeferredIngestionPage title="Tổng quan cán bộ" />
                   )
                 }
               />

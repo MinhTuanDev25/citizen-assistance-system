@@ -1,9 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { adminDraftsPath } from '../../routes.js'
+import { ROUTES, adminDraftsPath } from '../../routes.js'
 import {
   activateProcedureVersion,
+  createProcedure,
   createProcedureVersion,
+  listDomains,
   listActivationHistory,
   listAdminProcedures,
   listProcedureVersions,
@@ -15,6 +17,28 @@ function newRequestId() {
 }
 
 const versionPattern = /^[0-9]+\.[0-9]+\.[0-9]+$/
+
+/** Same rule as the API and procedure_definition.schema.json. */
+export const procedureCodePattern = /^[a-z0-9_]{2,64}$/
+
+export function validateNewProcedure({ code, name, domainId }) {
+  if (!procedureCodePattern.test(code)) {
+    return 'Mã thủ tục chỉ gồm chữ thường không dấu, số và dấu gạch dưới (2–64 ký tự), ví dụ dk_khai_sinh.'
+  }
+  if (!name.trim()) return 'Nhập tên thủ tục.'
+  if (!domainId) return 'Chọn lĩnh vực.'
+  return ''
+}
+
+export function createProcedureErrorMessage(err) {
+  if (err?.code === 'PROCEDURE_CODE_EXISTS') return 'Mã thủ tục này đã có trong xã. Hãy dùng mã khác.'
+  if (err?.code === 'IDEMPOTENCY_CONFLICT') return 'Yêu cầu trước đó chưa rõ kết quả. Tải lại trang để kiểm tra rồi thử lại.'
+  const msg = String(err?.message || '')
+  if (msg.includes('procedure_code')) return 'Mã thủ tục không hợp lệ.'
+  if (msg.includes('domain_id')) return 'Lĩnh vực không hợp lệ hoặc đã ngưng.'
+  if (msg.includes('name is required')) return 'Nhập tên thủ tục.'
+  return msg || 'Không tạo được thủ tục.'
+}
 
 export function createVersionErrorMessage(err) {
   const msg = String(err?.message || '')
@@ -47,7 +71,7 @@ function pillClass(status) {
   if (['READY', 'ACTIVE', 'PROCESSED', 'VALID'].includes(u)) return 'pill ok'
   if (['FAILED', 'EXPIRED', 'SUPERSEDED'].includes(u)) return 'pill bad'
   if (['PROCESSING', 'UPLOADED', 'APPROVED', 'INDEXING'].includes(u)) return 'pill warn'
-  if (['PENDING', 'ARCHIVED'].includes(u)) return 'pill mute'
+  if (['PENDING', 'ARCHIVED', 'SOURCE'].includes(u)) return 'pill mute'
   return 'pill'
 }
 
@@ -161,6 +185,7 @@ const VERSION_STATUS_LABEL = {
   APPROVED: 'Đã duyệt',
   INDEXING: 'Đang lập chỉ mục',
   ARCHIVED: 'Lưu trữ',
+  SOURCE: 'Phiên nguồn',
 }
 
 const INDEX_STATUS_LABEL = {
@@ -178,6 +203,7 @@ function statusLabel(map, status) {
 function reasonLabel(code) {
   const map = {
     VERSION_NOT_APPROVED: 'Phiên bản này chưa được duyệt.',
+    SOURCE_VERSION: 'Phiên nguồn chỉ để gắn tài liệu và tạo bản nháp tự động, không kích hoạt.',
     VERSION_ARCHIVED: 'Phiên bản đã lưu trữ.',
     VERSION_ALREADY_ACTIVE: 'Phiên bản này đang được dùng.',
     INVALID_DEFINITION: 'Nội dung hướng dẫn của phiên bản không hợp lệ.',
@@ -240,6 +266,11 @@ export default function ProceduresPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [createVersion, setCreateVersion] = useState('')
   const [createError, setCreateError] = useState('')
+  const [newProcOpen, setNewProcOpen] = useState(false)
+  const [newProc, setNewProc] = useState({ code: '', name: '', domainId: '' })
+  const [newProcError, setNewProcError] = useState('')
+  const [domains, setDomains] = useState([])
+  const newProcKeyRef = useRef({ key: '', body: '' })
   const versionsRef = useRef(null)
 
   async function refreshList() {
@@ -383,11 +414,69 @@ export default function ProceduresPage() {
       setCreateOpen(false)
       setCreateVersion('')
       setCreateError('')
-      setNotice('Đã tạo phiên bản mới. Gắn PDF và lập chỉ mục trước khi kích hoạt.')
+      setNotice('Đã tạo phiên bản mới. Hãy gắn tài liệu và lập chỉ mục trước khi kích hoạt.')
       await openProcedure(selected)
       await refreshList()
     } catch (err) {
       setCreateError(createVersionErrorMessage(err))
+    } finally {
+      busyRef.current = false
+      setBusy(false)
+    }
+  }
+
+  async function openNewProcedure() {
+    setNewProcError('')
+    setNewProcOpen(true)
+    if (domains.length) return
+    try {
+      const data = await listDomains()
+      const items = data?.items || []
+      setDomains(items)
+      if (items.length === 1) setNewProc((prev) => ({ ...prev, domainId: items[0].id }))
+    } catch (err) {
+      setNewProcError(err.message || 'Không tải được danh sách lĩnh vực.')
+    }
+  }
+
+  async function submitNewProcedure() {
+    if (busyRef.current) return
+    const body = {
+      procedure_code: newProc.code.trim(),
+      name: newProc.name.trim(),
+      domain_id: newProc.domainId,
+    }
+    const invalid = validateNewProcedure({ code: body.procedure_code, name: body.name, domainId: body.domain_id })
+    if (invalid) {
+      setNewProcError(invalid)
+      return
+    }
+    // Reuse the request id only for an identical retry (network failure), so a replay is not a duplicate.
+    const bodyKey = JSON.stringify(body)
+    if (newProcKeyRef.current.body !== bodyKey) newProcKeyRef.current = { key: newRequestId(), body: bodyKey }
+    busyRef.current = true
+    setBusy(true)
+    setNewProcError('')
+    setError('')
+    setWarning('')
+    try {
+      const created = await createProcedure(body, newProcKeyRef.current.key)
+      newProcKeyRef.current = { key: '', body: '' }
+      setNewProcOpen(false)
+      setNewProc({ code: '', name: '', domainId: domains.length === 1 ? domains[0].id : '' })
+      setNotice(`Đã tạo thủ tục «${created?.name || body.name}». Bước tiếp: vào Tài liệu, tải tài liệu lên và gắn vào phiên nguồn ${created?.source_version || ''} của thủ tục này, lập chỉ mục rồi tạo bản nháp tự động.`)
+      try {
+        const data = await listAdminProcedures()
+        const list = data?.items || []
+        setItems(list)
+        const row = list.find((p) => p.id === created?.id)
+        if (row) await openProcedure(row)
+      } catch {
+        setWarning('Đã tạo thủ tục nhưng chưa tải lại được danh sách. Vui lòng làm mới trang.')
+      }
+    } catch (err) {
+      if (err?.status || err?.code) newProcKeyRef.current = { key: '', body: '' }
+      setNewProcError(createProcedureErrorMessage(err))
     } finally {
       busyRef.current = false
       setBusy(false)
@@ -401,6 +490,9 @@ export default function ProceduresPage() {
           <h1>Thủ tục</h1>
           <p>Xã {commune?.name || xaId} · chọn phiên bản công dân sẽ được hướng dẫn</p>
         </div>
+        <button type="button" className="btn-primary" onClick={openNewProcedure} disabled={busy}>
+          + Tạo thủ tục
+        </button>
       </header>
 
       {error ? <p className="form-error">{error}</p> : null}
@@ -409,7 +501,7 @@ export default function ProceduresPage() {
       {loading ? <p className="muted">Đang tải…</p> : null}
 
       {!loading && items.length === 0 ? (
-        <p className="muted">Chưa có thủ tục trong xã này.</p>
+        <p className="muted">Chưa có thủ tục trong xã này. Bấm «+ Tạo thủ tục» để bắt đầu.</p>
       ) : null}
 
       <div className="panel table-wrap">
@@ -430,7 +522,7 @@ export default function ProceduresPage() {
                 <td>{p.name}</td>
                 <td>
                   {p.active_version ? (
-                    <span className="pill ok">{p.active_version}{p.legacy_active ? ' · seed' : ''}</span>
+                    <span className="pill ok">{p.active_version}{p.legacy_active ? ' · dữ liệu mẫu' : ''}</span>
                   ) : (
                     <span className="pill warn">Chưa có</span>
                   )}
@@ -441,7 +533,7 @@ export default function ProceduresPage() {
                     Xem phiên bản
                   </button>
                   {' '}
-                  <Link to={adminDraftsPath(p.id)}>Bản nháp AI</Link>
+                  <Link to={adminDraftsPath(p.id)}>Bản nháp tự động</Link>
                 </td>
               </tr>
             ))}
@@ -461,7 +553,7 @@ export default function ProceduresPage() {
               onClick={() => {
                 setCreateError('')
                 if (!selected.active_version_id) {
-                  setError('Thủ tục này chưa có phiên bản đang dùng nên chưa tạo được bản mới từ giao diện.')
+                  setError('Thủ tục này chưa có phiên bản đang dùng nên chưa sao chép được. Để tạo phiên đầu tiên, hãy gắn tài liệu vào phiên nguồn, lập chỉ mục rồi mở mục «Bản nháp tự động».')
                   return
                 }
                 setCreateOpen(true)
@@ -471,6 +563,13 @@ export default function ProceduresPage() {
               Tạo phiên bản mới
             </button>
           </div>
+          {!selected.active_version_id && versions.some((v) => v.status === 'SOURCE') ? (
+            <p className="banner warn">
+              Chưa có phiên bản công dân dùng. Bước tiếp:{' '}
+              <Link to={ROUTES.adminDocuments}>Tài liệu</Link> → tải lên, gắn vào «{selected.name} · phiên nguồn», lập chỉ mục →{' '}
+              <Link to={adminDraftsPath(selected.id)}>Bản nháp tự động</Link> → duyệt → kích hoạt.
+            </p>
+          ) : null}
           <div className="table-wrap">
             <table className="version-table">
               <thead>
@@ -527,7 +626,7 @@ export default function ProceduresPage() {
             </table>
           </div>
           <h3>Lịch sử kích hoạt</h3>
-          {history.length === 0 ? <p className="muted">Chưa có lần kích hoạt ghi audit.</p> : (
+          {history.length === 0 ? <p className="muted">Chưa có lịch sử kích hoạt.</p> : (
             <ul className="history-list">
               {history.map((h) => {
                 const next = versions.find((v) => v.id === h.new_active_version_id)
@@ -568,6 +667,73 @@ export default function ProceduresPage() {
               </button>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {newProcOpen ? (
+        <div className="confirm-mask" role="dialog" aria-modal="true" aria-labelledby="new-proc-title">
+          <form
+            className="panel modal-card"
+            onSubmit={(e) => {
+              e.preventDefault()
+              submitNewProcedure()
+            }}
+          >
+            <h2 id="new-proc-title">Tạo thủ tục</h2>
+            <p>
+              Thủ tục mới chưa có phiên bản đang dùng. Hệ thống sẽ tạo một phiên nguồn để gắn tài liệu;
+              phiên dành cho công dân được tạo sau khi bản nháp tự động đã được duyệt.
+            </p>
+            {newProcError ? <p className="form-error" role="alert">{newProcError}</p> : null}
+            <label>
+              Mã thủ tục
+              <input
+                name="procedure_code"
+                value={newProc.code}
+                onChange={(e) => {
+                  setNewProc((prev) => ({ ...prev, code: e.target.value }))
+                  setNewProcError('')
+                }}
+                placeholder="dk_khai_sinh"
+                autoComplete="off"
+                maxLength={64}
+              />
+            </label>
+            <label>
+              Tên thủ tục
+              <input
+                name="name"
+                value={newProc.name}
+                onChange={(e) => {
+                  setNewProc((prev) => ({ ...prev, name: e.target.value }))
+                  setNewProcError('')
+                }}
+                placeholder="Đăng ký khai sinh"
+                maxLength={300}
+              />
+            </label>
+            <label>
+              Lĩnh vực
+              <select
+                name="domain_id"
+                value={newProc.domainId}
+                onChange={(e) => {
+                  setNewProc((prev) => ({ ...prev, domainId: e.target.value }))
+                  setNewProcError('')
+                }}
+              >
+                <option value="">Chọn lĩnh vực</option>
+                {domains.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </label>
+            <p className="muted">Áp dụng cho xã {commune?.name || xaId}.</p>
+            <div className="action-bar">
+              <button type="button" disabled={busy} onClick={() => { setNewProcOpen(false); setNewProcError('') }}>Hủy</button>
+              <button type="submit" className="btn-primary" disabled={busy}>{busy ? 'Đang tạo…' : 'Tạo thủ tục'}</button>
+            </div>
+          </form>
         </div>
       ) : null}
 

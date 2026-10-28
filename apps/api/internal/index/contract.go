@@ -95,4 +95,6 @@ type Result struct {
 	JobStatus          string    `json:"job_status,omitempty"`
 	ErrorCode          string    `json:"error_code,omitempty"`
 	Replay             bool      `json:"idempotent_replay,omitempty"`
+	// Accepted means the job was claimed and runs in the background (INDEX_ASYNC).
+	Accepted bool `json:"accepted,omitempty"`
 }

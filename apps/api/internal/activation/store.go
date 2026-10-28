@@ -353,7 +353,7 @@ func isUniqueViolation(err error) bool {
 
 func nextVersionLabel(ctx context.Context, tx pgx.Tx, procedureID uuid.UUID) (string, error) {
 	var labels []string
-	rows, err := tx.Query(ctx, `SELECT version FROM procedure_versions WHERE procedure_id = $1`, procedureID)
+	rows, err := tx.Query(ctx, `SELECT version FROM procedure_versions WHERE procedure_id = $1 AND status <> 'SOURCE'`, procedureID)
 	if err != nil {
 		return "", err
 	}

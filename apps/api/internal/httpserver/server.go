@@ -82,7 +82,11 @@ func NewWithIndexWorker(logger *slog.Logger, pool *pgxpool.Pool, cfg config.Conf
 			Source: &drafting.SourceStore{Pool: pool},
 			Drafts: &repository.DraftRepo{Pool: pool},
 			Client: draftClient,
+			Jobs:   &repository.DraftJobRepo{Pool: pool},
 		}
+		procedureHandler.Drafting.Runner = drafting.NewJobRunner(procedureHandler.Drafting)
+		// Resume jobs left QUEUED/RUNNING by a previous process (their lease expires).
+		procedureHandler.Drafting.Runner.Wake()
 	}
 
 	// AI extraction (P2) is opt-in and off by default. An empty/disabled
@@ -137,6 +141,9 @@ func NewWithIndexWorker(logger *slog.Logger, pool *pgxpool.Pool, cfg config.Conf
 				Timeout: workerTimeout(cfg), ClaimTTL: cfg.IndexClaimTTL,
 				Pipeline: cfg.IndexMode == "pipeline", Bucket: cfg.ObjectStorageBucket,
 				PublishTimeout: cfg.IndexPublishTimeout,
+				Async:          cfg.IndexMode == "pipeline" && cfg.IndexAsync,
+				Heartbeat:      cfg.IndexHeartbeat,
+				MaxConcurrent:  cfg.IndexMaxConcurrent,
 			}
 			if procedureHandler.Drafting != nil {
 				procedureHandler.Drafting.Index = handler.Index
@@ -190,7 +197,14 @@ func NewWithIndexWorker(logger *slog.Logger, pool *pgxpool.Pool, cfg config.Conf
 	return r
 }
 
+// asyncWorkerGrace lets the AI service hit its own pipeline deadline and answer
+// FAILED/timeout before the Go client gives up on a background job.
+const asyncWorkerGrace = 30 * time.Second
+
 func workerTimeout(cfg config.Config) time.Duration {
+	if cfg.IndexMode == "pipeline" && cfg.IndexAsync {
+		return cfg.IndexPipelineTimeout + asyncWorkerGrace
+	}
 	if cfg.IndexMode == "pipeline" {
 		return cfg.IndexPipelineTimeout
 	}

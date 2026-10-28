@@ -1,6 +1,7 @@
 package activation
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -248,6 +249,29 @@ func TestEligibilityRejectsArchivedAndInvalidDefinition(t *testing.T) {
 	row.Definition = []byte(`{"procedure_code":""}`)
 	if firstReason(evaluateEligibility(row, nil)) != "INVALID_DEFINITION" {
 		t.Fatal(evaluateEligibility(row, nil))
+	}
+}
+
+func TestEligibilityNeverActivatesSourceVersion(t *testing.T) {
+	row := versionRow{ID: uuid.New(), Status: StatusSource, Definition: []byte(`{}`), XaID: "xa_chu_se"}
+	ready := []sourceRow{{IndexStatus: "READY"}}
+	el := evaluateEligibility(row, ready)
+	if el.CanActivate || len(el.Reasons) != 1 || el.Reasons[0] != "SOURCE_VERSION" {
+		t.Fatal(el)
+	}
+}
+
+func TestCreateProcedureRejectsInvalidInputBeforeDB(t *testing.T) {
+	svc := &Service{Store: &Store{}, XAID: "xa_chu_se"}
+	for _, in := range []CreateProcedureRequest{
+		{ProcedureCode: "DK", Name: "x", DomainID: "ho_tich_chung_thuc"},
+		{ProcedureCode: "dk-khai-sinh", Name: "x", DomainID: "ho_tich_chung_thuc"},
+		{ProcedureCode: "dk_khai_sinh", Name: " ", DomainID: "ho_tich_chung_thuc"},
+		{ProcedureCode: "dk_khai_sinh", Name: "x", DomainID: ""},
+	} {
+		if _, err := svc.CreateProcedure(context.Background(), uuid.New(), uuid.New(), in); !errors.Is(err, ErrValidation) {
+			t.Fatalf("%+v: want ErrValidation, got %v", in, err)
+		}
 	}
 }
 

@@ -55,12 +55,14 @@ func (r *IndexRepo) ListLinks(ctx context.Context, xaID string, documentID uuid.
 			p.procedure_code, v.version, link.relationship_type, link.page_range,
 			link.index_status, link.last_error_code, link.reindex_error_code, link.updated_at, job.claim_expires_at,
 			gen.page_count, gen.native_page_count, gen.ocr_page_count, gen.chunk_count,
-			gen.pipeline_version, gen.embedding_model_id
+			gen.pipeline_version, gen.embedding_model_id,
+			job.progress_stage, job.pages_total, job.pages_done, job.pages_ocr, job.pages_rejected, job.progress_updated_at,
+			latest.report
 		FROM procedure_version_documents link
 		JOIN procedures p ON p.id = link.procedure_id
 		JOIN procedure_versions v ON v.id = link.procedure_version_id AND v.procedure_id = link.procedure_id
 		LEFT JOIN LATERAL (
-			SELECT claim_expires_at
+			SELECT claim_expires_at, progress_stage, pages_total, pages_done, pages_ocr, pages_rejected, progress_updated_at
 			FROM document_index_jobs
 			WHERE document_id = link.document_id
 			  AND procedure_version_id = link.procedure_version_id
@@ -69,6 +71,15 @@ func (r *IndexRepo) ListLinks(ctx context.Context, xaID string, documentID uuid.
 			ORDER BY claimed_at DESC
 			LIMIT 1
 		) job ON true
+		LEFT JOIN LATERAL (
+			SELECT report
+			FROM document_index_jobs
+			WHERE document_id = link.document_id
+			  AND procedure_version_id = link.procedure_version_id
+			  AND xa_id = link.xa_id
+			ORDER BY created_at DESC
+			LIMIT 1
+		) latest ON true
 		LEFT JOIN document_index_generations gen
 			ON gen.id = link.active_generation_id
 			AND gen.document_id = link.document_id
@@ -87,8 +98,21 @@ func (r *IndexRepo) ListLinks(ctx context.Context, xaID string, documentID uuid.
 		var item index.Link
 		var pageCount, nativeCount, ocrCount, chunkCount *int
 		var pipelineVersion, modelID *string
-		if err := rows.Scan(&item.DocumentID, &item.ProcedureID, &item.ProcedureVersionID, &item.ProcedureCode, &item.Version, &item.RelationshipType, &item.PageRange, &item.IndexStatus, &item.LastErrorCode, &item.ReindexErrorCode, &item.UpdatedAt, &item.ClaimExpiresAt, &pageCount, &nativeCount, &ocrCount, &chunkCount, &pipelineVersion, &modelID); err != nil {
+		var stage *string
+		var progress index.Progress
+		var report []byte
+		if err := rows.Scan(&item.DocumentID, &item.ProcedureID, &item.ProcedureVersionID, &item.ProcedureCode, &item.Version, &item.RelationshipType, &item.PageRange, &item.IndexStatus, &item.LastErrorCode, &item.ReindexErrorCode, &item.UpdatedAt, &item.ClaimExpiresAt, &pageCount, &nativeCount, &ocrCount, &chunkCount, &pipelineVersion, &modelID,
+			&stage, &progress.PagesTotal, &progress.PagesDone, &progress.PagesOCR, &progress.PagesRejected, &progress.UpdatedAt, &report); err != nil {
 			return nil, err
+		}
+		if item.ClaimExpiresAt != nil {
+			if stage != nil {
+				progress.Stage = *stage
+			}
+			item.Progress = &progress
+		}
+		if len(report) > 0 {
+			item.LastReport = report
 		}
 		item.PageCount = intPtr(pageCount)
 		item.NativePageCount = intPtr(nativeCount)
@@ -510,6 +534,19 @@ func (r *IndexRepo) Claim(ctx context.Context, in index.ClaimInput) (index.Claim
 		return index.ClaimResult{}, err
 	}
 	return index.ClaimResult{JobID: jobID, ClaimToken: token, RunWorker: true, WorkerRequest: workerReq}, nil
+}
+
+// ExtendClaim renews a CLAIMED job's lease. false means the claim was taken over or finished.
+func (r *IndexRepo) ExtendClaim(ctx context.Context, xaID string, jobID, claimToken uuid.UUID, ttl time.Duration) (bool, error) {
+	tag, err := r.Pool.Exec(ctx, `
+		UPDATE document_index_jobs
+		SET claim_expires_at = $4
+		WHERE id = $1 AND claim_token = $2 AND xa_id = $3 AND status = 'CLAIMED'`,
+		jobID, claimToken, xaID, time.Now().Add(ttl))
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 func intPtr(v *int) *int {

@@ -13,4 +13,5 @@ var (
 	ErrNotApproved       = errors.New("version_not_approved")
 	ErrNotEligible       = errors.New("not_eligible")
 	ErrDuplicateVersion  = errors.New("duplicate_version")
+	ErrDuplicateCode     = errors.New("duplicate_procedure_code")
 )
