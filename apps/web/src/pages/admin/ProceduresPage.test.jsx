@@ -2,7 +2,7 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { isUnknownActivationOutcome } from './ProceduresPage.jsx'
+import { isUnknownActivationOutcome, validateNewProcedure } from './ProceduresPage.jsx'
 
 const api = vi.hoisted(() => ({
   listAdminProcedures: vi.fn(),
@@ -10,6 +10,8 @@ const api = vi.hoisted(() => ({
   listActivationHistory: vi.fn(),
   activateProcedureVersion: vi.fn(),
   createProcedureVersion: vi.fn(),
+  createProcedure: vi.fn(),
+  listDomains: vi.fn(),
   getActiveVersion: vi.fn(),
 }))
 
@@ -338,5 +340,141 @@ describe('ProceduresPage activation', () => {
     expect(alert?.textContent).toContain('Để trống nếu muốn hệ thống tự tăng.')
     expect(host.textContent).not.toContain('validation: version must be n.n.n')
     expect(host.querySelector('[role="dialog"]')).toBeTruthy()
+  })
+})
+
+function setField(host, name, value) {
+  const node = host.querySelector(`[name="${name}"]`)
+  const proto = node.tagName === 'SELECT' ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype
+  Object.getOwnPropertyDescriptor(proto, 'value').set.call(node, value)
+  node.dispatchEvent(new Event(node.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }))
+}
+
+async function flush() {
+  for (let i = 0; i < 4; i += 1) await Promise.resolve()
+}
+
+const domainItems = [
+  { id: 'ho_tich_chung_thuc', name: 'Hộ tịch & Chứng thực' },
+  { id: 'dat_dai_nha_o_quy_hoach', name: 'Đất đai, Nhà ở & Quy hoạch' },
+]
+
+const createdProc = {
+  id: 'proc-new',
+  procedure_code: 'dk_khai_sinh',
+  name: 'Đăng ký khai sinh',
+  active_version: '',
+  active_version_id: null,
+  version_count: 1,
+  legacy_active: false,
+}
+
+const sourceVersion = {
+  id: 'src-1', version: '0.0.0', status: 'SOURCE', documents: [],
+  eligibility: { can_activate: false, reasons: ['SOURCE_VERSION'] },
+}
+
+async function openNewProcedureDialog(host) {
+  await act(async () => {
+    buttonNamed(host, '+ Tạo thủ tục').click()
+    await flush()
+  })
+}
+
+async function fillNewProcedure(host, { code, name, domainId }) {
+  await act(async () => {
+    setField(host, 'procedure_code', code)
+    setField(host, 'name', name)
+    setField(host, 'domain_id', domainId)
+    await flush()
+  })
+}
+
+async function submitNewProcedure(host) {
+  await act(async () => {
+    buttonNamed(host, 'Tạo thủ tục').click()
+    await flush()
+  })
+}
+
+describe('validateNewProcedure', () => {
+  it('matches the API code rule and requires name and domain', () => {
+    expect(validateNewProcedure({ code: 'dk_khai_sinh', name: 'Đăng ký', domainId: 'ho_tich_chung_thuc' })).toBe('')
+    expect(validateNewProcedure({ code: 'DK_Khai', name: 'x', domainId: 'd' })).toContain('chữ thường')
+    expect(validateNewProcedure({ code: 'dk-khai', name: 'x', domainId: 'd' })).toContain('chữ thường')
+    expect(validateNewProcedure({ code: 'a', name: 'x', domainId: 'd' })).toContain('chữ thường')
+    expect(validateNewProcedure({ code: 'dk_khai', name: '  ', domainId: 'd' })).toBe('Nhập tên thủ tục.')
+    expect(validateNewProcedure({ code: 'dk_khai', name: 'x', domainId: '' })).toBe('Chọn lĩnh vực.')
+  })
+})
+
+describe('ProceduresPage create procedure', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    for (const fn of Object.values(api)) fn.mockReset()
+    api.listAdminProcedures.mockResolvedValue({ items: [] })
+    api.listActivationHistory.mockResolvedValue({ items: [] })
+    api.listProcedureVersions.mockResolvedValue({ items: [sourceVersion] })
+    api.listDomains.mockResolvedValue({ items: domainItems, count: 2 })
+  })
+
+  it('offers + Tạo thủ tục on an empty commune and creates the first procedure', async () => {
+    api.createProcedure.mockResolvedValue({ ...createdProc, source_version_id: 'src-1', source_version: '0.0.0', replayed: false })
+    const host = await renderPage()
+    expect(host.textContent).toContain('Chưa có thủ tục trong xã này.')
+    await openNewProcedureDialog(host)
+    expect(api.listDomains).toHaveBeenCalledTimes(1)
+    expect(host.querySelectorAll('select[name="domain_id"] option').length).toBe(3)
+
+    api.listAdminProcedures.mockResolvedValue({ items: [createdProc] })
+    await fillNewProcedure(host, { code: 'dk_khai_sinh', name: 'Đăng ký khai sinh', domainId: 'ho_tich_chung_thuc' })
+    await submitNewProcedure(host)
+
+    expect(api.createProcedure).toHaveBeenCalledTimes(1)
+    const [body, requestId] = api.createProcedure.mock.calls[0]
+    expect(body).toEqual({ procedure_code: 'dk_khai_sinh', name: 'Đăng ký khai sinh', domain_id: 'ho_tich_chung_thuc' })
+    expect(requestId).toMatch(/^[0-9a-f-]{36}$/)
+    expect(host.querySelector('[aria-labelledby="new-proc-title"]')).toBeNull()
+    expect(host.textContent).toContain('Đã tạo thủ tục «Đăng ký khai sinh»')
+    expect(host.textContent).toContain('dk_khai_sinh')
+    expect(api.listProcedureVersions).toHaveBeenCalledWith('proc-new')
+    expect(host.textContent).toContain('Phiên nguồn')
+    expect(host.textContent).toContain('Phiên nguồn chỉ để gắn tài liệu và tạo bản nháp tự động, không kích hoạt.')
+    expect(buttonNamed(host, 'Kích hoạt')).toBeUndefined()
+    expect([...host.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toContain('/admin/documents')
+  })
+
+  it('blocks an invalid code before calling the API', async () => {
+    const host = await renderPage()
+    await openNewProcedureDialog(host)
+    await fillNewProcedure(host, { code: 'DK Khai Sinh', name: 'Đăng ký', domainId: 'ho_tich_chung_thuc' })
+    await submitNewProcedure(host)
+    expect(api.createProcedure).not.toHaveBeenCalled()
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('chữ thường')
+  })
+
+  it('shows a duplicate code in Vietnamese and keeps the dialog open', async () => {
+    api.createProcedure.mockRejectedValue(Object.assign(new Error('procedure_code already exists in this commune'), {
+      status: 409, code: 'PROCEDURE_CODE_EXISTS',
+    }))
+    const host = await renderPage()
+    await openNewProcedureDialog(host)
+    await fillNewProcedure(host, { code: 'dk_khai_sinh', name: 'Đăng ký', domainId: 'ho_tich_chung_thuc' })
+    await submitNewProcedure(host)
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe('Mã thủ tục này đã có trong xã. Hãy dùng mã khác.')
+    expect(host.querySelector('[aria-labelledby="new-proc-title"]')).toBeTruthy()
+  })
+
+  it('reuses the request id when retrying the same body after a network error', async () => {
+    api.createProcedure
+      .mockRejectedValueOnce(Object.assign(new Error('Failed to fetch'), { name: 'TypeError' }))
+      .mockResolvedValueOnce({ ...createdProc, source_version: '0.0.0', replayed: true })
+    const host = await renderPage()
+    await openNewProcedureDialog(host)
+    await fillNewProcedure(host, { code: 'dk_khai_sinh', name: 'Đăng ký khai sinh', domainId: 'ho_tich_chung_thuc' })
+    await submitNewProcedure(host)
+    await submitNewProcedure(host)
+    expect(api.createProcedure).toHaveBeenCalledTimes(2)
+    expect(api.createProcedure.mock.calls[1][1]).toBe(api.createProcedure.mock.calls[0][1])
   })
 })

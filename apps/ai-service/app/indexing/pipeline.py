@@ -155,6 +155,141 @@ def chunk_id_for(generation_id: uuid.UUID, index: int) -> uuid.UUID:
     return uuid.uuid5(uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8"), f"{generation_id}:{index}")
 
 
+@dataclass(frozen=True)
+class OcrQuality:
+    """Gate for OCR pages that may become legal citations.
+
+    A page is accepted only when the existing structural/Vietnamese checks pass
+    and the engine's word confidence clears these bounds. Rejected pages are
+    never chunked. More than max_rejected_pages rejections fails the job.
+    """
+
+    min_mean_confidence: float = 85.0
+    max_low_confidence_ratio: float = 0.10
+    max_rejected_pages: int = 0
+
+
+@dataclass
+class CachedPage:
+    number: int
+    source: str
+    accepted: bool
+    reason: str | None
+    text: str
+    quality: dict
+
+
+def extraction_key(ocr_version: str, dpi: int, native_min_chars: int, quality: OcrQuality) -> str:
+    """Cache key for per-page results: any change to engine or thresholds invalidates the cache."""
+    raw = (
+        f"{EXTRACTION_VERSION}|{ocr_version}|dpi={dpi}|native_min={native_min_chars}|"
+        f"conf={quality.min_mean_confidence}|low={quality.max_low_confidence_ratio}"
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def _report(deps, job: IndexJob, **fields) -> None:
+    """Best-effort progress. A lost claim stops the job; storage hiccups do not."""
+    progress = getattr(deps, "progress", None)
+    if progress is None:
+        return
+    try:
+        progress.update(job, **fields)
+    except IndexFailure:
+        raise
+    except Exception:
+        log.warning("index_progress_write_failed")
+
+
+def _scored_prepare(job, deps, data, pages, source_sha, renderer, *, native_min_chars, max_ocr_pages, dpi, ocr_timeout_s, clock, quality):
+    key = extraction_key(deps.ocr.version, dpi, native_min_chars, quality)
+    cache = getattr(deps, "page_cache", None)
+    cached: dict[int, CachedPage] = {}
+    if cache is not None:
+        try:
+            cached = cache.load(job, source_sha, key)
+        except Exception:
+            log.warning("index_page_cache_read_failed")
+            cached = {}
+    prepared: list[PageRecord] = []
+    rejected: dict[int, str] = {}
+    ocr_pages = 0
+    total = len(pages)
+    _report(deps, job, stage="extract", pages_total=total, pages_done=0, pages_ocr=0, pages_rejected=0)
+    for done, (number, native) in enumerate(pages, start=1):
+        _check(clock)
+        hit = cached.get(number)
+        if hit is not None:
+            if hit.source == "ocr":
+                ocr_pages += 1
+            if not hit.accepted:
+                rejected[number] = hit.reason or "ocr_rejected"
+            elif hit.source != "blank":
+                prepared.append(PageRecord(number, hit.text, hit.source))
+        else:
+            record = _extract_page(
+                deps, data, number, native, renderer,
+                native_min_chars=native_min_chars, dpi=dpi, ocr_timeout_s=ocr_timeout_s,
+                clock=clock, quality=quality, ocr_used=ocr_pages, max_ocr_pages=max_ocr_pages,
+            )
+            if record.source == "ocr":
+                ocr_pages += 1
+            if not record.accepted:
+                rejected[number] = record.reason or "ocr_rejected"
+                log.warning("ocr_page_rejected page=%s reason=%s", number, record.reason)
+            elif record.source != "blank":
+                prepared.append(PageRecord(number, record.text, record.source))
+            if cache is not None:
+                try:
+                    cache.store(job, source_sha, key, record)
+                except Exception:
+                    log.warning("index_page_cache_write_failed")
+        _report(deps, job, pages_done=done, pages_ocr=ocr_pages, pages_rejected=len(rejected))
+    if rejected:
+        _report(deps, job, report={
+            "rejected_pages": sorted(rejected),
+            "rejected_reasons": {str(n): r for n, r in sorted(rejected.items())},
+            "max_rejected_pages": quality.max_rejected_pages,
+        })
+    if len(rejected) > quality.max_rejected_pages:
+        raise IndexFailure("ocr_quality_low")
+    return prepared
+
+
+def _extract_page(deps, data, number, native, renderer, *, native_min_chars, dpi, ocr_timeout_s, clock, quality, ocr_used, max_ocr_pages) -> CachedPage:
+    if native_text_usable(native, native_min_chars):
+        return CachedPage(number, "native", True, None, native, {})
+    required = page_requires_recovery(native, native_min_chars)
+    if ocr_used >= max_ocr_pages:
+        raise IndexFailure("page_limit")
+    _check(clock)
+    image = renderer.render(data, number, dpi)
+    if not required and page_looks_blank(image):
+        return CachedPage(number, "blank", True, None, "", {})
+    if not getattr(deps.ocr, "vietnamese_capable", False):
+        log.warning("extract_unusable page=%s reason=ocr_charset_incomplete", number)
+        raise IndexFailure("extract_unusable")
+    _check(clock)
+    ocr_budget = ocr_timeout_s if clock is None else clock.timeout_for_io(ocr_timeout_s)
+    try:
+        scored = deps.ocr.read_page_scored(image, number, timeout_s=ocr_budget, deadline=clock)
+    except TimeoutError as exc:
+        raise IndexFailure("ocr_timeout") from exc
+    text = normalize_text(scored.text)
+    stats = {
+        "mean_confidence": round(scored.mean_confidence, 2),
+        "low_confidence_ratio": round(scored.low_confidence_ratio, 4),
+        "words": scored.word_count,
+    }
+    if required and not recovered_text_usable(text, native, native_min_chars):
+        return CachedPage(number, "ocr", False, "recovery_failed", text, stats)
+    if not required and not ocr_text_usable(text, native_min_chars):
+        return CachedPage(number, "ocr", False, "ocr_unusable", text, stats)
+    if scored.mean_confidence < quality.min_mean_confidence or scored.low_confidence_ratio > quality.max_low_confidence_ratio:
+        return CachedPage(number, "ocr", False, "ocr_low_confidence", text, stats)
+    return CachedPage(number, "ocr", True, None, text, stats)
+
+
 def run_pipeline(
     job: IndexJob,
     deps,
@@ -170,6 +305,7 @@ def run_pipeline(
     deadline_s: float | None = None,
     deadline: Deadline | None = None,
     approved_bundles: tuple[VerifiedSpec, ...] | None = None,
+    quality: OcrQuality | None = None,
 ) -> PipelineResult:
     clock = deadline if deadline is not None else (Deadline(deadline_s) if deadline_s is not None else None)
     started = time.perf_counter()
@@ -210,6 +346,13 @@ def run_pipeline(
         mark = time.perf_counter()
         renderer = getattr(deps, "renderer", None) or FakeRenderer()
         ocr_used = 0
+        if hasattr(deps.ocr, "read_page_scored"):
+            prepared = _scored_prepare(
+                job, deps, data, pages, source_sha, renderer,
+                native_min_chars=native_min_chars, max_ocr_pages=max_ocr_pages, dpi=dpi,
+                ocr_timeout_s=ocr_timeout_s, clock=clock, quality=quality or OcrQuality(),
+            )
+            pages = []
         for number, native in pages:
             _check(clock)
             if native_text_usable(native, native_min_chars):
@@ -248,6 +391,7 @@ def run_pipeline(
     if not prepared:
         raise IndexFailure("no_extractable_text")
     mark = time.perf_counter()
+    _report(deps, job, stage="chunk")
     chunks = chunk_pages([(item.number, item.text, item.source) for item in prepared], chunk_config)
     counter = deps.embedder if hasattr(deps.embedder, "count_tokens") else WordTokenCounter()
     limit = getattr(deps.embedder, "max_tokens", E5_MAX_TOKENS)
@@ -273,11 +417,13 @@ def run_pipeline(
         for item in chunks
     ]
     mark = time.perf_counter()
+    _report(deps, job, stage="embed")
     vectors = _embed_all(deps, [item.text for item in saved], clock)
     _check(clock)
     stage["embed"] = _ms(mark)
     model_id, revision, checksum, dimension = _model_meta(deps)
     mark = time.perf_counter()
+    _report(deps, job, stage="write")
     qdrant_started = False
     try:
         qdrant_started = True

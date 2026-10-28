@@ -17,6 +17,9 @@ func evaluateEligibility(row versionRow, sources []sourceRow) Eligibility {
 	if row.Status == "ARCHIVED" {
 		return Eligibility{CanActivate: false, Reasons: []string{"VERSION_ARCHIVED"}}
 	}
+	if row.Status == StatusSource {
+		return Eligibility{CanActivate: false, Reasons: []string{"SOURCE_VERSION"}}
+	}
 	if row.Status != "APPROVED" && row.Status != "INDEXING" {
 		return Eligibility{CanActivate: false, Reasons: []string{"VERSION_NOT_APPROVED"}}
 	}

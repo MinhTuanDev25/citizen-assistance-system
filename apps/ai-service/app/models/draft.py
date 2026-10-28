@@ -14,7 +14,7 @@ import re
 import uuid
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 SCHEMA_VERSION = "draft_definition.v1"
 SLOT_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
@@ -123,6 +123,62 @@ class SourceExcerpt(StrictModel):
         return self
 
 
+MAX_BATCHES = 100
+MAX_KNOWN_SLOTS = 30
+
+
+class KnownSlot(StrictModel):
+    """A slot an earlier batch already proposed; reusing its key lets Go merge it."""
+
+    key: str
+    type: SlotType
+    question: str
+
+    @field_validator("key")
+    @classmethod
+    def _key(cls, v: str) -> str:
+        if SLOT_KEY_RE.fullmatch(v or "") is None:
+            raise ValueError("known slot key is invalid")
+        return v
+
+    @field_validator("question")
+    @classmethod
+    def _question(cls, v: str) -> str:
+        if len(v) > MAX_QUESTION_LEN:
+            raise ValueError("known slot question is too long")
+        return v
+
+
+class DraftContext(StrictModel):
+    """Set when the excerpts are one batch of a longer procedure section."""
+
+    partial: bool = False
+    section_title: str = ""
+    batch_index: int = 1
+    batch_count: int = 1
+    known_slots: list[KnownSlot] = Field(default_factory=list)
+
+    @field_validator("section_title")
+    @classmethod
+    def _title(cls, v: str) -> str:
+        if len(v) > MAX_NAME_LEN:
+            raise ValueError("section_title is too long")
+        return v.strip()
+
+    @field_validator("known_slots")
+    @classmethod
+    def _known(cls, v: list[KnownSlot]) -> list[KnownSlot]:
+        if len(v) > MAX_KNOWN_SLOTS:
+            raise ValueError("too many known_slots")
+        return v
+
+    @model_validator(mode="after")
+    def _batch(self) -> DraftContext:
+        if not (1 <= self.batch_index <= self.batch_count <= MAX_BATCHES):
+            raise ValueError("batch_index/batch_count are out of range")
+        return self
+
+
 class DraftRequest(StrictModel):
     schema_version: Literal["draft_definition.v1"] = SCHEMA_VERSION
     request_id: uuid.UUID
@@ -134,6 +190,11 @@ class DraftRequest(StrictModel):
     source_page_start: int
     source_page_end: int
     excerpts: list[SourceExcerpt]
+    context: DraftContext | None = None
+
+    @property
+    def partial(self) -> bool:
+        return bool(self.context and self.context.partial)
 
     @field_validator("procedure_code")
     @classmethod
@@ -198,6 +259,8 @@ class SlotProposal(StrictModel):
     type: SlotType
     question: str
     enum_values: list[str] = Field(default_factory=list)
+    # Citizen-facing text for each enum value, same order (e.g. "Trực tiếp").
+    enum_labels: list[str] = Field(default_factory=list)
 
     @field_validator("key")
     @classmethod
@@ -229,6 +292,12 @@ class SlotProposal(StrictModel):
             raise ValueError("enum slots require enum_values")
         if self.type != "enum" and self.enum_values:
             raise ValueError("enum_values are only allowed on enum slots")
+        if self.enum_labels:
+            if len(self.enum_labels) != len(self.enum_values):
+                raise ValueError("enum_labels must match enum_values one to one")
+            for label in self.enum_labels:
+                if not label.strip() or len(label) > MAX_ENUM_VALUE_LEN:
+                    raise ValueError("enum label is empty or too long")
         return self
 
 
@@ -270,6 +339,25 @@ class ConditionalProposal(StrictModel):
         return v
 
 
+class GuidanceRule(StrictModel):
+    """A checklist item or note that applies only to one answer of a question.
+
+    when.slot may name a question proposed by another batch of the same
+    section, so it is not checked against this batch's slots; the server checks
+    it against the merged Definition.
+    """
+
+    when: WhenClause
+    item: str
+
+    @field_validator("item")
+    @classmethod
+    def _item(cls, v: str) -> str:
+        if not v.strip() or len(v) > MAX_NOTE_LEN:
+            raise ValueError("conditional guidance item is empty or too long")
+        return v
+
+
 class GuidanceProposal(StrictModel):
     summary: str
     checklist: list[str]
@@ -277,6 +365,15 @@ class GuidanceProposal(StrictModel):
     notes: list[str] = Field(default_factory=list)
     fee_hint: str = ""
     processing_time_hint: str = ""
+    conditional_checklist: list[GuidanceRule] = Field(default_factory=list)
+    conditional_notes: list[GuidanceRule] = Field(default_factory=list)
+
+    @field_validator("conditional_checklist", "conditional_notes")
+    @classmethod
+    def _rules(cls, v: list[GuidanceRule]) -> list[GuidanceRule]:
+        if len(v) > MAX_CHECKLIST:
+            raise ValueError("too many conditional guidance items")
+        return v
 
     @field_validator("summary", "where_to_submit", "fee_hint", "processing_time_hint")
     @classmethod
@@ -320,6 +417,10 @@ class CitationProposal(StrictModel):
         return text
 
 
+def _rule(rule: GuidanceRule) -> dict[str, Any]:
+    return {"when": {"slot": rule.when.slot, "equals": rule.when.equals}, "item": rule.item}
+
+
 class DefinitionProposal(StrictModel):
     procedure_code: str
     name: str
@@ -356,8 +457,11 @@ class DefinitionProposal(StrictModel):
 
     @field_validator("slots")
     @classmethod
-    def _slots(cls, v: list[SlotProposal]) -> list[SlotProposal]:
-        if not v:
+    def _slots(cls, v: list[SlotProposal], info: ValidationInfo) -> list[SlotProposal]:
+        # One batch of a long section may hold no citizen question (e.g. only fees);
+        # the merged Definition is still validated by Go.
+        partial = bool((info.context or {}).get("partial"))
+        if not v and not partial:
             raise ValueError("at least one slot is required")
         if len(v) > MAX_SLOTS:
             raise ValueError("too many slots")
@@ -410,6 +514,7 @@ class DefinitionProposal(StrictModel):
                 "type": item.type,
                 "question": item.question,
                 **({"enum_values": item.enum_values} if item.enum_values else {}),
+                **({"enum_labels": item.enum_labels} if item.enum_labels else {}),
             }
             for item in self.slots
         }
@@ -433,6 +538,16 @@ class DefinitionProposal(StrictModel):
                 "notes": list(self.guidance.notes),
                 "fee_hint": self.guidance.fee_hint,
                 "processing_time_hint": self.guidance.processing_time_hint,
+                **(
+                    {"conditional_checklist": [_rule(r) for r in self.guidance.conditional_checklist]}
+                    if self.guidance.conditional_checklist
+                    else {}
+                ),
+                **(
+                    {"conditional_notes": [_rule(r) for r in self.guidance.conditional_notes]}
+                    if self.guidance.conditional_notes
+                    else {}
+                ),
             },
             "citations": [
                 {

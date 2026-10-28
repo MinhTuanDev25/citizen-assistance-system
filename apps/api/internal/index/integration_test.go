@@ -23,6 +23,7 @@ import (
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/config"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/httpserver"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/index"
+	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/repository"
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/storage"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -223,6 +224,86 @@ func TestExpiredLeaseLateWorkerDoesNotOverwrite(t *testing.T) {
 		t.Fatalf("link %s doc %s", link, doc)
 	}
 	assertChunks(t, pool, docID, 0)
+}
+
+func TestHeartbeatAndProgressVisibleInLinks(t *testing.T) {
+	pool := requireDB(t)
+	ctx := context.Background()
+	versionID := oneVersion(t, pool, "xa_chu_se", "ho_tich_chung_thuc")
+	started := make(chan struct{})
+	release := make(chan struct{})
+	worker := workerFn(func(_ context.Context, req index.Request) (index.Response, error) {
+		close(started)
+		<-release
+		return readyResponse(req), nil
+	})
+	eng, admin := engine(t, pool, worker, true)
+	docID := uploadDoc(t, eng, admin, "%PDF-1.4 progress")
+	t.Cleanup(func() { cleanupDoc(pool, docID) })
+	linkDoc(t, eng, admin, docID, versionID)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		call(t, eng, http.MethodPost, indexPath(docID, versionID, false), admin, uuid.New(), nil)
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not start")
+	}
+	var jobID, token uuid.UUID
+	var before time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT id, claim_token, claim_expires_at FROM document_index_jobs
+		WHERE document_id = $1 AND status = 'CLAIMED'`, docID).Scan(&jobID, &token, &before); err != nil {
+		t.Fatal(err)
+	}
+	// The AI worker writes progress guarded by the claim token.
+	if _, err := pool.Exec(ctx, `
+		UPDATE document_index_jobs
+		SET progress_stage = 'extract', pages_total = 451, pages_done = 120, pages_ocr = 98, pages_rejected = 0,
+		    progress_updated_at = now()
+		WHERE id = $1 AND claim_token = $2`, jobID, token); err != nil {
+		t.Fatal(err)
+	}
+	repo := &repository.IndexRepo{Pool: pool}
+	links, err := repo.ListLinks(ctx, "xa_chu_se", uuid.MustParse(docID))
+	if err != nil || len(links) != 1 || links[0].Progress == nil {
+		t.Fatalf("links %+v err %v", links, err)
+	}
+	p := links[0].Progress
+	if p.Stage != "extract" || *p.PagesTotal != 451 || *p.PagesDone != 120 || *p.PagesOCR != 98 {
+		t.Fatalf("progress %+v", p)
+	}
+	ok, err := repo.ExtendClaim(ctx, "xa_chu_se", jobID, token, 10*time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("extend own claim ok=%v err=%v", ok, err)
+	}
+	var after time.Time
+	if err := pool.QueryRow(ctx, `SELECT claim_expires_at FROM document_index_jobs WHERE id = $1`, jobID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if !after.After(before.Add(time.Minute)) {
+		t.Fatalf("lease not renewed: before %s after %s", before, after)
+	}
+	if ok, _ := repo.ExtendClaim(ctx, "xa_chu_se", jobID, uuid.New(), time.Minute); ok {
+		t.Fatal("a foreign claim token renewed the lease")
+	}
+	if ok, _ := repo.ExtendClaim(ctx, "xa_other", jobID, token, time.Minute); ok {
+		t.Fatal("another commune renewed the lease")
+	}
+	close(release)
+	<-done
+	if ok, _ := repo.ExtendClaim(ctx, "xa_chu_se", jobID, token, time.Minute); ok {
+		t.Fatal("a finished job renewed its lease")
+	}
+	if _, err := pool.Exec(ctx, `UPDATE document_index_jobs SET report = '{"rejected_pages":[7]}' WHERE id = $1`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	links, err = repo.ListLinks(ctx, "xa_chu_se", uuid.MustParse(docID))
+	if err != nil || links[0].Progress != nil || !bytes.Contains(links[0].LastReport, []byte(`"rejected_pages"`)) {
+		t.Fatalf("after finish progress %+v report %s err %v", links[0].Progress, links[0].LastReport, err)
+	}
 }
 
 func TestCrossCommuneReplayStaysHidden(t *testing.T) {

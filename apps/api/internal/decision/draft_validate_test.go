@@ -1,6 +1,9 @@
 package decision
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestValidateDraftDefinitionAcceptsKhaiSinh(t *testing.T) {
 	raw := []byte(`{
@@ -96,5 +99,67 @@ func TestMinimalUsableDefinitionIsProcedurallyReady(t *testing.T) {
 	got := ValidateDraftDefinition(raw, "tiny_proc")
 	if !got.SchemaValid || !got.ProceduralReady {
 		t.Fatalf("minimal usable def must pass, issues=%v", got.Issues)
+	}
+}
+
+func TestDraftCitationSourceConflict(t *testing.T) {
+	mk := func(docID, documentID string) []byte {
+		raw, _ := json.Marshal(map[string]any{
+			"procedure_code": "khai_sinh_v1", "name": "Đăng ký khai sinh", "intent_examples": []string{"khai sinh"},
+			"slots":          map[string]any{"hinh_thuc_nop": map[string]any{"type": "string", "question": "Hình thức nộp?"}},
+			"required_slots": []string{}, "conditional_slots": []any{},
+			"guidance":  map[string]any{"summary": "s", "checklist": []string{"a"}, "where_to_submit": "UBND"},
+			"citations": []any{map[string]any{"doc_id": docID, "document_id": documentID, "title": "Quyết định 163", "source_type": "ai_draft_unapproved"}},
+		})
+		return raw
+	}
+	has := func(raw []byte) bool {
+		for _, is := range ValidateDraftDefinition(raw, "khai_sinh_v1").Issues {
+			if is.Code == "CITATION_SOURCE_CONFLICT" && is.Severity == "error" {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(mk("document-a", "document-b")) {
+		t.Fatal("doc_id and document_id naming different documents must be an error")
+	}
+	for _, ok := range [][2]string{
+		{"document-a", "DOCUMENT-A"}, {"document-a", ""}, {"", "document-b"},
+		{"8939d98f-ce2c-487f-9f28-a53510c29271", "8939D98FCE2C487F9F28A53510C29271"},
+		{"{8939d98f-ce2c-487f-9f28-a53510c29271}", "urn:uuid:8939d98f-ce2c-487f-9f28-a53510c29271"},
+	} {
+		if has(mk(ok[0], ok[1])) {
+			t.Fatalf("%v is not a conflict", ok)
+		}
+	}
+}
+
+func TestNormalizeSourceID(t *testing.T) {
+	const canon = "8939d98f-ce2c-487f-9f28-a53510c29271"
+	for _, in := range []string{
+		canon,
+		"  8939D98F-CE2C-487F-9F28-A53510C29271 ",
+		"8939d98fce2c487f9f28a53510c29271",
+		"8939D98FCE2C487F9F28A53510C29271",
+		"{8939d98f-ce2c-487f-9f28-a53510c29271}",
+		"{8939D98F-CE2C-487F-9F28-A53510C29271}",
+		"urn:uuid:8939d98f-ce2c-487f-9f28-a53510c29271",
+		"urn:uuid:8939D98F-CE2C-487F-9F28-A53510C29271",
+		"URN:UUID:8939D98F-CE2C-487F-9F28-A53510C29271",
+	} {
+		if got := NormalizeSourceID(in); got != canon {
+			t.Errorf("NormalizeSourceID(%q) = %q, want %q", in, got, canon)
+		}
+	}
+	for in, want := range map[string]string{
+		" QĐ-163/BTP ":                          "qđ-163/btp",
+		"":                                      "",
+		"8939d98f-ce2c-487f-9f28-a53510c2927":   "8939d98f-ce2c-487f-9f28-a53510c2927",   // one digit short: not a UUID
+		"8939d98f-ce2c-487f-9f28-a53510c29271x": "8939d98f-ce2c-487f-9f28-a53510c29271x", // trailing junk: not a UUID
+	} {
+		if got := NormalizeSourceID(in); got != want {
+			t.Errorf("NormalizeSourceID(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

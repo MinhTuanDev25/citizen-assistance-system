@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"log"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,6 +47,19 @@ type Link struct {
 	ChunkCount         *int       `json:"chunk_count,omitempty"`
 	PipelineVersion    *string    `json:"pipeline_version,omitempty"`
 	EmbeddingModelID   *string    `json:"embedding_model_id,omitempty"`
+	// Progress of the CLAIMED job, if any (background indexing).
+	Progress *Progress `json:"progress,omitempty"`
+	// LastReport is the latest job's report, e.g. pages rejected by the OCR gate.
+	LastReport json.RawMessage `json:"last_report,omitempty"`
+}
+
+type Progress struct {
+	Stage         string     `json:"stage,omitempty"`
+	PagesTotal    *int       `json:"pages_total,omitempty"`
+	PagesDone     *int       `json:"pages_done,omitempty"`
+	PagesOCR      *int       `json:"pages_ocr,omitempty"`
+	PagesRejected *int       `json:"pages_rejected,omitempty"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
 }
 
 type Target struct {
@@ -157,6 +172,21 @@ type Service struct {
 	Pipeline       bool
 	Bucket         string
 	PublishTimeout time.Duration
+	// Async runs the worker call in the background so a long PDF does not hold
+	// the admin request open. The caller gets the CLAIMED job right away; a
+	// heartbeat renews the lease and MaxConcurrent bounds parallel jobs.
+	Async         bool
+	Heartbeat     time.Duration
+	MaxConcurrent int
+
+	slotsOnce sync.Once
+	slots     chan struct{}
+	running   sync.WaitGroup
+}
+
+// ClaimExtender renews the lease of a CLAIMED job. ok=false means the claim is gone.
+type ClaimExtender interface {
+	ExtendClaim(ctx context.Context, xaID string, jobID, claimToken uuid.UUID, ttl time.Duration) (bool, error)
 }
 
 func (s *Service) Metrics(ctx context.Context) (GenerationMetrics, error) {
@@ -267,13 +297,30 @@ func (s *Service) dispatch(ctx context.Context, documentID, versionID, actor, re
 		claim.WorkerRequest.ObjectKey = staged.ObjectKey
 		claim.WorkerRequest.PipelineVersion = PipelineVersion
 	}
+	if s.Async {
+		s.startBackground(claim, staged, documentID, versionID, actor, requestID)
+		linkStatus, docStatus := "PROCESSING", "PROCESSING"
+		if reindex {
+			// Reindex keeps the active generation READY until the new one publishes.
+			linkStatus, docStatus = "READY", ""
+		}
+		return Result{
+			DocumentID: documentID, ProcedureVersionID: versionID,
+			LinkStatus: linkStatus, ProcessingStatus: docStatus,
+			JobID: claim.JobID, JobStatus: "CLAIMED", Accepted: true,
+		}, nil
+	}
+	// Detach from the HTTP request context. Nginx/browser disconnect must not
+	// cancel a claimed pipeline job; finishDetached already uses Background.
+	return s.runWorker(context.Background(), claim, staged, documentID, versionID, actor, requestID)
+}
+
+func (s *Service) runWorker(parent context.Context, claim ClaimResult, staged StagedObject, documentID, versionID, actor, requestID uuid.UUID) (Result, error) {
 	timeout := s.Timeout
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
-	// Detach from the HTTP request context. Nginx/browser disconnect must not
-	// cancel a claimed pipeline job; finishDetached already uses Background.
-	wctx, cancel := context.WithTimeout(context.Background(), timeout)
+	wctx, cancel := context.WithTimeout(parent, timeout)
 	resp, callErr := s.Worker.Index(wctx, claim.WorkerRequest)
 	cancel()
 	code := ""
@@ -283,6 +330,8 @@ func (s *Service) dispatch(ctx context.Context, documentID, versionID, actor, re
 		code = "worker_failed"
 		if errors.Is(callErr, context.DeadlineExceeded) || errors.Is(wctx.Err(), context.DeadlineExceeded) {
 			code = "timeout"
+		} else if errors.Is(parent.Err(), context.Canceled) {
+			code = "claim_lost"
 		} else if callErr == nil && (resp.DocumentID != documentID || resp.ProcedureVersionID != versionID) {
 			code = "worker_mismatch"
 		} else if resp.ErrorCode != nil && *resp.ErrorCode != "" && len(*resp.ErrorCode) <= MaxErrorCodeLen {
@@ -324,6 +373,88 @@ func (s *Service) dispatch(ctx context.Context, documentID, versionID, actor, re
 		LinkStatus: finished.LinkStatus, ProcessingStatus: finished.DocumentStatus,
 		JobID: claim.JobID, JobStatus: jobStatus, ErrorCode: errCode,
 	}, nil
+}
+
+// startBackground runs one claimed job. The heartbeat starts before the slot
+// is acquired, so a queued job keeps its lease; losing the claim cancels the
+// worker call, and the AI service stops the pipeline when the request drops.
+func (s *Service) startBackground(claim ClaimResult, staged StagedObject, documentID, versionID, actor, requestID uuid.UUID) {
+	s.running.Add(1)
+	go func() {
+		defer s.running.Done()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		stop := s.startHeartbeat(ctx, cancel, claim)
+		defer stop()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("index_background_panic job=%s panic=%v", claim.JobID, r)
+				_, _ = s.finishDetached(claim, documentID, versionID, actor, requestID, OutcomeFailed, "worker_failed", staged.GenerationID, "", 0, 0)
+			}
+		}()
+		slots := s.slotChannel()
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			_, _ = s.finishDetached(claim, documentID, versionID, actor, requestID, OutcomeFailed, "claim_lost", staged.GenerationID, "", 0, 0)
+			return
+		}
+		defer func() { <-slots }()
+		if _, err := s.runWorker(ctx, claim, staged, documentID, versionID, actor, requestID); err != nil {
+			log.Printf("index_background_error job=%s err=%v", claim.JobID, err)
+		}
+	}()
+}
+
+func (s *Service) slotChannel() chan struct{} {
+	s.slotsOnce.Do(func() {
+		n := s.MaxConcurrent
+		if n < 1 {
+			n = 1
+		}
+		s.slots = make(chan struct{}, n)
+	})
+	return s.slots
+}
+
+func (s *Service) startHeartbeat(ctx context.Context, cancel context.CancelFunc, claim ClaimResult) func() {
+	ext, ok := s.Store.(ClaimExtender)
+	if !ok || s.Heartbeat <= 0 {
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(s.Heartbeat)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				hctx, hcancel := context.WithTimeout(context.Background(), s.Heartbeat)
+				alive, err := ext.ExtendClaim(hctx, s.XAID, claim.JobID, claim.ClaimToken, s.ClaimTTL)
+				hcancel()
+				if err != nil {
+					// Transient: the TTL covers at least two more beats.
+					log.Printf("index_heartbeat_failed job=%s err=%v", claim.JobID, err)
+					continue
+				}
+				if !alive {
+					log.Printf("index_claim_lost job=%s", claim.JobID)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+// Wait blocks until background jobs started by this service have finished.
+func (s *Service) Wait() {
+	s.running.Wait()
 }
 
 func (s *Service) finishDetached(claim ClaimResult, documentID, versionID, actor, requestID uuid.UUID, outcome, code string, generationID uuid.UUID, manifest string, chunks, vectors int) (FinishResult, error) {

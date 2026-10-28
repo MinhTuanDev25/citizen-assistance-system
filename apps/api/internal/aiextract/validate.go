@@ -220,7 +220,7 @@ func Validate(
 			// this is a policy filter, not a contract violation.
 			continue
 		}
-		if ok, reason := GroundSlot(message, spec, s.Key, value, s.Evidence); !ok {
+		if ok, reason := GroundSlotFor(targetCandidate.Name, message, spec, s.Key, value, s.Evidence); !ok {
 			out.DroppedUngrounded = append(out.DroppedUngrounded, s.Key)
 			slog.Info("extract_slot_ungrounded", "key", s.Key, "reason", string(reason))
 			continue

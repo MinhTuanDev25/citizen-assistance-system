@@ -49,8 +49,14 @@ def build_models(settings):
         )
         ocr.start(settings.pipeline_timeout_s)
         renderer = PdfiumRenderer()
+    elif settings.ocr_provider == "tesseract":
+        from app.indexing.ocr import TesseractOCR
+
+        # Stateless: one child process per page, killed with the pipeline's process group.
+        ocr = TesseractOCR()
+        renderer = PdfiumRenderer()
     else:
-        raise ConfigError("OCR_PROVIDER must be paddle or fake")
+        raise ConfigError("OCR_PROVIDER must be paddle, tesseract or fake")
     if time.perf_counter() - started > settings.pipeline_timeout_s:
         for obj in (embedder, ocr):
             shutdown = getattr(obj, "shutdown", None)
@@ -81,6 +87,8 @@ def _worker_problem(settings, models) -> str | None:
             return "embedding_model_missing"
         if getattr(embedder, "cpu_compatible", None) is False:
             return "embedding_cpu_unsupported"
+    if settings.ocr_provider == "tesseract" and (not loaded or ocr is None or not getattr(ocr, "version", "")):
+        return "ocr_model_missing"
     if settings.ocr_provider == "paddle":
         if not loaded or ocr is None:
             return "ocr_model_missing"

@@ -59,17 +59,59 @@ function displayFilename(name) {
 function linkHeading(link, targets) {
   const target = targets.find((item) => item.procedure_version_id === link.procedure_version_id)
   const name = target?.procedure_name || link.procedure_name || link.procedure_code
-  return `${name} · ${link.version}`
+  return `${name} · ${target?.status === 'SOURCE' ? 'phiên nguồn' : link.version}`
+}
+
+/** While a background job runs, poll links this often. */
+export const INDEX_POLL_MS = 3000
+
+const STAGE_LABEL = {
+  extract: 'Nhận dạng chữ',
+  chunk: 'Chia đoạn',
+  embed: 'Tạo dữ liệu tìm kiếm',
+  write: 'Lưu chỉ mục',
+}
+
+export function indexJobActive(link) {
+  return Boolean(link?.progress) || String(link?.index_status || '').toUpperCase() === 'PROCESSING'
+}
+
+export function progressNote(link) {
+  const p = link?.progress
+  if (!p) return ''
+  if (!p.stage) return 'Đang chờ xử lý…'
+  const parts = [STAGE_LABEL[p.stage] || p.stage]
+  if (p.pages_total != null) parts.push(`trang ${p.pages_done ?? 0}/${p.pages_total}`)
+  if (p.pages_ocr) parts.push(`nhận dạng ${p.pages_ocr} trang`)
+  if (p.pages_rejected) parts.push(`${p.pages_rejected} trang không đạt`)
+  return parts.join(' · ')
+}
+
+function rejectedPages(link) {
+  const pages = link?.last_report?.rejected_pages
+  if (!Array.isArray(pages) || !pages.length) return ''
+  const shown = pages.slice(0, 12).join(', ')
+  return pages.length > 12 ? `${shown}… (${pages.length} trang)` : shown
 }
 
 function linkNote(link, targets) {
   const status = String(link.index_status || '').toUpperCase()
   if (status === 'FAILED') {
     if (link.last_error_code === 'page_limit') {
-      return 'PDF vượt giới hạn số trang khi lập chỉ mục. Thử lại sau khi tăng hạn mức, hoặc dùng bản rút gọn.'
+      return 'Tài liệu vượt giới hạn số trang khi lập chỉ mục. Hãy dùng bản rút gọn hoặc thử lại sau khi tăng hạn mức.'
     }
     if (link.last_error_code === 'timeout') {
-      return 'Lập chỉ mục quá thời gian (PDF nhiều trang). Bấm Thử lại một lần và đợi — có thể mất tới 15 phút.'
+      return 'Lập chỉ mục quá thời gian. Bấm Thử lại: các trang đã xử lý được giữ lại, lần sau chạy tiếp.'
+    }
+    if (link.last_error_code === 'ocr_quality_low') {
+      const pages = rejectedPages(link)
+      return `Kết quả nhận dạng chữ không đạt chất lượng ở trang ${pages || 'một số trang'}, nên chưa thể dùng làm nguồn trích dẫn. Hãy gỡ liên kết rồi chọn lại phạm vi trang, hoặc dùng bản tài liệu rõ hơn.`
+    }
+    if (link.last_error_code === 'extract_unusable') {
+      return 'Tài liệu có lớp chữ bị lỗi hoặc là bản quét, nên hệ thống chưa đọc được tiếng Việt có dấu. Hãy dùng bản tài liệu xuất lại từ tệp soạn thảo hoặc bật nhận dạng chữ tiếng Việt.'
+    }
+    if (link.last_error_code === 'lease_expired' || link.last_error_code === 'claim_lost') {
+      return 'Lập chỉ mục bị gián đoạn (máy chủ khởi động lại). Bấm Thử lại: các trang đã xử lý được giữ lại.'
     }
     return 'Lập chỉ mục thất bại. Thử lại hoặc bỏ liên kết.'
   }
@@ -110,6 +152,26 @@ export default function DocumentsPage() {
   const [maxBytes, setMaxBytes] = useState(0)
   const [busyVersionIds, setBusyVersionIds] = useState([])
   const linkBusyRef = useRef(new Set())
+  const jobActive = links.some(indexJobActive)
+  const jobWasActive = useRef(false)
+
+  useEffect(() => {
+    const docId = selected?.id
+    if (!docId || !jobActive) {
+      if (jobWasActive.current) {
+        jobWasActive.current = false
+        refresh().catch(() => {})
+      }
+      return undefined
+    }
+    jobWasActive.current = true
+    const timer = setInterval(() => {
+      listDocumentLinks(docId)
+        .then((data) => setLinks(data.items || []))
+        .catch(() => {})
+    }, INDEX_POLL_MS)
+    return () => clearInterval(timer)
+  }, [selected?.id, jobActive])
 
   async function refresh(filter = statusFilter) {
     const data = await listDocuments({
@@ -172,7 +234,7 @@ export default function DocumentsPage() {
     setMsg('')
     try {
       await uploadDocument({ file, title, domainId, documentNumber, issuer })
-      setMsg('Đã lưu PDF.')
+      setMsg('Đã lưu tài liệu.')
       setFile(null)
       setTitle('')
       setDocumentNumber('')
@@ -295,8 +357,12 @@ export default function DocumentsPage() {
     setIndexMsg('')
     try {
       const result = await requestReindex(selected.id, versionId, pageRange)
-      setSelected((prev) => (prev ? { ...prev, processing_status: result.processing_status } : prev))
-      setIndexMsg(reindexSettledReady(result) ? 'Đã lập lại chỉ mục.' : 'Lập lại chỉ mục chưa thay thế bản đang dùng.')
+      if (result.accepted) {
+        setIndexMsg('Đang lập lại chỉ mục trong nền. Bản đang dùng giữ nguyên tới khi bản mới sẵn sàng.')
+      } else {
+        setSelected((prev) => (prev ? { ...prev, processing_status: result.processing_status } : prev))
+        setIndexMsg(reindexSettledReady(result) ? 'Đã lập lại chỉ mục.' : 'Lập lại chỉ mục chưa thay thế bản đang dùng.')
+      }
       await reloadLinks(selected.id)
       await refresh()
     } catch (err) {
@@ -314,7 +380,11 @@ export default function DocumentsPage() {
     try {
       const result = await requestIndexing(selected.id, versionId, retry)
       setSelected((prev) => (prev ? { ...prev, processing_status: result.processing_status } : prev))
-      setIndexMsg(result.link_status === 'READY' ? 'Đã lập chỉ mục.' : 'Lập chỉ mục thất bại.')
+      if (result.accepted) {
+        setIndexMsg('Đang lập chỉ mục trong nền. Tiến độ tự cập nhật; có thể rời trang và quay lại sau.')
+      } else {
+        setIndexMsg(result.link_status === 'READY' ? 'Đã lập chỉ mục.' : 'Lập chỉ mục thất bại.')
+      }
       await reloadLinks(selected.id)
       await refresh()
     } catch (err) {
@@ -355,14 +425,14 @@ export default function DocumentsPage() {
       <header className="admin-page-head">
         <div>
           <h1>Tài liệu</h1>
-          <p>PDF đã gắn và Sẵn sàng được trích dẫn khi công dân hỏi phiên đang dùng. Bỏ liên kết thì lượt sau không còn đoạn từ file đó.</p>
+          <p>Tài liệu đã gắn và xử lý xong sẽ được trích dẫn khi công dân hỏi phiên đang dùng. Khi bỏ liên kết, các lượt hỏi sau sẽ không còn dùng nội dung từ tài liệu đó.</p>
         </div>
       </header>
 
       <form className="panel upload-grid" onSubmit={onUpload}>
-        <h2>Upload PDF</h2>
+        <h2>Tải tài liệu lên</h2>
         <label>
-          File PDF
+          Tệp tài liệu
           <input
             name="file"
             type="file"
@@ -394,7 +464,7 @@ export default function DocumentsPage() {
         </label>
         <div className="upload-submit">
           <button type="submit" className="btn-primary" disabled={busy}>
-            {busy ? 'Đang tải lên…' : 'Upload'}
+            {busy ? 'Đang tải lên…' : 'Tải lên'}
           </button>
         </div>
         {(file || error || msg) ? (
@@ -454,7 +524,7 @@ export default function DocumentsPage() {
                         Chi tiết
                       </button>
                       <button type="button" onClick={() => { void onDownload(d) }}>
-                        Tải PDF
+                        Tải tài liệu
                       </button>
                     </div>
                   </td>
@@ -488,7 +558,7 @@ export default function DocumentsPage() {
                   <option value="">Chọn phiên bản</option>
                   {targets.map((item) => (
                     <option key={item.procedure_version_id} value={item.procedure_version_id}>
-                      {item.procedure_name} · {item.version}
+                      {item.procedure_name} · {item.status === 'SOURCE' ? 'phiên nguồn' : item.version}
                     </option>
                   ))}
                 </select>
@@ -499,7 +569,7 @@ export default function DocumentsPage() {
                   name="page_range"
                   value={pageRange}
                   onChange={(e) => setPageRange(e.target.value)}
-                  placeholder="10-21 · trống = giữ khi lập lại · all = toàn bộ"
+                  placeholder="Ví dụ 10-21 · để trống nếu giữ nguyên · nhập toàn bộ để chọn tất cả"
                 />
               </label>
               <button type="submit" className="btn-primary">Gắn thủ tục</button>
@@ -517,6 +587,14 @@ export default function DocumentsPage() {
                         {` · trang ${link.page_range || 'toàn bộ'}`}
                         {note ? ` · ${note}` : ''}
                       </div>
+                      {link.progress ? (
+                        <div className="cell-muted index-progress" role="status">
+                          {progressNote(link)}
+                          {link.progress.pages_total ? (
+                            <progress max={link.progress.pages_total} value={link.progress.pages_done ?? 0} />
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="row-actions">
                       {link.index_status === 'UPLOADED' ? (

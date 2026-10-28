@@ -27,7 +27,7 @@ export default function SelectCommunePage() {
         setItems(data?.items || [])
       } catch (err) {
         if (!cancelled) {
-          setError(err.message || 'Không tải được danh sách xã')
+          setError('Không tải được danh sách xã')
           setItems([])
         }
       } finally {
@@ -82,7 +82,7 @@ export default function SelectCommunePage() {
             {loading ? <p className="muted">Đang tải danh sách xã…</p> : null}
             {error ? (
               <p className="form-error">
-                {error}. Kiểm tra API đang chạy rồi thử lại.
+                {error}. Vui lòng kiểm tra kết nối rồi thử lại.
               </p>
             ) : null}
 

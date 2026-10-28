@@ -9,7 +9,7 @@ const STEPS = [
   {
     to: ROUTES.adminDocuments,
     step: '1',
-    title: 'Tải PDF',
+    title: 'Tải tài liệu lên',
     text: 'Lưu tài liệu nguồn theo lĩnh vực.',
     bg: '#dbeafe',
   },
@@ -17,7 +17,7 @@ const STEPS = [
     to: ROUTES.adminDocuments,
     step: '2',
     title: 'Gắn và lập chỉ mục',
-    text: 'Nối PDF với phiên bản thủ tục, chờ sẵn sàng.',
+    text: 'Gắn tài liệu với phiên bản thủ tục và chờ xử lý.',
     bg: '#dcfce7',
   },
   {
@@ -42,7 +42,7 @@ export default function AdminDashboardPage() {
         const data = await listDocuments({})
         if (!cancelled) setDocs(data?.count ?? 0)
       } catch (err) {
-        if (!cancelled) setApiError(err.message || 'API tài liệu lỗi')
+        if (!cancelled) setApiError(err.message || 'Không kết nối được kho tài liệu')
       }
     })()
     return () => {
@@ -79,7 +79,7 @@ export default function AdminDashboardPage() {
 
       <div className="stat-grid stat-grid-2">
         <div className="stat-card accent-blue">
-          <span>Tài liệu PDF</span>
+          <span>Tài liệu điện tử</span>
           <strong>{docs == null ? '…' : docs}</strong>
           <Link to={ROUTES.adminDocuments}>Mở tài liệu</Link>
         </div>

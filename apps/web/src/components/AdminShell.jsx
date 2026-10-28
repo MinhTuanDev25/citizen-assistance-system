@@ -4,14 +4,15 @@ import { useCommune } from '../commune/CommuneContext.jsx'
 import { adminIngestionEnabled } from '../config/features.js'
 import { ROUTES } from '../routes.js'
 import AdminSearch from './AdminSearch.jsx'
+import { ServiceMark, UiIcon } from './UiIcon.jsx'
 
 const ingestionOn = adminIngestionEnabled()
 
 const LINKS = [
-  { to: ROUTES.admin, end: true, label: 'Tổng quan', icon: '⌂' },
-  { to: ROUTES.adminDocuments, label: ingestionOn ? 'Tài liệu' : 'Tài liệu', icon: '📄' },
-  { to: ROUTES.adminProcedures, label: 'Thủ tục', icon: '☰' },
-  { to: ROUTES.adminDrafts, label: 'Bản nháp', icon: '✎' },
+  { to: ROUTES.admin, end: true, label: 'Tổng quan', icon: 'home' },
+  { to: ROUTES.adminDocuments, label: ingestionOn ? 'Tài liệu' : 'Tài liệu', icon: 'documents' },
+  { to: ROUTES.adminProcedures, label: 'Thủ tục', icon: 'procedures' },
+  { to: ROUTES.adminDrafts, label: 'Bản nháp', icon: 'drafts' },
 ]
 
 export function AdminShell() {
@@ -23,27 +24,23 @@ export function AdminShell() {
     <div className="cas-layout">
       <aside className="cas-side">
         <Link to={ROUTES.admin} className="brand-mark brand-link">
-          <div className="brand-icon" aria-hidden>
-            CS
-          </div>
+          <ServiceMark />
           <div>
-            <strong>Citizen Assistance</strong>
-            <span>Cổng cán bộ · {commune?.name || '…'}</span>
+            <strong>Trợ lý hành chính</strong>
+            <span>Cổng cán bộ · xã {commune?.name || '…'}</span>
           </div>
         </Link>
         <nav className="cas-side-nav" aria-label="Cổng cán bộ">
           {LINKS.map((item) => (
             <NavLink key={item.to} to={item.to} end={item.end} className={item.soon ? 'soon' : undefined}>
-              <span className="nav-ico" aria-hidden>
-                {item.icon}
-              </span>
+              <span className="nav-ico"><UiIcon name={item.icon} /></span>
               {item.label}
             </NavLink>
           ))}
         </nav>
         <p className="cas-side-section">Khác</p>
         <nav className="cas-side-nav">
-          <NavLink to={ROUTES.home}>Cổng công dân</NavLink>
+          <NavLink to={ROUTES.home}><UiIcon name="account" />Cổng công dân</NavLink>
         </nav>
         <div className="cas-side-foot">
           <button type="button" className="linkish dark" onClick={() => void logout()}>

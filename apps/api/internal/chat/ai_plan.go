@@ -371,6 +371,11 @@ func buildExtractRequest(snap *repository.TurnSnapshot, requestID uuid.UUID, mes
 				Question:   sd.Question,
 				EnumValues: append([]string{}, sd.EnumValues...),
 			}
+			if len(sd.EnumLabels) == len(sd.EnumValues) {
+				spec := slots[key]
+				spec.EnumLabels = append([]string{}, sd.EnumLabels...)
+				slots[key] = spec
+			}
 		}
 		candidates = append(candidates, aiextract.Candidate{
 			ProcedureCode:  row.ProcedureCode,

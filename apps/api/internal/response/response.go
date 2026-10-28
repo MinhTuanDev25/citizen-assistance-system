@@ -27,6 +27,14 @@ func OK(c *gin.Context, data any) {
 	})
 }
 
+// Accepted reports work that continues in the background (202).
+func Accepted(c *gin.Context, data any) {
+	c.JSON(http.StatusAccepted, Envelope{
+		RequestID: middleware.GetRequestID(c),
+		Data:      data,
+	})
+}
+
 func Created(c *gin.Context, data any) {
 	c.JSON(http.StatusCreated, Envelope{
 		RequestID: middleware.GetRequestID(c),

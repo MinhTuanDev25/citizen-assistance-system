@@ -29,11 +29,21 @@ type DraftRepository interface {
 
 type Service struct {
 	XAID       string
-	Source     *SourceStore
+	Source     SourceResolver
 	Drafts     DraftRepository
 	Client     *Client
 	Activation *activation.Service
 	Index      Indexer
+	// Jobs/Runner enable multi-batch drafting of long documents.
+	Jobs   JobStore
+	Runner *JobRunner
+}
+
+// SourceResolver loads verified excerpts (*SourceStore). Tests inject doubles.
+type SourceResolver interface {
+	Resolve(ctx context.Context, xaID string, procedureID, documentID, generationID uuid.UUID, pageStart, pageEnd int) (SourceSnapshot, error)
+	ResolveChunks(ctx context.Context, xaID string, procedureID, documentID, generationID uuid.UUID, ranges []ChunkRange) (SourceSnapshot, error)
+	ListReady(ctx context.Context, xaID string, procedureID uuid.UUID) ([]SourceOption, error)
 }
 
 // Indexer is the persisted Link/Request boundary used during activation.
@@ -50,6 +60,8 @@ var (
 	ErrApprovalBlocked   = errors.New("drafting: approval blocked")
 	ErrNotApproved       = errors.New("drafting: draft is not approved")
 	ErrAlreadyPublished  = errors.New("drafting: draft already published")
+	// ErrReviewInvalid is a review decision the draft cannot take (no evidence, stale, invalid quote).
+	ErrReviewInvalid = errors.New("drafting: review decision rejected")
 )
 
 func (s *Service) Generate(ctx context.Context, actor, requestID, procedureID uuid.UUID, req GenerateRequest) (DraftView, error) {
@@ -64,6 +76,9 @@ func (s *Service) Generate(ctx context.Context, actor, requestID, procedureID uu
 	}
 	snap, err := s.Source.Resolve(ctx, s.XAID, procedureID, req.DocumentID, req.GenerationID, req.SourcePageStart, req.SourcePageEnd)
 	if err != nil {
+		return DraftView{}, err
+	}
+	if err := checkDraftSize(snap); err != nil {
 		return DraftView{}, err
 	}
 	provider, err := s.Client.Draft(ctx, requestID, snap)
@@ -167,6 +182,7 @@ func (s *Service) Patch(ctx context.Context, actor, draftID uuid.UUID, req Patch
 	if lockErr != nil && locked == nil {
 		return DraftView{}, lockErr
 	}
+	view.Evidence = followEditedProposals(view.Evidence, view.Definition, locked)
 	view.Definition = locked
 	view.IdentityMismatch = mismatch || view.IdentityMismatch
 	if view.OriginalProcedureCode == "" && originalCode != "" {
@@ -358,6 +374,9 @@ func (s *Service) buildView(snap SourceSnapshot, actor uuid.UUID, provider *Prov
 }
 
 func (s *Service) resolveViewSource(ctx context.Context, view DraftView) (SourceSnapshot, error) {
+	if len(view.ChunkRanges) > 0 {
+		return s.Source.ResolveChunks(ctx, s.XAID, view.ProcedureID, view.DocumentID, view.GenerationID, view.ChunkRanges)
+	}
 	return s.Source.Resolve(ctx, s.XAID, view.ProcedureID, view.DocumentID, view.GenerationID, view.SourcePageStart, view.SourcePageEnd)
 }
 
@@ -366,7 +385,8 @@ func revalidate(view *DraftView, snap SourceSnapshot, expectedCode, originalCode
 		originalCode = view.OriginalProcedureCode
 	}
 	goVal := decision.ValidateDraftDefinition(view.Definition, expectedCode)
-	cov := EvaluateCoverage(view.Definition, view.Evidence, snap.Excerpts, snap)
+	view.AdminDecisions = currentDecisions(view.Definition, view.AdminDecisions)
+	cov := EvaluateCoverage(view.Definition, view.Evidence, snap.Excerpts, snap, decidedContent(view.AdminDecisions))
 	preserveReviews(cov.Evidence, view.Evidence)
 	applyCoverage(&goVal, cov)
 	if originalCode != "" {
@@ -379,6 +399,7 @@ func revalidate(view *DraftView, snap SourceSnapshot, expectedCode, originalCode
 	view.Proposals = cov.Proposals
 	view.Validation = goVal
 	view.Validation.SemanticApproved = false
+	applyAggregateFindings(view, snap.Excerpts)
 }
 
 func preserveReviews(next, prev []EvidenceItem) {
@@ -398,6 +419,74 @@ func preserveReviews(next, prev []EvidenceItem) {
 			next[i].ReviewStatus = old.ReviewStatus
 		}
 	}
+}
+
+// followEditedProposals keeps evidence attached to its proposal across an
+// Admin edit. List proposals are numbered (checklist:3), so removing one moves
+// the later ones: their evidence follows the same content to its new number.
+// Evidence of a proposal the Admin removed is dropped, as is evidence that
+// already pointed at nothing. Content edited in place keeps its evidence,
+// which invalidateStaleEvidence then marks stale.
+func followEditedProposals(items []EvidenceItem, before, after json.RawMessage) []EvidenceItem {
+	oldProps, errOld := EnumerateMaterialProposals(before)
+	newProps, errNew := EnumerateMaterialProposals(after)
+	if errOld != nil || errNew != nil {
+		return items
+	}
+	key := func(p MaterialProposal) string { return p.Type + "\n" + p.Content }
+	newByID := proposalsByID(newProps)
+	target := map[string]string{} // old id -> new id ("" = removed)
+	claimed := map[string]bool{}
+	pending := make([]MaterialProposal, 0)
+	for _, op := range oldProps {
+		if np, ok := newByID[op.ID]; ok && key(np) == key(op) {
+			target[op.ID], claimed[op.ID] = op.ID, true
+			continue
+		}
+		pending = append(pending, op)
+	}
+	rest := pending[:0:0]
+	for _, op := range pending {
+		moved := false
+		for _, np := range newProps {
+			if !claimed[np.ID] && key(np) == key(op) {
+				target[op.ID], claimed[np.ID], moved = np.ID, true, true
+				break
+			}
+		}
+		if !moved {
+			rest = append(rest, op)
+		}
+	}
+	for _, op := range rest {
+		if _, ok := newByID[op.ID]; ok && !claimed[op.ID] {
+			target[op.ID], claimed[op.ID] = op.ID, true // edited in place
+		} else {
+			target[op.ID] = "" // removed
+		}
+	}
+	oldByID := proposalsByID(oldProps)
+	out := make([]EvidenceItem, 0, len(items))
+	for _, item := range items {
+		id := item.ProposalID
+		to, known := target[id]
+		switch {
+		case !known:
+			if _, still := newByID[id]; !still {
+				continue // pointed at nothing before and after the edit
+			}
+		case to == "":
+			continue
+		case to != id:
+			if item.BoundFingerprint == oldByID[id].Fingerprint {
+				item.BoundFingerprint = newByID[to].Fingerprint
+			}
+			item.ProposalID, item.RawProposalID = to, to
+			item.ProposalFingerprint = newByID[to].Fingerprint
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func invalidateStaleEvidence(items []EvidenceItem, definition []byte) []EvidenceItem {
@@ -446,17 +535,17 @@ func applyReviewDecisions(view *DraftView, decisions []ReviewDecision) error {
 		switch status {
 		case ReviewAccepted, ReviewRejected, ReviewNeedsCorrection, ReviewPending:
 		default:
-			return fmt.Errorf("drafting: invalid review decision %q", status)
+			return fmt.Errorf("%w: invalid review decision %q", ErrReviewInvalid, status)
 		}
 		idx, ok := byID[pid]
 		if !ok {
-			return fmt.Errorf("drafting: unknown proposal_id %s", pid)
+			return fmt.Errorf("%w: proposal %s has no source evidence to review", ErrReviewInvalid, pid)
 		}
 		if view.Evidence[idx].ReviewStatus == ReviewStale {
-			return fmt.Errorf("drafting: cannot accept stale evidence for %s", pid)
+			return fmt.Errorf("%w: cannot accept stale evidence for %s", ErrReviewInvalid, pid)
 		}
 		if status == ReviewAccepted && !view.Evidence[idx].QuoteValid {
-			return fmt.Errorf("drafting: cannot accept invalid evidence for %s", pid)
+			return fmt.Errorf("%w: cannot accept invalid evidence for %s", ErrReviewInvalid, pid)
 		}
 		view.Evidence[idx].ReviewStatus = status
 	}
@@ -479,6 +568,11 @@ func approvalGate(view DraftView) error {
 	if blockingErrors(view.Validation.Issues) {
 		return fmt.Errorf("%w: unresolved blocking validation findings", ErrApprovalBlocked)
 	}
+	for _, c := range view.Conflicts {
+		if c.Status != ConflictResolved && !c.Inactive {
+			return fmt.Errorf("%w: source conflict on %s is not resolved", ErrApprovalBlocked, c.Field)
+		}
+	}
 	if view.Validation.StaleEvidenceCount > 0 {
 		return fmt.Errorf("%w: stale evidence remains", ErrApprovalBlocked)
 	}
@@ -486,6 +580,12 @@ func approvalGate(view DraftView) error {
 	for _, item := range view.Evidence {
 		if item.ReviewStatus == ReviewAccepted && item.QuoteValid {
 			accepted[item.ProposalID] = true
+		}
+	}
+	decided := decidedContent(view.AdminDecisions)
+	for _, prop := range view.Proposals {
+		if decided[proposalContentKey(prop)] {
+			accepted[prop.ID] = true
 		}
 	}
 	for _, prop := range view.Proposals {
@@ -523,6 +623,13 @@ func storedPayloadFromView(view DraftView) storedPayload {
 		PublishedVersion:      view.PublishedVersion,
 		IndexRequestID:        view.IndexRequestID,
 		IndexJobID:            view.IndexJobID,
+		JobID:                 view.JobID,
+		ParentDraftID:         view.ParentDraftID,
+		ChunkRanges:           view.ChunkRanges,
+		Coverage:              view.Coverage,
+		Conflicts:             view.Conflicts,
+		Provenance:            view.Provenance,
+		AdminDecisions:        view.AdminDecisions,
 	}
 }
 
@@ -541,7 +648,7 @@ func viewFromRow(row repository.ProcedureDraft) (DraftView, error) {
 		validation.SemanticApproved = false
 	}
 	proposals, _ := EnumerateMaterialProposals(payload.Definition)
-	return DraftView{
+	view := DraftView{
 		ID:                    row.ID,
 		ProcedureID:           row.ProcedureID,
 		ProcedureCode:         row.ProcedureCode,
@@ -576,7 +683,23 @@ func viewFromRow(row repository.ProcedureDraft) (DraftView, error) {
 		OriginalProcedureCode: payload.OriginalProcedureCode,
 		IndexRequestID:        payload.IndexRequestID,
 		IndexJobID:            payload.IndexJobID,
-	}, nil
+		JobID:                 payload.JobID,
+		ParentDraftID:         payload.ParentDraftID,
+		ChunkRanges:           payload.ChunkRanges,
+		Coverage:              payload.Coverage,
+		Conflicts:             payload.Conflicts,
+		Provenance:            payload.Provenance,
+		AdminDecisions:        payload.AdminDecisions,
+	}
+	// An editable draft is read with its conflicts checked against the current
+	// Definition (e.g. a decision stored before decisions were pinned reopens)
+	// and its SOURCE_CONFLICT issues matching them, so a read, the UI and the
+	// approval gate never trust a stale RESOLVED.
+	if row.Status == repository.DraftStatusDraft && len(view.Conflicts) > 0 {
+		reconcileConflicts(&view)
+		syncConflictIssues(&view)
+	}
+	return view, nil
 }
 
 func viewsFromRows(rows []repository.ProcedureDraft) ([]DraftView, error) {

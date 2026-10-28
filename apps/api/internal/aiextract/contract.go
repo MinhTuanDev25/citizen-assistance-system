@@ -15,6 +15,7 @@ type SlotSpec struct {
 	Type       string   `json:"type"`
 	Question   string   `json:"question,omitempty"`
 	EnumValues []string `json:"enum_values,omitempty"`
+	EnumLabels []string `json:"enum_labels,omitempty"`
 }
 
 // Candidate mirrors app/models/extract.py:Candidate.

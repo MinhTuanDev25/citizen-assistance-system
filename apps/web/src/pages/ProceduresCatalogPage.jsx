@@ -48,7 +48,7 @@ export default function ProceduresCatalogPage() {
                   <div className="catalog-row">
                     <div>
                       <strong>{p.name}</strong>
-                      <div className="cell-muted">{p.code || 'Hỏi hướng dẫn tại trợ chuyện'}</div>
+                      <div className="cell-muted">{p.code || 'Hỏi hướng dẫn tại trò chuyện'}</div>
                     </div>
                     <button
                       type="button"

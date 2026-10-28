@@ -185,7 +185,7 @@ class GeminiProvider:
         parsed.pop("provider", None)
         parsed.pop("model", None)
         try:
-            result = ModelDraft.model_validate(parsed)
+            result = ModelDraft.model_validate(parsed, context={"partial": request.partial})
         except ValidationError as exc:
             raise ProviderError(
                 REASON_SCHEMA_VIOLATION, f"gemini draft failed schema: {exc}"

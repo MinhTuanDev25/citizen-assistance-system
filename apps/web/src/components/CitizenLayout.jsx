@@ -3,11 +3,12 @@ import { useAuth } from '../auth/AuthContext.jsx'
 import { useCommune } from '../commune/CommuneContext.jsx'
 import { ROUTES, loginPath } from '../routes.js'
 import CitizenSearch from './CitizenSearch.jsx'
+import { ServiceMark, UiIcon } from './UiIcon.jsx'
 
 const NAV = [
-  { to: ROUTES.home, end: true, label: 'Trang chủ', icon: '⌂' },
-  { to: ROUTES.chat, label: 'Hỏi đáp', icon: '💬' },
-  { to: ROUTES.procedures, label: 'Thủ tục hành chính', icon: '☰' },
+  { to: ROUTES.home, end: true, label: 'Trang chủ', icon: 'home' },
+  { to: ROUTES.chat, label: 'Hỏi đáp', icon: 'chat' },
+  { to: ROUTES.procedures, label: 'Thủ tục hành chính', icon: 'procedures' },
 ]
 
 export function CitizenLayout({ children }) {
@@ -20,30 +21,26 @@ export function CitizenLayout({ children }) {
     <div className="cas-layout">
       <aside className="cas-side">
         <Link to={ROUTES.home} className="brand-mark brand-link">
-          <div className="brand-icon" aria-hidden>
-            CS
-          </div>
+          <ServiceMark />
           <div>
-            <strong>Citizen Assistance</strong>
-            <span>Xã {commune?.name || '…'}</span>
+            <strong>Trợ lý hành chính</strong>
+            <span>Phục vụ xã {commune?.name || '…'}</span>
           </div>
         </Link>
         <nav className="cas-side-nav" aria-label="Cổng công dân">
           {NAV.map((item) => (
             <NavLink key={item.to} to={item.to} end={item.end}>
-              <span className="nav-ico" aria-hidden>
-                {item.icon}
-              </span>
+              <span className="nav-ico"><UiIcon name={item.icon} /></span>
               {item.label}
             </NavLink>
           ))}
         </nav>
         <p className="cas-side-section">Tài khoản</p>
         <nav className="cas-side-nav">
-          {user?.role === 'ADMIN' ? <NavLink to={ROUTES.admin}>Cổng cán bộ</NavLink> : null}
-          {!user ? <NavLink to={loginPath('citizen')}>Đăng nhập</NavLink> : null}
+          {user?.role === 'ADMIN' ? <NavLink to={ROUTES.admin}><UiIcon name="shield" />Cổng cán bộ</NavLink> : null}
+          {!user ? <NavLink to={loginPath('citizen')}><UiIcon name="account" />Đăng nhập</NavLink> : null}
           <button type="button" onClick={() => navigate(ROUTES.commune, { state: { change: true, from: ROUTES.home } })}>
-            Đổi xã
+            <UiIcon name="switch" />Đổi xã
           </button>
         </nav>
         <div className="cas-side-foot">

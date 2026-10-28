@@ -78,6 +78,16 @@ export async function getProcedureVersion(procedureId, versionId) {
   )
 }
 
+/** Create a procedure in the admin's commune. Server adds one SOURCE version for the first PDF; no ACTIVE. */
+export async function createProcedure(body, requestId) {
+  return apiRequest('/api/v1/admin/procedures', {
+    auth: true,
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'X-Request-ID': requestId },
+  })
+}
+
 export async function createProcedureVersion(procedureId, body, requestId) {
   return apiRequest(
     `/api/v1/admin/procedures/${encodeURIComponent(procedureId)}/versions`,

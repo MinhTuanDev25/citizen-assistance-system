@@ -129,6 +129,63 @@ func zipClauses(def Definition, allowed []string, message string) map[string]any
 
 // LoneStringAnswer fills the only open string slot from a follow-up sentence
 // such as "ở bệnh viện Hùng Vương", when the citizen is already answering.
+// enumOptionMatches: the folded text names enum value i, by its code
+// (truc_tiep → "truc tiep") or by its label ("Trực tiếp").
+func enumOptionMatches(slot SlotDef, i int, folded string) bool {
+	phrases := []string{strings.ReplaceAll(Fold(slot.EnumValues[i]), "_", " ")}
+	if i < len(slot.EnumLabels) {
+		phrases = append(phrases, Fold(slot.EnumLabels[i]))
+	}
+	for _, phrase := range phrases {
+		if phrase != "" && (folded == phrase || containsPhrase(folded, phrase)) {
+			return true
+		}
+	}
+	return false
+}
+
+var choiceMark = regexp.MustCompile(`^(?:(?:chon|phuong an|lua chon|y|so|dap an)\s*)?([a-z]|\d{1,2})\s*[\.\)]?$`)
+
+// choiceIndex reads a bare choice: "b", "2", "chọn b", "phương án 2".
+func choiceIndex(folded string, n int) (int, bool) {
+	m := choiceMark.FindStringSubmatch(strings.TrimSpace(folded))
+	if m == nil {
+		return 0, false
+	}
+	idx := -1
+	if c := m[1][0]; c >= 'a' && c <= 'z' && len(m[1]) == 1 {
+		idx = int(c - 'a')
+	} else if v, err := strconv.Atoi(m[1]); err == nil {
+		idx = v - 1
+	}
+	if idx < 0 || idx >= n {
+		return 0, false
+	}
+	return idx, true
+}
+
+// LoneChoiceAnswer: a bare choice ("b", "2") answers the only enum question
+// still open. With two enum questions open it is ambiguous and not used.
+func LoneChoiceAnswer(def Definition, allowed []string, message string) (string, any, bool) {
+	var only string
+	enums := 0
+	for _, key := range allowed {
+		if def.Slots[key].Type == "enum" {
+			enums++
+			only = key
+		}
+	}
+	if enums != 1 {
+		return "", nil, false
+	}
+	slot := def.Slots[only]
+	i, ok := choiceIndex(Fold(message), len(slot.EnumValues))
+	if !ok {
+		return "", nil, false
+	}
+	return only, slot.EnumValues[i], true
+}
+
 func LoneStringAnswer(def Definition, allowed []string, message string) (string, any, bool) {
 	if len(splitClauses(message)) != 1 {
 		return "", nil, false
@@ -241,12 +298,8 @@ func matchEnumClause(def Definition, allowed map[string]struct{}, folded string)
 		if slot.Type != "enum" {
 			continue
 		}
-		for _, raw := range slot.EnumValues {
-			phrase := strings.ReplaceAll(Fold(raw), "_", " ")
-			if phrase == "" {
-				continue
-			}
-			if folded == phrase || containsPhrase(folded, phrase) {
+		for i, raw := range slot.EnumValues {
+			if enumOptionMatches(slot, i, folded) {
 				hits++
 				hitKey = key
 				hitValue = raw
@@ -428,11 +481,13 @@ func coerce(slot SlotDef, text string) (any, bool) {
 		return f, true
 	case "enum":
 		folded := Fold(text)
-		for _, raw := range slot.EnumValues {
-			phrase := strings.ReplaceAll(Fold(raw), "_", " ")
-			if folded == phrase || containsPhrase(folded, phrase) {
+		for i, raw := range slot.EnumValues {
+			if enumOptionMatches(slot, i, folded) {
 				return raw, true
 			}
+		}
+		if i, ok := choiceIndex(folded, len(slot.EnumValues)); ok {
+			return slot.EnumValues[i], true
 		}
 		return nil, false
 	default:

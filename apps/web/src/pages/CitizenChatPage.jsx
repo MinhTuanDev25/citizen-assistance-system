@@ -52,7 +52,8 @@ function EvidenceList({ citations, retrievalStatus, retrievalReason }) {
       ) : null}
       {related.length ? (
         <section>
-          <p className="cite-heading">Tài liệu liên quan</p>
+          <p className="cite-heading">Tài liệu tham khảo thêm</p>
+          <p className="cite-hint">Các đoạn văn bản hệ thống tự tìm thấy để anh/chị đọc thêm; hướng dẫn ở trên mới là nội dung đã được cán bộ duyệt.</p>
           <ol className="cite-evidence" start={supporting.length + 1}>
             {related.map((cite, index) => (
               <CitationItem key={`r-${index}`} cite={cite} index={supporting.length + index + 1} />
@@ -85,10 +86,10 @@ function CitationItem({ cite, index, verified = false }) {
       </strong>
       {href ? (
         <a className="cite-open" href={href} target="_blank" rel="noopener noreferrer">
-          Mở PDF
+          Mở tài liệu
         </a>
       ) : null}
-      {verified ? null : <span className="cite-badge">chưa xác minh checklist</span>}
+      {verified ? null : <span className="cite-badge">tham khảo</span>}
       {availability ? <span className="cite-badge">{availability}</span> : null}
       {excerpt ? <blockquote>{excerpt}</blockquote> : null}
     </li>
@@ -212,7 +213,7 @@ export default function CitizenChatPage() {
         setSessionReady(true)
       } catch (err) {
         if (!cancelled) {
-          setSessionError(err.message || 'Không tạo được phiên chat')
+          setSessionError(err.message || 'Không tạo được phiên trò chuyện')
           setChatSession(null)
           setMessages([{ id: 'welcome', role: 'assistant', text: WELCOME }])
           setPendingConfirm(null)
@@ -302,7 +303,7 @@ export default function CitizenChatPage() {
           role: 'assistant',
           text:
             err.message ||
-            'Xin lỗi, không gửi được tin nhắn. Kiểm tra API đang chạy.',
+            'Xin lỗi, không gửi được tin nhắn. Vui lòng kiểm tra kết nối hệ thống.',
         },
       ])
       return false
@@ -435,7 +436,7 @@ export default function CitizenChatPage() {
               <p>
                 {user ? `Xin chào, ${user.name}` : 'Phiên khách'} · xã{' '}
                 {commune?.name}
-                {sessionReady ? ' · đã nối API' : ''}
+                {sessionReady ? ' · đã kết nối' : ''}
               </p>
             </div>
             <div className="chat-header-actions">
@@ -453,7 +454,7 @@ export default function CitizenChatPage() {
 
           {sessionError ? (
             <p className="catalog-error" style={{ margin: '0.75rem 1rem 0' }}>
-              {sessionError}. Chạy <code>make api-run</code>.
+              {sessionError}. Vui lòng thử tải lại trang hoặc liên hệ bộ phận hỗ trợ.
             </p>
           ) : null}
 
@@ -516,7 +517,7 @@ export default function CitizenChatPage() {
                   ? 'Đang nghe… hãy nói câu hỏi'
                   : sessionReady
                     ? 'Nhập câu tự nhiên, ví dụ đăng ký khai sinh cho con…'
-                    : 'Đang mở phiên chat…'
+                    : 'Đang mở phiên trò chuyện…'
               }
               rows={2}
               disabled={!sessionReady}

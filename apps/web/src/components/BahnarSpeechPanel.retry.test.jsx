@@ -11,7 +11,12 @@ function tone(n) {
 }
 
 function buttonNamed(host, label) {
-  return [...host.querySelectorAll('button')].find((node) => node.textContent.replace(/\s+/g, ' ').trim() === label)
+  const translated = {
+    'Micro Bahnar': 'Ghi tiếng Bahnar',
+    'Tải file WAV': 'Tải tệp âm thanh',
+    'Dừng & Dịch': 'Dừng và dịch',
+  }[label] || label
+  return [...host.querySelectorAll('button')].find((node) => node.textContent.replace(/\s+/g, ' ').trim() === translated)
 }
 
 async function renderPanel(props) {

@@ -46,7 +46,7 @@ export default function AdminSearch() {
       .map((d) => ({
         key: `doc-${d.id}`,
         kind: 'Tài liệu',
-        label: d.title || d.filename || 'PDF',
+        label: d.title || d.filename || 'Tài liệu',
         hint: d.filename || '',
         href: adminDocumentPath(d.id),
       }))

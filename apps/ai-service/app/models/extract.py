@@ -70,6 +70,9 @@ class SlotSpec(StrictModel):
     type: SlotType
     question: str = ""
     enum_values: list[str] = Field(default_factory=list)
+    # Citizen-facing wording of each enum value (same order); helps map a
+    # free answer ("sinh bình thường") to its code. Optional.
+    enum_labels: list[str] = Field(default_factory=list)
 
     @field_validator("question")
     @classmethod
@@ -92,6 +95,11 @@ class SlotSpec(StrictModel):
     def _enum_requires_values(self) -> "SlotSpec":
         if self.type == "enum" and not self.enum_values:
             raise ValueError("enum slot must declare enum_values")
+        if self.enum_labels and len(self.enum_labels) != len(self.enum_values):
+            raise ValueError("enum_labels must match enum_values one to one")
+        for label in self.enum_labels:
+            if len(label) > MAX_ENUM_VALUE_LEN:
+                raise ValueError(f"enum label exceeds max of {MAX_ENUM_VALUE_LEN}")
         return self
 
 
