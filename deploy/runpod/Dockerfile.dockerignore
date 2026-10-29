@@ -1,0 +1,31 @@
+# Build-context allowlist for deploy/runpod/Dockerfile only (BuildKit reads
+# <Dockerfile>.dockerignore). Research checkpoints, models, reports, backups and
+# env files never enter the context. C0 comes from deploy/runpod/build/c0,
+# produced by stage_c0.sh from committed Git blobs.
+*
+!apps/api/
+!apps/web/
+!apps/ai-service/
+!deploy/migrations/
+!deploy/runpod/Dockerfile
+!deploy/runpod/rootfs/
+!deploy/runpod/build/c0/
+
+**/node_modules
+**/dist
+**/coverage
+**/.vite
+**/.vitest-cache
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.venv
+**/venv
+apps/api/bin
+apps/api/tmp
+apps/ai-service/tests
+**/.DS_Store
+**/.env
+**/.env.*
+**/*.pem
+**/*.key

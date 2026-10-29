@@ -1,0 +1,71 @@
+name: runpod-image
+
+# All-in-one image for the RunPod staging pod (deploy/runpod). Native amd64 runner:
+# no QEMU. Runs only on demand or on staging-* tags, never on every push.
+# Pushing to GHCR is opt-in (input "push") and needs packages: write.
+on:
+  workflow_dispatch:
+    inputs:
+      push:
+        description: "Push the image to GHCR after the smoke test passes"
+        type: boolean
+        default: false
+  push:
+    tags: ["staging-*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      # C0 (bahnar-s2tt-thesis/) is a tracked folder of this repository: checkout is enough.
+      - uses: actions/checkout@v4
+
+      - name: stage Speech C0 from committed blobs
+        run: deploy/runpod/stage_c0.sh
+
+      - name: fetch_models.sh regression (offline mirror, all-or-nothing publish)
+        run: deploy/runpod/tests/fetch_models_test.sh deploy/runpod/tests/out/ci-fetch-models
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build linux/amd64
+        run: |
+          docker buildx build --platform linux/amd64 -f deploy/runpod/Dockerfile \
+            --build-arg CAS_REVISION=${GITHUB_SHA} -t cas-aio:${GITHUB_SHA} --load .
+
+      # Every test step below is mandatory: a failure fails the job, and nothing is
+      # skipped silently. The checkers exit non-zero on any FAIL.
+      - name: Speech C0 level (b) in image
+        run: deploy/runpod/tests/c0_in_image.sh cas-aio:${GITHUB_SHA} deploy/runpod/tests/out/ci-c0
+
+      - name: C0 checker negative regression (must detect broken images)
+        run: deploy/runpod/tests/c0_in_image_negative.sh cas-aio:${GITHUB_SHA} deploy/runpod/tests/out/ci-c0-negative
+
+      # The ONNX embedding model is not in Git. Fetch the revision pinned in
+      # deploy/runpod/models/embedding.manifest.json; a checksum mismatch fails the job.
+      - name: fetch pinned embedding model
+        run: deploy/runpod/fetch_models.sh models/embedding
+
+      - name: CPU smoke
+        id: smoke
+        run: deploy/runpod/tests/smoke_cpu.sh cas-aio:${GITHUB_SHA}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runpod-image-test-output
+          path: deploy/runpod/tests/out/
+
+      # Never push an image whose CPU smoke did not run and pass.
+      - name: push to GHCR
+        if: steps.smoke.outcome == 'success' && (inputs.push == true || startsWith(github.ref, 'refs/tags/staging-'))
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          img=ghcr.io/${GITHUB_REPOSITORY,,}/cas-aio:${GITHUB_SHA}
+          docker tag cas-aio:${GITHUB_SHA} "$img"
+          docker push "$img"

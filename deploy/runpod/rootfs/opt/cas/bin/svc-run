@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Start one supervisord program with ONLY its own environment, as its own user.
+#   svc-run <service> <user> <command> [args...]
+# Runs as root (supervisord), reads /run/cas-env/<service>.env (root 0600, one
+# KEY=VALUE per line, written by entrypoint.sh), clears the inherited environment
+# (env -i), then drops privileges with gosu and execs the command. A program
+# therefore never sees secrets of another service (e.g. nginx has no DB password).
+set -euo pipefail
+[[ $# -ge 3 ]] || { echo "usage: svc-run <service> <user> <command> [args...]" >&2; exit 2; }
+svc="$1"; user="$2"; shift 2
+f="/run/cas-env/$svc.env"
+[[ -f "$f" ]] || { echo "svc-run: $f missing (entrypoint did not run?)" >&2; exit 1; }
+home="$(getent passwd "$user" | cut -d: -f6)"
+[[ -n "$home" ]] || { echo "svc-run: unknown user $user" >&2; exit 1; }
+vars=()
+while IFS= read -r line || [[ -n "$line" ]]; do
+  [[ -z "$line" || "$line" == \#* ]] && continue
+  vars+=("$line")
+done < "$f"
+exec env -i \
+  PATH=/opt/cas/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  HOME="$home" LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC \
+  ${vars[@]+"${vars[@]}"} \
+  gosu "$user" "$@"
