@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Run an operator command with the runtime environment of this boot, as a given user.
+#   docker exec -e BOOTSTRAP_ADMIN_EMAIL=... -e BOOTSTRAP_ADMIN_PASSWORD=... <c> \
+#     cas-run cas /opt/cas/api/bootstrap-admin
+# Must be called as root (the env file holds secrets and is root-only).
+set -euo pipefail
+[[ $# -ge 2 ]] || { echo "usage: cas-run <user> <command> [args...]" >&2; exit 2; }
+[[ -r /run/cas-runtime.env ]] || { echo "cas-run: /run/cas-runtime.env missing (container not booted?)" >&2; exit 1; }
+user="$1"; shift
+# Keep variables passed to docker exec (-e) on top of the boot environment.
+extra="$(export -p)"
+# shellcheck disable=SC1091
+source /run/cas-runtime.env
+eval "$extra"
+cd /opt/cas/api
+exec gosu "$user" "$@"

@@ -1,0 +1,27 @@
+# Speech C0 runtime files packed into the all-in-one image (paths from repo root).
+# stage_c0.sh fails if the src.* import closure of c0_speech differs from the
+# src/ entries here, or if any listed file is untracked or has uncommitted edits.
+# Non-Python runtime files (configs/) are listed by hand: an import scan cannot find them.
+bahnar-s2tt-thesis/src/__init__.py
+bahnar-s2tt-thesis/src/c0_speech/__init__.py
+bahnar-s2tt-thesis/src/c0_speech/__main__.py
+bahnar-s2tt-thesis/src/c0_speech/app.py
+bahnar-s2tt-thesis/src/c0_speech/audio.py
+bahnar-s2tt-thesis/src/c0_speech/errors.py
+bahnar-s2tt-thesis/src/c0_speech/runtime.py
+bahnar-s2tt-thesis/src/c0_speech/settings.py
+bahnar-s2tt-thesis/src/asr_runtime_paths.py
+bahnar-s2tt-thesis/src/audio_utils.py
+bahnar-s2tt-thesis/src/c0_cascaded.py
+bahnar-s2tt-thesis/src/c0_tokenizer.py
+bahnar-s2tt-thesis/src/data_utils.py
+bahnar-s2tt-thesis/src/mt_contract.py
+bahnar-s2tt-thesis/src/mt_normalize.py
+bahnar-s2tt-thesis/src/mt_runtime_paths.py
+bahnar-s2tt-thesis/src/mt_tokenize.py
+bahnar-s2tt-thesis/src/rq1_contract.py
+bahnar-s2tt-thesis/src/rq1_inference.py
+bahnar-s2tt-thesis/configs/c0_research_pins.yaml
+bahnar-s2tt-thesis/configs/c0_inference.example.yaml
+bahnar-s2tt-thesis/requirements-c0-inference.txt
+bahnar-s2tt-thesis/requirements-c0-speech-api.txt

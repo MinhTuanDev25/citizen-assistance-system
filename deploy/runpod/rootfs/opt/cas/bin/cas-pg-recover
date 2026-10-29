@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Verified recovery of the workspace lease after an unclean stop of ANOTHER owner
+# (killed container, terminated pod). Run as root inside a container that is in
+# maintenance mode on the same volume:
+#   cas-pg-recover <old owner id>     owner printed by the maintenance message
+#   cas-pg-recover UNREADABLE         lease dir exists but owner.json is unreadable
+#   cas-pg-recover ORPHAN-PID         no lease, but pgdata/postmaster.pid exists
+# There is no flag or environment variable that skips a check. Before touching
+# anything it requires, in order:
+#   1. the owner named on the command line matches the lease exactly
+#   2. this container runs no postgres/qdrant/minio and nothing listens on 5432/6333/9000
+#   3. the heartbeat (or postmaster.pid) does not change during a wait of at least
+#      3 x the owner's recorded heartbeat interval + 5 s (CAS_PG_RECOVER_WAIT_S may
+#      only make it longer)
+#   4. the workspace flock can be taken (no holder on this host)
+# Then it renames (never deletes) the lease and the stale postmaster.pid, appends an
+# audit record to locks/recovery.log, and tells the operator to restart the container.
+set -euo pipefail
+
+W="${CAS_WORKSPACE:-/workspace/cas}"
+LOCKS="$W/locks"; LEASE="$LOCKS/workspace.lease"; PID="$W/pgdata/postmaster.pid"
+# Minimum wait = 3 x the heartbeat interval RECORDED IN THE LEASE + 5 s (the owner
+# fences after 2 missed beats, so its Postgres is down before this wait can pass).
+# CAS_PG_RECOVER_WAIT_S may only lengthen it.
+die() { echo "cas-pg-recover: REFUSED: $*" >&2; exit 1; }
+say() { echo "cas-pg-recover: $*"; }
+
+[[ $EUID -eq 0 ]] || die "must run as root"
+[[ $# -eq 1 && -n "$1" ]] || die "usage: cas-pg-recover <old owner id> | UNREADABLE | ORPHAN-PID"
+want="$1"; me="$(cat /run/cas-lease.owner 2>/dev/null || hostname)"
+
+# 1. what exactly is being recovered
+if [[ -d "$LEASE" ]]; then
+  owner="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("owner_id",""))' "$LEASE/owner.json" 2>/dev/null || true)"
+  [[ -n "$owner" ]] || owner=UNREADABLE
+  [[ "$want" == "$owner" ]] || die "lease owner is '$owner', not '$want'"
+  [[ "$owner" != "$me" ]] || die "the lease belongs to this container; restart it instead (same owner reclaims)"
+  watch="$LEASE/heartbeat"
+  hb="$(python3 -c 'import json,sys;print(int(json.load(open(sys.argv[1])).get("heartbeat_s",10)))' "$LEASE/owner.json" 2>/dev/null || echo 60)"
+else
+  hb=60   # no lease metadata: assume the longest allowed interval
+  [[ "$want" == ORPHAN-PID ]] || die "no lease exists; the only recoverable case is ORPHAN-PID"
+  [[ -f "$PID" ]] || die "no lease and no postmaster.pid: nothing to recover"
+  watch="$PID"
+fi
+
+min_wait=$(( 3 * hb + 5 ))
+WAIT="${CAS_PG_RECOVER_WAIT_S:-$min_wait}"
+[[ "$WAIT" =~ ^[0-9]+$ ]] || die "CAS_PG_RECOVER_WAIT_S must be an integer"
+(( WAIT >= min_wait )) || die "CAS_PG_RECOVER_WAIT_S=$WAIT is shorter than the minimum ${min_wait}s for heartbeat ${hb}s"
+
+# 2. nothing of ours is running
+if pgrep -x postgres >/dev/null || pgrep -x qdrant >/dev/null || pgrep -x minio >/dev/null; then
+  die "a data service is running in this container"
+fi
+if ss -ltnH 2>/dev/null | awk '{print $4}' | grep -qE ':(5432|6333|9000)$'; then
+  die "something listens on 5432/6333/9000 in this container"
+fi
+
+# 3. the other owner is not alive: its heartbeat / pid file must not change
+before="$(stat -c '%Y %s' "$watch" 2>/dev/null || echo missing) $(cat "$watch" 2>/dev/null | head -c 64)"
+say "watching $watch for ${WAIT}s (the previous owner must be stopped)"
+sleep "$WAIT"
+after="$(stat -c '%Y %s' "$watch" 2>/dev/null || echo missing) $(cat "$watch" 2>/dev/null | head -c 64)"
+[[ "$before" == "$after" ]] || die "$watch changed during the wait: the previous owner is still alive"
+
+# 4. no holder of the flock on this host
+exec 8>>"$LOCKS/workspace.flock"
+flock -n 8 || die "the workspace flock is held (another container on this host uses the volume)"
+
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
+moved=()
+if [[ -d "$LEASE" ]]; then mv "$LEASE" "$LEASE.recovered-$ts"; moved+=("lease -> $(basename "$LEASE").recovered-$ts"); fi
+if [[ -f "$PID" ]]; then mv "$PID" "$PID.recovered-$ts"; moved+=("postmaster.pid -> postmaster.pid.recovered-$ts"); fi
+printf '%s recovered=%s by=%s on=%s waited=%ss watch="%s" moved="%s"\n' \
+  "$ts" "$want" "${SUDO_USER:-root}" "$me" "$WAIT" "$after" "${moved[*]}" >> "$LOCKS/recovery.log"
+flock -u 8
+say "done: ${moved[*]}"
+say "audit: $LOCKS/recovery.log"
+say "now restart this container/pod; it will take a new lease"
