@@ -134,11 +134,16 @@ export ARTIFACT_ROOT="${ARTIFACT_ROOT:-/workspace/bahnar-s2tt-thesis}"
 : "${LLM_DRAFT_TIMEOUT_SECONDS:=240}" "${INDEX_CLAIM_TTL_SECONDS:=120}" "${INDEX_TIMEOUT_MS:=120000}"
 : "${INDEX_PIPELINE_TIMEOUT_SECONDS:=3600}" "${INDEX_PUBLISH_TIMEOUT_MS:=10000}" "${INDEX_HEARTBEAT_SECONDS:=15}"
 : "${INDEX_MAX_CONCURRENT:=1}" "${INDEX_MAX_PDF_PAGES:=1000}" "${INDEX_MAX_OCR_PAGES:=1000}" "${EMBED_BATCH_SIZE:=16}"
-: "${OCR_DPI:=200}" "${DOCUMENT_MAX_BYTES:=20971520}"
+: "${OCR_DPI:=200}" "${DOCUMENT_MAX_BYTES:=20971520}" "${SPEECH_MAX_UPLOAD_BYTES:=10485760}"
 export AI_EXTRACT_TIMEOUT_MS AI_RETRIEVE_TIMEOUT_MS AI_DRAFT_TIMEOUT_MS LLM_DRAFT_TIMEOUT_SECONDS \
   INDEX_CLAIM_TTL_SECONDS INDEX_TIMEOUT_MS INDEX_PIPELINE_TIMEOUT_SECONDS INDEX_PUBLISH_TIMEOUT_MS \
   INDEX_HEARTBEAT_SECONDS INDEX_MAX_CONCURRENT INDEX_MAX_PDF_PAGES INDEX_MAX_OCR_PAGES EMBED_BATCH_SIZE \
-  OCR_DPI DOCUMENT_MAX_BYTES
+  OCR_DPI DOCUMENT_MAX_BYTES SPEECH_MAX_UPLOAD_BYTES
+# Upload limits (same ranges as the Go config); nginx gets the exact values below.
+[[ "$DOCUMENT_MAX_BYTES" =~ ^[0-9]+$ ]] && (( DOCUMENT_MAX_BYTES > 0 && DOCUMENT_MAX_BYTES <= 67108864 )) \
+  || die "DOCUMENT_MAX_BYTES must be an integer in (0, 67108864]"
+[[ "$SPEECH_MAX_UPLOAD_BYTES" =~ ^[0-9]+$ ]] && (( SPEECH_MAX_UPLOAD_BYTES > 65536 && SPEECH_MAX_UPLOAD_BYTES <= 10485760 )) \
+  || die "SPEECH_MAX_UPLOAD_BYTES must be an integer in (65536, 10485760]"
 
 # ---- 2. models and Speech mode checks (before any init work: fail fast) ----------
 if [[ "$EMBEDDING_PROVIDER" == onnx ]]; then
@@ -439,6 +444,13 @@ envfile speech PYTHONPATH SPEECH_HOST SPEECH_PORT SPEECH_WORKERS SPEECH_SERVICE_
   SPEECH_FAIL_FAST SPEECH_MAX_INFLIGHT SPEECH_MAX_UPLOAD_BYTES SPEECH_MAX_AUDIO_SECONDS SPEECH_REQUEST_TIMEOUT_S \
   SPEECH_SHUTDOWN_TIMEOUT_S SPEECH_LOG_LEVEL C0_INFERENCE_CONFIG ARTIFACT_ROOT HF_HOME HF_HUB_OFFLINE TRANSFORMERS_OFFLINE
 envfile nginx
+# nginx config: exact upload limits = configured max + the Go multipart overhead
+# (256 KiB). nginx answers an oversized body with 413 itself (see the template).
+sed -e "s/__DOCUMENT_UPLOAD_LIMIT__/$(( DOCUMENT_MAX_BYTES + 262144 ))/g" \
+    -e "s/__SPEECH_UPLOAD_LIMIT__/$(( SPEECH_MAX_UPLOAD_BYTES + 262144 ))/g" \
+    /etc/cas/nginx.conf.template > /run/cas-nginx.conf
+chmod 0644 /run/cas-nginx.conf
+! grep -q "__[A-Z_]*__" /run/cas-nginx.conf || die "nginx template has unreplaced placeholders"
 log "per-service environments written: $(cd /run/cas-env && ls | sed 's/\.env$//' | tr '\n' ' ')"
 
 dir /run/cas cas 0755

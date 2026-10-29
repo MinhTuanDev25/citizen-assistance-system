@@ -1,3 +1,11 @@
+# TEMPLATE: entrypoint.sh renders it to /run/cas-nginx.conf, replacing
+#   __DOCUMENT_UPLOAD_LIMIT__ = DOCUMENT_MAX_BYTES      + 256 KiB multipart overhead
+#   __SPEECH_UPLOAD_LIMIT__   = SPEECH_MAX_UPLOAD_BYTES + 256 KiB multipart overhead
+# (same overheads as the Go API: middleware.DocumentUploadMultipartOverhead and
+# SpeechMultipartOverhead). nginx enforces these limits itself: an oversized body
+# is answered 413 here and never streamed to Go. Otherwise Go answers 413 from the
+# Content-Length and closes the connection while nginx is still sending the body,
+# and the client sees a 502 (observed on the native amd64 CI runner).
 # Public entry point of the all-in-one pod. Runs as user "web" (no root):
 # port 8088 > 1024. TLS terminates at the RunPod HTTPS proxy (Cloudflare),
 # which cuts requests at 100 s, so upstream timeouts stay below that.
@@ -43,7 +51,8 @@ http {
     root /opt/cas/web;
     index index.html;
 
-    # 65m covers the 64 MiB hard max of DOCUMENT_MAX_BYTES plus multipart overhead.
+    # Default for the rest of /api: 65m = the 64 MiB hard max of DOCUMENT_MAX_BYTES
+    # plus overhead. The two upload endpoints below have their exact limits.
     client_max_body_size 65m;
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options DENY always;
@@ -73,7 +82,20 @@ http {
     }
     location ~ ^/api/v1/sessions/[^/]+/speech/translate$ {
       limit_req zone=cas_speech burst=3 nodelay;
+      client_max_body_size __SPEECH_UPLOAD_LIMIT__;
+      error_page 413 @payload_too_large;
       proxy_pass http://127.0.0.1:8080;
+    }
+    # Admin PDF upload (POST) and list (GET).
+    location = /api/v1/admin/documents {
+      client_max_body_size __DOCUMENT_UPLOAD_LIMIT__;
+      error_page 413 @payload_too_large;
+      proxy_pass http://127.0.0.1:8080;
+    }
+    # Same JSON envelope as the API's own 413.
+    location @payload_too_large {
+      default_type application/json;
+      return 413 '{"error":{"code":"PAYLOAD_TOO_LARGE","message":"request body exceeds size limit"}}';
     }
     location ~ ^/api/v1/sessions/[^/]+/(turns|messages)$ {
       limit_req zone=cas_turn burst=20 nodelay;

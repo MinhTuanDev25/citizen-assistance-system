@@ -309,16 +309,36 @@ turn() { curl -s -o "$OUT/$1" -w '%{http_code}' --max-time 30 "$BASE/api/v1/sess
 c5="$(turn A5_turn.json "toi muon dang ky khai sinh")"
 [[ -n "$SID" && "$c5" == 200 ]] && pass A5 "guest session + chat turn through nginx (Go -> ai-service mock LLM -> DB)" "session=$SID" || fail A5 "chat turn" "http=$c5 session=$SID"
 
-# A6/A7: upload limits. The backend limit (DOCUMENT_MAX_BYTES=20 MiB) answers with a JSON
-# PAYLOAD_TOO_LARGE; nginx (65 MiB = 64 MiB hard max + multipart overhead) only cuts
-# bodies the backend could never accept, even if DOCUMENT_MAX_BYTES is raised.
-python3 -c 'import sys;f=open(sys.argv[1],"wb");f.write(b"%PDF-1.4\n");f.write(b"0"*(21*1024*1024));f.close()' "$OUT/big21.pdf"
-python3 -c 'import sys;f=open(sys.argv[1],"wb");f.write(b"%PDF-1.4\n");f.write(b"0"*(66*1024*1024));f.close()' "$OUT/big66.pdf"
-c6="$(curl -s -o "$OUT/A6_21mib.json" -w '%{http_code}' "$BASE/api/v1/admin/documents" -H "Authorization: Bearer $TOKEN" -F "file=@$OUT/big21.pdf;type=application/pdf" -F title="21 MiB" -F domain_id=ho_tich_chung_thuc)"
-c7="$(curl -s -o "$OUT/A7_66mib.txt" -w '%{http_code}' "$BASE/api/v1/admin/documents" -H "Authorization: Bearer $TOKEN" -F "file=@$OUT/big66.pdf;type=application/pdf" -F title="66 MiB" -F domain_id=ho_tich_chung_thuc)"
-rm -f "$OUT/big21.pdf" "$OUT/big66.pdf"
-[[ "$c6" == 413 ]] && grep -q PAYLOAD_TOO_LARGE "$OUT/A6_21mib.json" && pass A6 "21 MiB PDF: 413 PAYLOAD_TOO_LARGE from the API (DOCUMENT_MAX_BYTES)" || fail A6 "21 MiB upload" "http=$c6 $(head -c 200 "$OUT/A6_21mib.json")"
-[[ "$c7" == 413 ]] && grep -qi "nginx\|413 Request Entity Too Large" "$OUT/A7_66mib.txt" && pass A7 "66 MiB body: 413 from nginx (client_max_body_size 65m)" || fail A7 "66 MiB upload" "http=$c7"
+# A6/A6b/A7/A8: upload limits. nginx enforces the exact API limits itself (rendered
+# from DOCUMENT_MAX_BYTES / SPEECH_MAX_UPLOAD_BYTES + 256 KiB overhead) and answers
+# 413 JSON, so an oversized body is never streamed to Go (which would close the
+# connection early and turn the answer into a 502: seen on the amd64 CI runner).
+mkbig() { python3 -c 'import sys;f=open(sys.argv[1],"wb");f.write(b"%PDF-1.4\n");f.write(b"0"*int(sys.argv[2]));f.close()' "$1" "$2"; }
+mkbig "$OUT/big21.pdf" $((21 * 1024 * 1024))
+mkbig "$OUT/under.pdf" $((20 * 1024 * 1024 - 64 * 1024))
+mkbig "$OUT/big66.bin" $((66 * 1024 * 1024))
+mkbig "$OUT/big11.wav" $((11 * 1024 * 1024))
+# A6: five attempts, every one must be 413 JSON (the 502 was timing-dependent).
+a6=""; for i in 1 2 3 4 5; do
+  c="$(curl -s -o "$OUT/A6_21mib_$i.json" -w '%{http_code}' "$BASE/api/v1/admin/documents" -H "Authorization: Bearer $TOKEN" \
+    -F "file=@$OUT/big21.pdf;type=application/pdf" -F title="21 MiB" -F domain_id=ho_tich_chung_thuc)"
+  grep -q '"code":"PAYLOAD_TOO_LARGE"' "$OUT/A6_21mib_$i.json" && a6+="$c " || a6+="$c(no-json) "
+done
+[[ "$a6" == "413 413 413 413 413 " ]] && pass A6 "21 MiB PDF: 413 JSON PAYLOAD_TOO_LARGE on 5/5 attempts, never 502" "$a6" || fail A6 "21 MiB upload" "$a6"
+# A6b: just under the limit is NOT cut by nginx: the API itself answers (JSON with request_id).
+c6b="$(curl -s -o "$OUT/A6b_under.json" -w '%{http_code}' "$BASE/api/v1/admin/documents" -H "Authorization: Bearer $TOKEN" \
+  -F "file=@$OUT/under.pdf;type=application/pdf" -F title="under limit" -F domain_id=ho_tich_chung_thuc)"
+if [[ "$c6b" != 413 && "$c6b" != 502 ]] && grep -q '"request_id"' "$OUT/A6b_under.json"; then
+  pass A6b "body just under DOCUMENT_MAX_BYTES reaches the API (http $c6b), nginx limit is not tighter than Go's"
+else fail A6b "under-limit upload" "http=$c6b $(head -c 160 "$OUT/A6b_under.json")"; fi
+# A7: elsewhere in /api the generic 65 MiB nginx limit applies.
+c7="$(curl -s -o "$OUT/A7_66mib.txt" -w '%{http_code}' "$BASE/api/v1/sessions" -H 'Content-Type: application/json' --data-binary "@$OUT/big66.bin")"
+[[ "$c7" == 413 ]] && grep -q "413 Request Entity Too Large" "$OUT/A7_66mib.txt" && pass A7 "66 MiB body elsewhere in /api: 413 from nginx (65m)" || fail A7 "66 MiB body" "http=$c7"
+# A8: Speech upload over SPEECH_MAX_UPLOAD_BYTES: 413 JSON from nginx (Speech is off in this run).
+c8="$(curl -s -o "$OUT/A8_speech_11mib.json" -w '%{http_code}' "$BASE/api/v1/sessions/$SID/speech/translate" -H "X-Guest-Token: $GT" \
+  -H "X-Request-ID: $(uuidgen | tr '[:upper:]' '[:lower:]')" -F "audio=@$OUT/big11.wav;type=audio/wav")"
+[[ "$c8" == 413 ]] && grep -q '"code":"PAYLOAD_TOO_LARGE"' "$OUT/A8_speech_11mib.json" && pass A8 "11 MiB audio: 413 JSON PAYLOAD_TOO_LARGE from nginx" || fail A8 "speech upload limit" "http=$c8"
+rm -f "$OUT/big21.pdf" "$OUT/under.pdf" "$OUT/big66.bin" "$OUT/big11.wav"
 
 # I1: scanned (image-only) PDF through the real pipeline: upload -> link -> async index
 # (Tesseract vie OCR -> e5 ONNX embedding -> Qdrant) -> READY.

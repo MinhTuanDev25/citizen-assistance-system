@@ -31,7 +31,7 @@ Data persists only on the volume at `/workspace/cas`. Only port **8088** listens
 | `fetch_models.sh`, `models/embedding.manifest.{int8-vnni,fp32}.json` | Downloads the pinned e5 ONNX model (repository, revision, SHA-256 per file) in the **variant the target CPU needs** (see "Embedding model and CPU"). All-or-nothing: every file is verified in a staging directory before it replaces the destination; a model that is already complete is left untouched |
 | `rootfs/opt/cas/bin/cas-run` | Runs operator tools (e.g. `bootstrap-admin`) with this boot's environment, as a given user |
 | `rootfs/opt/cas/bin/svc-run` | Starts every supervisord program with `env -i` plus its own allowlist (`/run/cas-env/<service>.env`), then drops to the program's user |
-| `rootfs/etc/cas/*` | `supervisord.conf`, `nginx.conf`, `postgresql.cas.conf`, `pg_hba.conf` |
+| `rootfs/etc/cas/*` | `supervisord.conf`, `nginx.conf.template` (rendered by `entrypoint.sh` to `/run/cas-nginx.conf` with the exact upload limits), `postgresql.cas.conf`, `pg_hba.conf` |
 | `env.staging.example` | Variable names for the RunPod template (no values) |
 | `tests/smoke_cpu.sh`, `tests/c0_in_image.sh`, `tests/c0_in_image_negative.sh`, `tests/fetch_models_test.sh` | CPU smoke, C0 level (b) checks, proof that the C0 checker fails on broken images, offline all-or-nothing test of `fetch_models.sh`. All exit non-zero on any FAIL |
 
@@ -196,12 +196,19 @@ On a clean stop, `pg-lease` releases the lease (renamed `workspace.lease.release
 
 ## Upload limits
 
-| Layer | Limit | Answer |
+| Endpoint | Limit enforced by nginx | Answer when exceeded |
 |---|---|---|
-| API (`DOCUMENT_MAX_BYTES`) | 20 MiB (default, same as the local stack) | `413` JSON `PAYLOAD_TOO_LARGE` |
-| nginx (`client_max_body_size`) | 65 MiB = 64 MiB hard max of `DOCUMENT_MAX_BYTES` + multipart overhead | `413` HTML from nginx |
+| `POST /api/v1/admin/documents` (PDF upload) | `DOCUMENT_MAX_BYTES` (default 20 MiB, max 64 MiB) + 256 KiB multipart overhead | `413` JSON `PAYLOAD_TOO_LARGE`, from nginx |
+| `POST /api/v1/sessions/<id>/speech/translate` | `SPEECH_MAX_UPLOAD_BYTES` (default and max 10 MiB) + 256 KiB | `413` JSON `PAYLOAD_TOO_LARGE`, from nginx |
+| rest of `/api` | 65 MiB | `413` HTML, from nginx |
 
-The gap is intentional: nginx only cuts bodies that the API could never accept, so raising `DOCUMENT_MAX_BYTES` (for example for the 451-page source PDF) needs no nginx change. Both limits are tested (smoke A6/A7).
+- `entrypoint.sh` renders these limits into the nginx config from the same variables, and the same multipart overhead, that the Go API uses. The two layers therefore agree to the byte.
+- nginx must reject an oversized upload itself. If it streamed the body to Go instead, Go would answer 413 from `Content-Length` and close the connection while nginx was still sending. The client then gets a **502**, which is what the first native amd64 CI run showed.
+- Smoke tests:
+  - A6: 21 MiB PDF → 413 JSON;
+  - A6b: a body just under the limit is not cut by nginx;
+  - A7: 66 MiB elsewhere → 413 from nginx;
+  - A8: oversized audio → 413 JSON.
 
 ## Embedding model and CPU
 
