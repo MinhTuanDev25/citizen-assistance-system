@@ -13,6 +13,7 @@
 #   FM6 publish fails, restore works -> exit != 0, dest identical to before, nothing left over
 #   FM7 publish AND restore fail -> exit != 0, previous model KEPT intact in .old, path printed
 #   FM8 moving the current model aside fails -> exit != 0, dest identical, no .old
+#   FM9 unknown --variant -> exit != 0, nothing written
 # Exit 0 only if all cases PASS.
 #   deploy/runpod/tests/fetch_models_test.sh <out dir>
 set -uo pipefail
@@ -133,6 +134,10 @@ D="$T/m8/embedding"; oldmodel "$D"; before="$(tree_hash "$D")"
 inject 1 "$D"; rc=$?
 [[ $rc -ne 0 && "$(tree_hash "$D")" == "$before" && -z "$(olds "$D")" && "$(leftovers "$D")" == 0 ]] \
   && pass FM8 "moving the current model aside fails: exit $rc, dest unchanged" || fail FM8 "move-aside failure" "rc=$rc"
+
+# FM9: an unknown variant is refused (no silent fallback to some model)
+CAS_MODEL_VARIANT=bogus "$FETCH" "$T/m9/embedding" >> "$OUT/fetch.log" 2>&1; rc=$?
+[[ $rc -ne 0 && ! -e "$T/m9/embedding" ]] && pass FM9 "unknown --variant is refused (exit $rc), nothing written" || fail FM9 "unknown variant" "rc=$rc"
 
 cp "$T/server.log" "$OUT/mirror.log"
 if (( FAILS > 0 )); then echo "fetch_models_test: $FAILS case(s) failed"; exit 1; fi
