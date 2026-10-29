@@ -89,9 +89,21 @@ neg N8 "non-numeric SPEECH_TIMEOUT_MS is refused" "SPEECH_TIMEOUT_MS must be an 
 # N9: a model that does not match its manifest stops the boot (full SHA-256 check).
 BADM="$OUT/badmodel"; mkdir -p "$BADM"; cp "$ROOT/models/embedding/manifest.json" "$ROOT/models/embedding/tokenizer.json" "$BADM/"
 printf 'not the model' > "$BADM/model.onnx"
-neg N9 "embedding model with a wrong checksum is refused before any init" "does not match its manifest" \
+neg N9 "embedding model with a wrong checksum is refused before any init" "is not usable by the ai-service on this host" \
   "${ENVS[@]}" -v "$BADM:/workspace/cas/models/embedding:ro"
 rm -rf "$BADM"
+# N10: a model pinned for the OTHER CPU variant (what the CI runner hit: fp32 model on
+# an AVX-512 VNNI host) is refused at boot with the variant this host needs.
+NEED="$(docker run --rm --entrypoint bash "$IMG" -c 'cd /opt/cas/ai && /opt/cas/venv-ai/bin/python -c "from app.indexing.embed import select_embedding_variant as s;print(s())"' 2>/dev/null | tail -1)"
+case "$NEED" in qint8_avx512_vnni) OTHER=fp32 ;; fp32) OTHER=int8-vnni ;; *) OTHER="" ;; esac
+if [[ -n "$OTHER" ]]; then
+  WRONGV="$OUT/wrongvariant"; mkdir -p "$WRONGV"
+  cp "$HERE/../models/embedding.manifest.$OTHER.json" "$WRONGV/manifest.json"
+  cp "$ROOT/models/embedding/model.onnx" "$ROOT/models/embedding/tokenizer.json" "$WRONGV/"
+  neg N10 "model of the other CPU variant is refused at boot (host needs $NEED)" "this CPU needs the '$NEED' model" \
+    "${ENVS[@]}" -v "$WRONGV:/workspace/cas/models/embedding:ro"
+  rm -rf "$WRONGV"
+else fail N10 "cannot determine the variant this host needs" "$NEED"; fi
 # Prove N5 stopped before init work (no pgdata/CA written on that volume).
 if docker run --rm -v "$NEGVOL:/w" --entrypoint bash "$IMG" -c '[ ! -e /w/cas/pgdata/PG_VERSION ] && [ ! -e /w/cas/tls/ca.crt ]'; then
   pass N5b "gpu refusal happened before initdb and CA creation"

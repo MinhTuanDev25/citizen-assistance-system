@@ -28,7 +28,7 @@ Data persists only on the volume at `/workspace/cas`. Only port **8088** listens
 | `rootfs/opt/cas/bin/backup.sh` | `pg_dump` and a Qdrant snapshot to `/workspace/cas/backups` with rotation |
 | `rootfs/opt/cas/bin/restore_drill.sh` | Restores the newest backups into a scratch DB and a scratch collection, compares row and point counts with live data, then removes the scratch copies |
 | `rootfs/opt/cas/bin/pg-lease.sh`, `pg-start.sh`, `cas-pg-recover` | Single-writer workspace lease: heartbeat and fencing; data services refuse to start without a fresh lease; verified recovery |
-| `fetch_models.sh`, `models/embedding.manifest.json` | Downloads the pinned e5 ONNX model (repository, revision, SHA-256 per file). All-or-nothing: every file is verified in a staging directory before it replaces the destination; a model that is already complete is left untouched |
+| `fetch_models.sh`, `models/embedding.manifest.{int8-vnni,fp32}.json` | Downloads the pinned e5 ONNX model (repository, revision, SHA-256 per file) in the **variant the target CPU needs** (see "Embedding model and CPU"). All-or-nothing: every file is verified in a staging directory before it replaces the destination; a model that is already complete is left untouched |
 | `rootfs/opt/cas/bin/cas-run` | Runs operator tools (e.g. `bootstrap-admin`) with this boot's environment, as a given user |
 | `rootfs/opt/cas/bin/svc-run` | Starts every supervisord program with `env -i` plus its own allowlist (`/run/cas-env/<service>.env`), then drops to the program's user |
 | `rootfs/etc/cas/*` | `supervisord.conf`, `nginx.conf`, `postgresql.cas.conf`, `pg_hba.conf` |
@@ -202,6 +202,20 @@ On a clean stop, `pg-lease` releases the lease (renamed `workspace.lease.release
 | nginx (`client_max_body_size`) | 65 MiB = 64 MiB hard max of `DOCUMENT_MAX_BYTES` + multipart overhead | `413` HTML from nginx |
 
 The gap is intentional: nginx only cuts bodies that the API could never accept, so raising `DOCUMENT_MAX_BYTES` (for example for the 451-page source PDF) needs no nginx change. Both limits are tested (smoke A6/A7).
+
+## Embedding model and CPU
+
+The ai-service picks the embedding model variant from the CPU it runs on (`apps/ai-service/app/indexing/embed.py`, `select_embedding_variant`):
+
+| CPU | Variant | Manifest |
+|---|---|---|
+| x86 with `avx512f`, `avx512bw`, `avx512dq`, `avx512vl` and `avx512vnni` | int8 (`onnx/model_qint8_avx512_vnni.onnx`, 118 MB) | `models/embedding.manifest.int8-vnni.json` |
+| arm64 / aarch64 | fp32 (`onnx/model.onnx`, 470 MB) | `models/embedding.manifest.fp32.json` |
+| any other x86 (no AVX-512 VNNI) | **refused** (`embedding_cpu_unsupported`) | — |
+
+- Fetch the model **on the host that will run the image**: `deploy/runpod/fetch_models.sh --variant auto <dest>`. On the RunPod pod, run it against `/workspace/cas/models/embedding`.
+- `entrypoint.sh` validates the installed model with the ai-service's own rules (variant for this CPU + SHA-256 of every file). A model fetched for another CPU stops the boot with the variant this host needs. Smoke tests N9 and N10 cover this.
+- **RunPod requirement (8.1-B):** the GPU pod's CPU must support AVX-512 VNNI (for example AMD EPYC Genoa / Zen 4, or Intel Xeon Cascade Lake or newer). Hosts without it, such as AMD EPYC Milan / Zen 3, cannot run the indexing pipeline with the current ai-service code. Check `grep -o avx512_vnni /proc/cpuinfo` on the pod before preparing the volume.
 
 ## LLM provider
 

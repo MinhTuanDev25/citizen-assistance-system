@@ -144,25 +144,33 @@ export AI_EXTRACT_TIMEOUT_MS AI_RETRIEVE_TIMEOUT_MS AI_DRAFT_TIMEOUT_MS LLM_DRAF
 if [[ "$EMBEDDING_PROVIDER" == onnx ]]; then
   [[ -f "$EMBEDDING_MODEL_DIR/manifest.json" ]] || die "embedding model missing: $EMBEDDING_MODEL_DIR/manifest.json"
   gosu cas test -r "$EMBEDDING_MODEL_DIR/model.onnx" || die "user cas cannot read $EMBEDDING_MODEL_DIR/model.onnx"
-  # Full checksum of every file listed in the manifest (a partial or corrupted
-  # model must stop the boot here, not fail later inside the indexing worker).
-  n="$(python3 - "$EMBEDDING_MODEL_DIR" <<'PY'
-import hashlib, json, os, sys
+  # Validate with the ai-service's own rules (single source of truth): the variant
+  # this CPU needs (int8 on x86 with AVX-512 VNNI, fp32 on arm64, refused otherwise)
+  # and the manifest + SHA-256 of every model file. A model fetched for another CPU,
+  # a partial or a corrupted model stops the boot here, with a clear message,
+  # instead of crash-looping the ai-service later.
+  emb_out="$(cd /opt/cas/ai && gosu cas /opt/cas/venv-ai/bin/python - "$EMBEDDING_MODEL_DIR" 2>&1 <<'PY'
+import json, os, sys
+from app.indexing.embed import load_manifest, select_embedding_variant
+from app.indexing.errors import IndexFailure
 d = sys.argv[1]
-files = json.load(open(os.path.join(d, "manifest.json")))["files"]
-if not files:
-    sys.exit("manifest lists no files")
-for name, want in files.items():
-    h = hashlib.sha256()
-    with open(os.path.join(d, name), "rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            h.update(block)
-    if h.hexdigest() != want:
-        sys.exit(f"{name}: sha256 {h.hexdigest()} != manifest {want}")
-print(len(files))
+try:
+    variant = select_embedding_variant()
+except IndexFailure as exc:
+    sys.exit(f"this CPU cannot run the ai-service embedding ({exc}); x86 needs avx512f/bw/dq/vl + avx512vnni, arm64 uses fp32")
+try:
+    load_manifest(d, variant)
+except IndexFailure as exc:
+    try:
+        have = json.load(open(os.path.join(d, "manifest.json"))).get("quantization_method")
+    except Exception:
+        have = "unreadable"
+    sys.exit(f"{exc}: this CPU needs the '{variant}' model, the installed manifest is '{have}'"
+             " (fetch it on this host: deploy/runpod/fetch_models.sh --variant auto)")
+print(variant)
 PY
-)" || die "embedding model in $EMBEDDING_MODEL_DIR does not match its manifest"
-  log "embedding model verified ($n files, SHA-256)"
+)" || die "embedding model in $EMBEDDING_MODEL_DIR is not usable by the ai-service on this host: $(tail -1 <<<"$emb_out")"
+  log "embedding model verified by the ai-service rules (variant $(tail -1 <<<"$emb_out"), SHA-256 of every file)"
 fi
 if [[ "$OCR_PROVIDER" == paddle ]]; then
   [[ -f "$OCR_MODEL_DIR/manifest.json" ]] || die "OCR model missing: $OCR_MODEL_DIR/manifest.json"
