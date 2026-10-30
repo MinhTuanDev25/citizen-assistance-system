@@ -46,14 +46,25 @@ jobs:
       - name: C0 checker negative regression (must detect broken images)
         run: deploy/runpod/tests/c0_in_image_negative.sh cas-aio:${GITHUB_SHA} deploy/runpod/tests/out/ci-c0-negative
 
-      # The ONNX embedding model is not in Git. The ai-service needs the variant that
-      # matches the CPU (int8 on x86 with AVX-512 VNNI, fp32 on arm64; other x86 is
-      # refused), so fetch it for THIS runner (--variant auto). A checksum mismatch or
-      # an unsupported CPU fails the job.
-      - name: fetch pinned embedding model (variant for this runner's CPU)
+      # The ONNX embedding model is not in Git. The image defaults to
+      # EMBEDDING_VARIANT=fp32 (runs on any x86_64/arm64 CPU, e.g. RunPod EPYC 7B13
+      # without AVX-512 VNNI), so the smoke uses the fp32 model. The int8 model is
+      # fetched too when this runner has VNNI, for the real-inference comparison.
+      # A checksum mismatch fails the job.
+      - name: fetch pinned embedding models
         run: |
-          grep -m1 -o -w -E 'avx512vnni|avx512_vnni' /proc/cpuinfo || echo "no AVX-512 VNNI on this runner"
-          deploy/runpod/fetch_models.sh --variant auto models/embedding
+          grep -m1 'model name' /proc/cpuinfo
+          deploy/runpod/fetch_models.sh --variant fp32 models/embedding
+          if grep -qw avx512_vnni /proc/cpuinfo; then
+            deploy/runpod/fetch_models.sh --variant int8-vnni "$RUNNER_TEMP/e5-int8"
+          else
+            echo "no AVX-512 VNNI on this runner: int8 cases will be skipped"
+          fi
+
+      - name: embedding variants, real ONNX inference in image (this runner's CPU)
+        run: |
+          int8=-; [[ -d "$RUNNER_TEMP/e5-int8" ]] && int8="$RUNNER_TEMP/e5-int8"
+          deploy/runpod/tests/embedding_in_image.sh cas-aio:${GITHUB_SHA} models/embedding "$int8" deploy/runpod/tests/out/ci-embedding
 
       - name: CPU smoke
         id: smoke
@@ -72,4 +83,7 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           img=ghcr.io/${GITHUB_REPOSITORY,,}/cas-aio:${GITHUB_SHA}
           docker tag cas-aio:${GITHUB_SHA} "$img"
+          # The tag is the commit SHA: a new commit never overwrites an older image.
           docker push "$img"
+          echo "image: $img" >> "$GITHUB_STEP_SUMMARY"
+          echo "deploy by digest: $(docker inspect -f '{{index .RepoDigests 0}}' "$img")" >> "$GITHUB_STEP_SUMMARY"

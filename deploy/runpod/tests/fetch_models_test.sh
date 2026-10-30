@@ -14,6 +14,9 @@
 #   FM7 publish AND restore fail -> exit != 0, previous model KEPT intact in .old, path printed
 #   FM8 moving the current model aside fails -> exit != 0, dest identical, no .old
 #   FM9 unknown --variant -> exit != 0, nothing written
+#   FM10 auto on x86 without AVX-512 VNNI (EPYC 7B13 flags) -> fp32 manifest
+#   FM11 auto with AVX-512 VNNI -> int8-vnni manifest
+#   FM12 EMBEDDING_VARIANT=fp32 on a VNNI CPU -> fp32 manifest (explicit choice wins)
 # Exit 0 only if all cases PASS.
 #   deploy/runpod/tests/fetch_models_test.sh <out dir>
 set -uo pipefail
@@ -138,6 +141,21 @@ inject 1 "$D"; rc=$?
 # FM9: an unknown variant is refused (no silent fallback to some model)
 CAS_MODEL_VARIANT=bogus "$FETCH" "$T/m9/embedding" >> "$OUT/fetch.log" 2>&1; rc=$?
 [[ $rc -ne 0 && ! -e "$T/m9/embedding" ]] && pass FM9 "unknown --variant is refused (exit $rc), nothing written" || fail FM9 "unknown variant" "rc=$rc"
+
+# FM10-FM12: variant chosen from a cpuinfo file (simulated CPU; the mirror has no such
+# repository, so the download fails after the choice and nothing is written)
+printf 'processor\t: 0\nmodel name\t: AMD EPYC 7B13 64-Core Processor\nflags\t\t: fpu sse2 avx avx2 fma bmi2 sha_ni\n' > "$T/cpu_zen3"
+printf 'processor\t: 0\nflags\t\t: fpu avx2 avx512f avx512dq avx512bw avx512vl avx512_vnni\n' > "$T/cpu_vnni"
+variant_of() {  # variant_of <cpuinfo> [env...] -> the "variant X" line
+  env -u CAS_MODEL_VARIANT -u EMBEDDING_VARIANT "${@:2}" CAS_CPUINFO_FILE="$1" CAS_MODEL_BASE_URL="http://127.0.0.1:$PORT" \
+    "$FETCH" "$T/m10/embedding" 2>&1 | tee -a "$OUT/fetch.log" | sed -n 's/^fetch_models: variant //p'
+}
+v="$(variant_of "$T/cpu_zen3")"
+[[ "$v" == fp32 && ! -e "$T/m10/embedding" ]] && pass FM10 "auto without AVX-512 VNNI selects fp32" || fail FM10 "auto on EPYC 7B13 flags" "variant='$v'"
+v="$(variant_of "$T/cpu_vnni")"
+[[ "$v" == int8-vnni ]] && pass FM11 "auto with AVX-512 VNNI selects int8-vnni" || fail FM11 "auto on VNNI flags" "variant='$v'"
+v="$(variant_of "$T/cpu_vnni" EMBEDDING_VARIANT=fp32)"
+[[ "$v" == fp32 ]] && pass FM12 "EMBEDDING_VARIANT=fp32 wins over VNNI flags" || fail FM12 "explicit fp32" "variant='$v'"
 
 cp "$T/server.log" "$OUT/mirror.log"
 if (( FAILS > 0 )); then echo "fetch_models_test: $FAILS case(s) failed"; exit 1; fi

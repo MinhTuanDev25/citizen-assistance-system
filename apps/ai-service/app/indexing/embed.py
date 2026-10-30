@@ -31,8 +31,8 @@ E5_MODEL_SHA256 = "dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2
 E5_TOKENIZER_SHA256 = "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"
 # onnx/model.onnx at the same revision. LFS oid read from the Hugging Face
 # tree API and checked against the downloaded file. This graph has no AVX-512
-# requirement, so Apple Silicon and linux/arm64 can run it. It is not a
-# substitute for the VNNI graph on a CPU that has those flags.
+# requirement, so any x86_64 (AVX2) or arm64 CPU can run it. It is the
+# unquantized source of the int8 graph, with the same tokenizer and dimension.
 E5_FP32_SOURCE_FILE = "onnx/model.onnx"
 E5_FP32_QUANTIZATION = "fp32"
 E5_FP32_METHOD = "fp32"
@@ -109,31 +109,42 @@ def detect_cpu_flags(cpuinfo_text: str | None = None, sysctl_text: str | None = 
     return flags
 
 
-def require_supported_variant(flags: set[str] | None = None) -> str:
-    """Select the pinned qint8 graph only when every required AVX-512 flag is present.
-
-    No fallback filename is invented. An unsupported CPU fails before ONNX load.
-    """
-    seen = detect_cpu_flags() if flags is None else normalize_cpu_flags(flags)
-    if any(name not in seen for name in REQUIRED_CPU_FLAGS):
-        raise IndexFailure("embedding_cpu_unsupported")
-    return E5_QUANTIZATION_METHOD
+# EMBEDDING_VARIANT values (same names as deploy/runpod/fetch_models.sh --variant).
+VARIANT_AUTO = "auto"
+VARIANT_FP32 = "fp32"
+VARIANT_INT8_VNNI = "int8-vnni"
+EMBEDDING_VARIANTS = (VARIANT_AUTO, VARIANT_FP32, VARIANT_INT8_VNNI)
 
 
-def select_embedding_variant(flags: set[str] | None = None, machine: str | None = None) -> str:
+def requested_variant(value: str | None = None) -> str:
+    """EMBEDDING_VARIANT, default auto. An unknown value fails closed."""
+    raw = os.environ.get("EMBEDDING_VARIANT", "") if value is None else value
+    choice = (raw or VARIANT_AUTO).strip().lower()
+    if choice not in EMBEDDING_VARIANTS:
+        raise IndexFailure("embedding_variant_invalid")
+    return choice
+
+
+def select_embedding_variant(flags: set[str] | None = None, requested: str | None = None) -> str:
     """Pick one published ONNX graph for this CPU.
 
-    AVX-512 VNNI keeps the int8 graph. arm64 and aarch64 use the fp32 graph from
-    the same revision. Any other CPU without those flags fails closed. This does
-    not switch a real model to the fake embedder.
+    auto: the int8 graph when every required AVX-512 VNNI flag is present,
+    otherwise the fp32 graph (x86_64 AVX2 or arm64). fp32: always the fp32
+    graph. int8-vnni: the int8 graph, refused on a CPU without the flags.
+    Vectors from the two graphs are not interchangeable: retrieval matches the
+    model checksum stored with each generation (embedding_identity_mismatch).
+    This never switches a real model to the fake embedder.
     """
-    seen = detect_cpu_flags() if flags is None else normalize_cpu_flags(flags)
-    if all(name in seen for name in REQUIRED_CPU_FLAGS):
-        return E5_QUANTIZATION_METHOD
-    arch = (machine if machine is not None else platform.machine()).lower()
-    if arch in {"arm64", "aarch64"}:
+    choice = requested_variant(requested)
+    if choice == VARIANT_FP32:
         return E5_FP32_METHOD
-    raise IndexFailure("embedding_cpu_unsupported")
+    seen = detect_cpu_flags() if flags is None else normalize_cpu_flags(flags)
+    vnni = all(name in seen for name in REQUIRED_CPU_FLAGS)
+    if choice == VARIANT_INT8_VNNI:
+        if not vnni:
+            raise IndexFailure("embedding_cpu_unsupported")
+        return E5_QUANTIZATION_METHOD
+    return E5_QUANTIZATION_METHOD if vnni else E5_FP32_METHOD
 
 
 def variant_spec(method: str) -> dict:
@@ -220,7 +231,7 @@ def load_manifest(model_dir: str, variant: str | None = None) -> dict:
 
 
 class OnnxEmbedder:
-    """CPU Int8 ONNX adapter. Tokenizer is loaded once. This class never downloads."""
+    """CPU ONNX adapter (int8 or fp32 graph). Tokenizer is loaded once. This class never downloads."""
 
     def __init__(self, model_dir: str, batch_size: int = 8) -> None:
         self.variant = select_embedding_variant()

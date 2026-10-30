@@ -10,33 +10,28 @@ from pathlib import Path
 
 import pytest
 
-from app.indexing.embed import detect_cpu_flags, require_supported_variant
+from app.indexing.embed import detect_cpu_flags, select_embedding_variant
 from app.indexing.errors import IndexFailure
 from app.indexing.ocr_supervisor import OcrSupervisor
 
 
-def test_arm64_selects_published_fp32_graph_and_x86_without_vnni_fails():
-    from app.indexing.embed import select_embedding_variant
-
+def test_auto_selects_int8_with_vnni_and_fp32_otherwise():
     vnni = detect_cpu_flags(cpuinfo_text="flags : avx512f avx512dq avx512bw avx512vl avx512_vnni\n")
-    assert select_embedding_variant(vnni, machine="x86_64") == "qint8_avx512_vnni"
-    assert select_embedding_variant(vnni, machine="aarch64") == "qint8_avx512_vnni"
+    assert select_embedding_variant(vnni, requested="auto") == "qint8_avx512_vnni"
     arm = detect_cpu_flags(cpuinfo_text="processor : 0\nflags : fp asimd aes\n")
-    assert select_embedding_variant(arm, machine="aarch64") == "fp32"
+    assert select_embedding_variant(arm, requested="auto") == "fp32"
     x86 = detect_cpu_flags(cpuinfo_text="flags : sse2 avx avx2\n")
-    with pytest.raises(IndexFailure) as raised:
-        select_embedding_variant(x86, machine="x86_64")
-    assert raised.value.code == "embedding_cpu_unsupported"
+    assert select_embedding_variant(x86, requested="auto") == "fp32"
 
 
 def test_cpu_gate_refuses_vnni_without_the_flag():
     missing = detect_cpu_flags(cpuinfo_text="processor : 0\nflags : sse2 avx avx2\n")
     with pytest.raises(IndexFailure) as raised:
-        require_supported_variant(missing)
+        select_embedding_variant(missing, requested="int8-vnni")
     assert raised.value.code == "embedding_cpu_unsupported"
     linux = detect_cpu_flags(cpuinfo_text="flags : fpu avx512f avx512dq avx512bw avx512vl avx512_vnni\n")
     assert "avx512vnni" in linux
-    assert require_supported_variant(linux) == "qint8_avx512_vnni"
+    assert select_embedding_variant(linux, requested="int8-vnni") == "qint8_avx512_vnni"
 
 
 def test_ocr_hang_is_killed_and_the_next_call_works():

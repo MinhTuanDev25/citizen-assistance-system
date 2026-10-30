@@ -97,6 +97,17 @@ export INDEX_ASYNC=true
 export EMBEDDING_PROVIDER="${EMBEDDING_PROVIDER:-onnx}"
 export OCR_PROVIDER="${OCR_PROVIDER:-tesseract}"
 export EMBEDDING_MODEL_DIR="${EMBEDDING_MODEL_DIR:-$W/models/embedding}"
+# fp32 runs on every x86_64 (AVX2) and arm64 host, so a pod that restarts on another
+# host CPU keeps the same model and the same vector identity. int8-vnni / auto are opt-in.
+export EMBEDDING_VARIANT="${EMBEDDING_VARIANT:-fp32}"
+case "$EMBEDDING_VARIANT" in
+  auto|fp32|int8-vnni) ;;
+  *) die "EMBEDDING_VARIANT must be auto, fp32 or int8-vnni (got '$EMBEDDING_VARIANT')" ;;
+esac
+# EMBEDDING_CPU_FLAGS replaces the real CPU flags in the ai-service: tests only.
+if [[ -n "${EMBEDDING_CPU_FLAGS+x}" && "${CAS_ALLOW_CPU_FLAGS_OVERRIDE:-}" != true ]]; then
+  die "EMBEDDING_CPU_FLAGS is for tests only (it hides the real CPU); unset it"
+fi
 export OCR_MODEL_DIR="${OCR_MODEL_DIR:-$W/models/ocr}"
 export QDRANT_URL=http://127.0.0.1:6333
 export QDRANT_COLLECTION="${QDRANT_COLLECTION:-knowledge_chunks}"
@@ -150,10 +161,10 @@ if [[ "$EMBEDDING_PROVIDER" == onnx ]]; then
   [[ -f "$EMBEDDING_MODEL_DIR/manifest.json" ]] || die "embedding model missing: $EMBEDDING_MODEL_DIR/manifest.json"
   gosu cas test -r "$EMBEDDING_MODEL_DIR/model.onnx" || die "user cas cannot read $EMBEDDING_MODEL_DIR/model.onnx"
   # Validate with the ai-service's own rules (single source of truth): the variant
-  # this CPU needs (int8 on x86 with AVX-512 VNNI, fp32 on arm64, refused otherwise)
-  # and the manifest + SHA-256 of every model file. A model fetched for another CPU,
-  # a partial or a corrupted model stops the boot here, with a clear message,
-  # instead of crash-looping the ai-service later.
+  # selected by EMBEDDING_VARIANT on this CPU (int8-vnni is refused without AVX-512
+  # VNNI) and the manifest + SHA-256 of every model file. A model of the other
+  # variant, a partial or a corrupted model stops the boot here, with a clear
+  # message, instead of crash-looping the ai-service later.
   emb_out="$(cd /opt/cas/ai && gosu cas /opt/cas/venv-ai/bin/python - "$EMBEDDING_MODEL_DIR" 2>&1 <<'PY'
 import json, os, sys
 from app.indexing.embed import load_manifest, select_embedding_variant
@@ -162,7 +173,8 @@ d = sys.argv[1]
 try:
     variant = select_embedding_variant()
 except IndexFailure as exc:
-    sys.exit(f"this CPU cannot run the ai-service embedding ({exc}); x86 needs avx512f/bw/dq/vl + avx512vnni, arm64 uses fp32")
+    sys.exit(f"EMBEDDING_VARIANT={os.environ.get('EMBEDDING_VARIANT')} cannot run on this CPU ({exc});"
+             " int8-vnni needs avx512f/bw/dq/vl + avx512vnni, use fp32")
 try:
     load_manifest(d, variant)
 except IndexFailure as exc:
@@ -170,12 +182,15 @@ except IndexFailure as exc:
         have = json.load(open(os.path.join(d, "manifest.json"))).get("quantization_method")
     except Exception:
         have = "unreadable"
-    sys.exit(f"{exc}: this CPU needs the '{variant}' model, the installed manifest is '{have}'"
-             " (fetch it on this host: deploy/runpod/fetch_models.sh --variant auto)")
+    sys.exit(f"{exc}: EMBEDDING_VARIANT={os.environ.get('EMBEDDING_VARIANT')} needs the '{variant}' model,"
+             f" the installed manifest is '{have}' (deploy/runpod/fetch_models.sh --variant"
+             f" {os.environ.get('EMBEDDING_VARIANT')} <dir>)")
 print(variant)
 PY
 )" || die "embedding model in $EMBEDDING_MODEL_DIR is not usable by the ai-service on this host: $(tail -1 <<<"$emb_out")"
-  log "embedding model verified by the ai-service rules (variant $(tail -1 <<<"$emb_out"), SHA-256 of every file)"
+  cpu_model="$(awk -F': *' '/^model name/ {print $2; exit}' /proc/cpuinfo 2>/dev/null || true)"   # absent on arm64
+  vnni=no; if grep -qw avx512_vnni /proc/cpuinfo 2>/dev/null; then vnni=yes; fi
+  log "embedding model verified by the ai-service rules (EMBEDDING_VARIANT=$EMBEDDING_VARIANT -> $(tail -1 <<<"$emb_out"), SHA-256 of every file; cpu: ${cpu_model:-$(uname -m)}, avx512_vnni=$vnni)"
 fi
 if [[ "$OCR_PROVIDER" == paddle ]]; then
   [[ -f "$OCR_MODEL_DIR/manifest.json" ]] || die "OCR model missing: $OCR_MODEL_DIR/manifest.json"
@@ -426,7 +441,7 @@ envfile ai-service APP_ENV AI_SERVICE_TOKEN DATABASE_URL "${TLS_VARS[@]}" "${OBJ
   LLM_PROVIDER LLM_MODEL LLM_MODEL_EXTRACTION LLM_MODEL_DEFINITION LLM_MAX_OUTPUT_TOKENS LLM_DRAFT_MAX_OUTPUT_TOKENS \
   LLM_REQUEST_TIMEOUT_S LLM_TIMEOUT_SECONDS LLM_DRAFT_TIMEOUT_SECONDS GEMINI_API_KEY GEMINI_BASE_URL OPENAI_API_KEY OPENAI_BASE_URL \
   INDEX_MODE INDEX_MAX_INFLIGHT INDEX_MAX_PDF_PAGES INDEX_MAX_OCR_PAGES INDEX_MAX_REJECTED_PAGES INDEX_PIPELINE_TIMEOUT_SECONDS \
-  INDEX_TERMINATION_GRACE_SECONDS EMBEDDING_PROVIDER EMBEDDING_MODEL_DIR EMBEDDING_CPU_FLAGS EMBED_BATCH_SIZE \
+  INDEX_TERMINATION_GRACE_SECONDS EMBEDDING_PROVIDER EMBEDDING_MODEL_DIR EMBEDDING_VARIANT EMBEDDING_CPU_FLAGS EMBED_BATCH_SIZE \
   OCR_PROVIDER OCR_MODEL_DIR OCR_DPI OCR_MIN_MEAN_CONFIDENCE OCR_MAX_LOW_CONFIDENCE_RATIO OCR_PAGE_TIMEOUT_SECONDS \
   EXTRACT_RATE_PER_MINUTE EXTRACT_MAX_INFLIGHT EXTRACT_RETRY_AFTER_SECONDS
 envfile api APP_ENV CONFIG_FILE API_ADDR XA_ID CITIZEN_DOMAIN_IDS LOG_LEVEL DATABASE_URL DB_MAX_CONNS DB_MIN_CONNS \

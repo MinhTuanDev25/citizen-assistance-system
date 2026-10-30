@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from app.indexing.embed import OnnxProcess, detect_cpu_flags, require_supported_variant
+from app.indexing.embed import OnnxProcess, detect_cpu_flags, select_embedding_variant
 from app.indexing.errors import IndexFailure
 from app.indexing.ocr_supervisor import OcrSupervisor
 
@@ -26,12 +26,12 @@ def test_linux_cpuinfo_avx512_vnni_is_detected_by_the_parser():
     parsed = detect_cpu_flags(cpuinfo_text="processor : 0\n" + LINUX_OK)
     assert "avx512vnni" in parsed
     assert "avx512_vnni" not in parsed
-    assert require_supported_variant(parsed) == "qint8_avx512_vnni"
+    assert select_embedding_variant(parsed, requested="int8-vnni") == "qint8_avx512_vnni"
     alias = detect_cpu_flags(cpuinfo_text=LINUX_ALIAS)
-    assert require_supported_variant(alias) == "qint8_avx512_vnni"
+    assert select_embedding_variant(alias, requested="int8-vnni") == "qint8_avx512_vnni"
     missing = detect_cpu_flags(cpuinfo_text=LINUX_NO_VNNI)
     with pytest.raises(IndexFailure) as raised:
-        require_supported_variant(missing)
+        select_embedding_variant(missing, requested="int8-vnni")
     assert raised.value.code == "embedding_cpu_unsupported"
 
 
@@ -42,7 +42,7 @@ def test_cpu_override_is_explicit_and_does_not_replace_the_parser(monkeypatch):
     override = detect_cpu_flags()
     assert "avx512vnni" in override
     with pytest.raises(IndexFailure):
-        require_supported_variant(override)
+        select_embedding_variant(override, requested="int8-vnni")
 
 
 def test_onnx_pipe_serializes_count_and_embed():

@@ -2,14 +2,13 @@
 # Fetch the ONNX embedding model (e5-small, pinned repository + revision + SHA-256 per
 # file) into <dest> (default: models/embedding).
 #
-# The ai-service picks the model VARIANT from the CPU it runs on
+# The ai-service picks the model VARIANT from EMBEDDING_VARIANT and the CPU it runs on
 # (apps/ai-service/app/indexing/embed.py, select_embedding_variant):
-#   x86 with avx512f/bw/dq/vl + avx512vnni -> int8  (models/embedding.manifest.int8-vnni.json)
-#   arm64 / aarch64                        -> fp32  (models/embedding.manifest.fp32.json)
-#   any other CPU                          -> refused (embedding_cpu_unsupported)
-# so the model must be fetched FOR THE MACHINE THAT WILL RUN THE IMAGE. --variant auto
-# (default) applies the same rule to the machine running this script; run it on the
-# target host (CI runner, RunPod pod) or pass the variant explicitly.
+#   fp32       -> fp32 on any CPU                    (models/embedding.manifest.fp32.json)
+#   int8-vnni  -> int8, refused without AVX-512 VNNI (models/embedding.manifest.int8-vnni.json)
+#   auto       -> int8 on x86 with avx512f/bw/dq/vl + avx512vnni, fp32 otherwise
+# --variant must match the ai-service's EMBEDDING_VARIANT. auto applies the rule to the
+# machine running this script, so with auto run it on the host that runs the image.
 #
 # All-or-nothing: every file is downloaded (or reused when its checksum already
 # matches) into a staging directory next to <dest> and verified there. Only when
@@ -20,30 +19,26 @@
 # A SIGKILL between the two renames cannot run any handler: <dest> is then missing
 # and the previous model sits in .<name>.old.<pid> (see deploy/runpod/README.md).
 #   deploy/runpod/fetch_models.sh [--variant auto|int8-vnni|fp32] [dest]
-# Env: CAS_MODEL_VARIANT (same as --variant); tests: CAS_MODEL_MANIFEST (explicit
-# manifest, overrides the variant), CAS_MODEL_BASE_URL (other mirror, default
+# Env: CAS_MODEL_VARIANT, else EMBEDDING_VARIANT (same as --variant); tests: CAS_MODEL_MANIFEST (explicit
+# manifest, overrides the variant), CAS_CPUINFO_FILE (cpuinfo read by auto), CAS_MODEL_BASE_URL (other mirror, default
 # https://huggingface.co; files are fetched from <base>/<repo>/resolve/<rev>/<path>).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-VARIANT="${CAS_MODEL_VARIANT:-auto}"
+VARIANT="${CAS_MODEL_VARIANT:-${EMBEDDING_VARIANT:-auto}}"
 if [[ "${1:-}" == --variant ]]; then VARIANT="${2:?--variant needs a value}"; shift 2; fi
 
 detect_variant() {  # same rule as ai-service select_embedding_variant
-  local flags=""
-  if [[ -r /proc/cpuinfo ]]; then
-    flags="$(grep -m1 -E '^(flags|Features)[[:space:]]*:' /proc/cpuinfo | cut -d: -f2 | tr 'A-Z' 'a-z' | sed 's/avx512_vnni/avx512vnni/g')"
+  local flags="" info="${CAS_CPUINFO_FILE:-/proc/cpuinfo}"   # CAS_CPUINFO_FILE: tests only
+  if [[ -r "$info" ]]; then
+    flags="$(grep -m1 -E '^(flags|Features)[[:space:]]*:' "$info" | cut -d: -f2 | tr 'A-Z' 'a-z' | sed 's/avx512_vnni/avx512vnni/g')"
   fi
   local f ok=1
   for f in avx512f avx512bw avx512dq avx512vl avx512vnni; do
     [[ " $flags " == *" $f "* ]] || { ok=0; break; }
   done
-  if [[ $ok == 1 ]]; then echo int8-vnni; return; fi
-  case "$(uname -m)" in
-    arm64|aarch64) echo fp32 ;;
-    *) echo unsupported ;;
-  esac
+  if [[ $ok == 1 ]]; then echo int8-vnni; else echo fp32; fi
 }
 if [[ -n "${CAS_MODEL_MANIFEST:-}" ]]; then
   MANIFEST="$CAS_MODEL_MANIFEST"
@@ -51,10 +46,6 @@ else
   [[ "$VARIANT" != auto ]] || VARIANT="$(detect_variant)"
   case "$VARIANT" in
     int8-vnni|fp32) MANIFEST="$HERE/models/embedding.manifest.$VARIANT.json" ;;
-    unsupported)
-      echo "fetch_models: this CPU ($(uname -m)) has no AVX-512 VNNI and is not arm64; the ai-service" >&2
-      echo "fetch_models: refuses to embed on it (embedding_cpu_unsupported). Run on the target host or pass --variant." >&2
-      exit 1 ;;
     *) echo "fetch_models: unknown variant '$VARIANT' (auto | int8-vnni | fp32)" >&2; exit 2 ;;
   esac
   echo "fetch_models: variant $VARIANT"

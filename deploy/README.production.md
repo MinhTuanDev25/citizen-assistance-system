@@ -22,7 +22,7 @@ docker build -f apps/ai-service/Dockerfile -t cas-ai:phase13-hardening .
 
 The API image built on this Mac is `linux/arm64` and runs as user `cas` (uid 10001). Starting it with `APP_ENV=prod` and no `DATABASE_URL` exits before it listens, with `DATABASE_URL missing for APP_ENV=prod`. The web image built here is also `linux/arm64`. The AI image was not rebuilt in this change.
 
-A Linux x86_64 host needs its own build. The E5 INT8 graph is selected only when AVX-512 VNNI is present. ARM64 uses the FP32 graph. An x86_64 CPU without VNNI fails closed. Do not treat the Mac image as proof for another architecture.
+A Linux x86_64 host needs its own build. `EMBEDDING_VARIANT` selects the E5 graph: `fp32` runs on any x86_64 or ARM64 CPU, `int8-vnni` needs AVX-512 VNNI and fails closed without it, `auto` (the ai-service default) picks INT8 with VNNI and FP32 otherwise. Fetch the model of the variant you run. Do not treat the Mac image as proof for another architecture.
 
 ## Startup rules
 

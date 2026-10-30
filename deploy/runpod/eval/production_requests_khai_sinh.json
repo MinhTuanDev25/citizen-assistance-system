@@ -1,0 +1,323 @@
+{
+ "source": "conversation_messages.message_metadata (retrieval_query, guidance.checklist) and message_citations of turns with retrieval_status=ok, exported read-only on 2026-10-30 from the dev database. No user message text. recorded_display_order_content_sha256 = indexed_pdf citations of message_metadata.citations, in stored order.",
+ "requests": [
+  {
+   "id": "R1",
+   "query": "Đăng ký khai sinh khai_sinh_v1 Thủ tục đăng ký khai sinh cấp xã thực hiện trực tiếp tại Trung tâm Phục vụ hành chính công có thẩm quyền hoặc trực tuyến qua Cổng dịch vụ công quốc gia, Ứng dụng định danh quốc gia. Cung cấp thông tin theo mẫu hộ tịch điện tử tương tác đăng ký khai sinh (hoặc hồ sơ đăng ký khai sinh theo quy định). Bản chụp hoặc bản sao điện tử các giấy tờ, tài liệu theo quy định kèm theo.",
+   "statements": [
+    "Cung cấp thông tin theo mẫu hộ tịch điện tử tương tác đăng ký khai sinh (hoặc hồ sơ đăng ký khai sinh theo quy định).",
+    "Bản chụp hoặc bản sao điện tử các giấy tờ, tài liệu theo quy định kèm theo."
+   ],
+   "procedure_version": "8.29937.277",
+   "message_ids": [
+    "2025665a-9fce-4f58-ae91-def8dcfd2669"
+   ],
+   "recorded_citations": [
+    {
+     "excerpt_sha256": "98910da4b0f85afc38d5806c62ff8e51d700bcccd70905529bb093244cf175a3",
+     "content_sha256": "7e867a041ad533c0a17a22cf47b3aeb37ac7c1859f8959d47ce4aea423fcaaa6",
+     "page_start": 10,
+     "page_end": 10,
+     "retrieval_score": 0.9494383
+    },
+    {
+     "excerpt_sha256": "58dcc743a65e4ed7b6f39a54667e6ad507295426501c0915f291cfb3cafe977e",
+     "content_sha256": "109d8084e5c85c2309274565d2e01d60b0621219f5a379c191b9d9e4cead0edd",
+     "page_start": 10,
+     "page_end": 10,
+     "retrieval_score": 0.9419743
+    },
+    {
+     "excerpt_sha256": "b52c9badc7a9bfb4aa953e15ab653ea90a469a86dcc050975643d1e456ab24d4",
+     "content_sha256": "dd9d5095b7f5cb28685a70ada8cb5cae3985ddd5caf50e82fd6611fd1ab2bacf",
+     "page_start": 10,
+     "page_end": 10,
+     "retrieval_score": 0.9102161
+    }
+   ],
+   "query_sha256": "6468ca75335d9bc73d42b4599f6ce444f19478a6dd0fd6f6d1df203930bbe02e",
+   "recorded_display_order_content_sha256": [
+    "7e867a041ad533c0a17a22cf47b3aeb37ac7c1859f8959d47ce4aea423fcaaa6",
+    "109d8084e5c85c2309274565d2e01d60b0621219f5a379c191b9d9e4cead0edd",
+    "dd9d5095b7f5cb28685a70ada8cb5cae3985ddd5caf50e82fd6611fd1ab2bacf"
+   ],
+   "recorded_display_order_consistent": true
+  },
+  {
+   "id": "R2",
+   "query": "Đăng ký khai sinh khai_sinh_v1 Thủ tục đăng ký khai sinh cho trẻ em được thực hiện tại Ủy ban nhân dân cấp xã nơi cư trú của người cha hoặc người mẹ, hoặc nơi trẻ đang cư trú đối với trẻ chưa xác định được cha mẹ, hoặc nơi lập biên bản với trẻ bị bỏ rơi. Trong thời hạn 60 ngày kể từ ngày sinh con, cha hoặc mẹ có trách nhiệm đăng ký khai sinh cho con. Tờ khai đăng ký khai sinh theo mẫu (nếu nộp trực tiếp hoặc gửi qua bưu chính) hoặc Mẫu hộ tịch điện tử tương tác đăng ký khai sinh (nếu nộp trực tuyến). Giấy chứng sinh; trường hợp không có Giấy chứng sinh thì nộp văn bản của người làm chứng xác nhận về việc sinh; nếu không có người làm chứng thì phải có giấy cam đoan về việc sinh. Xuất trình giấy tờ tùy thân còn giá trị sử dụng (Hộ chiếu, Căn cước công dân, Thẻ căn cước, Căn cước điện tử, Giấy chứng nhận căn cước...).",
+   "statements": [
+    "Tờ khai đăng ký khai sinh theo mẫu (nếu nộp trực tiếp hoặc gửi qua bưu chính) hoặc Mẫu hộ tịch điện tử tương tác đăng ký khai sinh (nếu nộp trực tuyến).",
+    "Giấy chứng sinh; trường hợp không có Giấy chứng sinh thì nộp văn bản của người làm chứng xác nhận về việc sinh; nếu không có người làm chứng thì phải có giấy cam đoan về việc sinh.",
+    "Xuất trình giấy tờ tùy thân còn giá trị sử dụng (Hộ chiếu, Căn cước công dân, Thẻ căn cước, Căn cước điện tử, Giấy chứng nhận căn cước...)."
+   ],
+   "procedure_version": "8.11601.723",
+   "message_ids": [
+    "8863c71e-c996-496e-9dcc-3468e792b2e7"
+   ],
+   "recorded_citations": [
+    {
+     "excerpt_sha256": "d5c26aa4cfe436d3e093e13799136d65b27123ffaa355d877349a853a4a6c2e8",
+     "content_sha256": "1dba4b475dcd49e8593a3cb10b7fa79da9a18f079d2798ae7a6190229d5327e3",
+     "page_start": 11,
+     "page_end": 12,
+     "retrieval_score": 0.93557847
+    },
+    {
+     "excerpt_sha256": "72b81cb42610357d2d998de8143da1210c549020ebe319a0d792b37ddea0a530",
+     "content_sha256": "f9d8a45cfc886667e046859837b7b9784d621d4754175e568558228354dd2ebb",
+     "page_start": 15,
+     "page_end": 15,
+     "retrieval_score": 0.93515575
+    },
+    {
+     "excerpt_sha256": "cd2f786f3f63586b7cd51b430c2abbcf2a6b5242b3040d3ed17413eac7b011e9",
+     "content_sha256": "569173c7ce74ce8a8f4247f3180694f742e7f4cb17bf89d5d03891b8929c3a0c",
+     "page_start": 12,
+     "page_end": 13,
+     "retrieval_score": 0.9283363
+    }
+   ],
+   "query_sha256": "72150466c23387a526f2fc0442c6b904bc899dbd64c7f99f48d99b26bde5e97b",
+   "recorded_display_order_content_sha256": [
+    "1dba4b475dcd49e8593a3cb10b7fa79da9a18f079d2798ae7a6190229d5327e3",
+    "f9d8a45cfc886667e046859837b7b9784d621d4754175e568558228354dd2ebb",
+    "569173c7ce74ce8a8f4247f3180694f742e7f4cb17bf89d5d03891b8929c3a0c"
+   ],
+   "recorded_display_order_consistent": true
+  },
+  {
+   "id": "R3",
+   "query": "Đăng ký khai sinh khai_sinh_v1 Thủ tục đăng ký khai sinh cấp xã tiếp nhận trực tiếp tại Trung tâm Phục vụ hành chính công, trực tuyến qua Cổng Dịch vụ công quốc gia / VNeID hoặc qua bưu chính. Quy trình gồm nộp hồ sơ, thẩm tra, lấy số định danh cá nhân từ CSDLQG về dân cư và cấp Giấy khai sinh. Tờ khai đăng ký khai sinh theo mẫu (nếu nộp trực tiếp hoặc gửi bưu chính) hoặc Mẫu hộ tịch điện tử tương tác (nếu nộp trực tuyến). Giấy chứng sinh (hoặc văn bản của người làm chứng xác nhận về việc sinh; nếu không có người làm chứng thì phải có giấy cam đoan về việc sinh). Không phải nộp bản giấy nếu đã có bản điện tử có ký số. Biên bản về việc trẻ bị bỏ rơi do cơ quan có thẩm quyền lập (trường hợp trẻ bị bỏ rơi). Văn bản xác nhận của cơ sở y tế đã thực hiện kỹ thuật hỗ trợ sinh sản cho việc mang thai hộ (trường hợp mang thai hộ). Văn bản ủy quyền được chứng thực theo quy định pháp luật (trường hợp ủy quyền, trừ trường hợp người đi khai sinh là ông, bà, người thân thích).",
+   "statements": [
+    "Tờ khai đăng ký khai sinh theo mẫu (nếu nộp trực tiếp hoặc gửi bưu chính) hoặc Mẫu hộ tịch điện tử tương tác (nếu nộp trực tuyến).",
+    "Giấy chứng sinh (hoặc văn bản của người làm chứng xác nhận về việc sinh; nếu không có người làm chứng thì phải có giấy cam đoan về việc sinh). Không phải nộp bản giấy nếu đã có bản điện tử có ký số.",
+    "Biên bản về việc trẻ bị bỏ rơi do cơ quan có thẩm quyền lập (trường hợp trẻ bị bỏ rơi).",
+    "Văn bản xác nhận của cơ sở y tế đã thực hiện kỹ thuật hỗ trợ sinh sản cho việc mang thai hộ (trường hợp mang thai hộ).",
+    "Văn bản ủy quyền được chứng thực theo quy định pháp luật (trường hợp ủy quyền, trừ trường hợp người đi khai sinh là ông, bà, người thân thích)."
+   ],
+   "procedure_version": "8.78952.279",
+   "message_ids": [
+    "a2bd9b1d-1bd3-499a-9da7-c6bc3f667574",
+    "a3f0d38c-ab4e-4cd8-bc58-fea142db60ad",
+    "d6c87f9e-cc5a-4144-91c8-2a3ed38ea606",
+    "a08cdf05-7e53-4891-8854-99aeee8d4069",
+    "8af4a789-e5ce-4fc4-8f89-bd2988c41cfa",
+    "8d30fa9c-17ad-4c46-812f-183211b241c8",
+    "85d25f0d-b62e-4787-bd28-2e7c72121614",
+    "6fdb684d-7e02-46d3-ac4e-b07e0d3e95af"
+   ],
+   "recorded_citations": [
+    {
+     "excerpt_sha256": "a7ba4cf2fcdccd43678efdc083f65cdfad500f16357507dfe2be3abb3f5a0c22",
+     "content_sha256": "0d5e0b7bbd30b8cb066e418aa9e8c379c5f12643be50c9e4e15e4365b23f7953",
+     "page_start": 12,
+     "page_end": 13,
+     "retrieval_score": 0.9402752
+    },
+    {
+     "excerpt_sha256": "315975c365f1495a27011969cfbe585bf5333325b27ab80e1a65a0ad3914ebf7",
+     "content_sha256": "306a6f1b330ec5aa11714f27e0153a533d2ebba6906ff425d313bd0dbd52e732",
+     "page_start": 12,
+     "page_end": 12,
+     "retrieval_score": 0.9339648
+    },
+    {
+     "excerpt_sha256": "808f5aa1c379fa1d1fec3c1d7273feed815f8c141a508b795382e1f85354329b",
+     "content_sha256": "79fe707cbda31026a494ad6daebfcd0c830e53e18851b37dbde50bbbcc525fa1",
+     "page_start": 15,
+     "page_end": 15,
+     "retrieval_score": 0.9316085
+    }
+   ],
+   "query_sha256": "67e6e5c67a2c2d2342ff807ce8dba101159eb506b94ffa1f466c001d0f1b9ad3",
+   "recorded_display_order_content_sha256": [
+    "0d5e0b7bbd30b8cb066e418aa9e8c379c5f12643be50c9e4e15e4365b23f7953",
+    "306a6f1b330ec5aa11714f27e0153a533d2ebba6906ff425d313bd0dbd52e732",
+    "79fe707cbda31026a494ad6daebfcd0c830e53e18851b37dbde50bbbcc525fa1"
+   ],
+   "recorded_display_order_consistent": true
+  },
+  {
+   "id": "R4",
+   "query": "Đăng ký khai sinh khai_sinh_v1 Xuất trình giấy tờ tùy thân còn giá trị sử dụng (Hộ chiếu/Thẻ căn cước công dân/Thẻ căn cước/Căn cước điện tử/Giấy chứng nhận căn cước hoặc giấy tờ khác có dán ảnh) Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư trú từ Cơ sở dữ liệu quốc gia về dân cư) Tờ khai đăng ký khai sinh theo mẫu Tờ khai đăng ký khai sinh",
+   "statements": [
+    "Xuất trình giấy tờ tùy thân còn giá trị sử dụng (Hộ chiếu/Thẻ căn cước công dân/Thẻ căn cước/Căn cước điện tử/Giấy chứng nhận căn cước hoặc giấy tờ khác có dán ảnh)",
+    "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư trú từ Cơ sở dữ liệu quốc gia về dân cư)",
+    "Tờ khai đăng ký khai sinh theo mẫu",
+    "Tờ khai đăng ký khai sinh"
+   ],
+   "procedure_version": "8.56970.897",
+   "message_ids": [
+    "30031d9f-f5a1-45ef-ac12-b6231469716f"
+   ],
+   "recorded_citations": [
+    {
+     "excerpt_sha256": "27d141af82e0fd612261e4938bac17bb6b3eac17f724b471ca0b41ed08a5cead",
+     "content_sha256": "a1a77d8c2aa6ee230d53ad64aa66345b38af8f288a3a0ebf9963891c9b76c332",
+     "page_start": 19,
+     "page_end": 19,
+     "retrieval_score": 0.9309531
+    },
+    {
+     "excerpt_sha256": "f8222d5e6e4a8dc3ebdab547ebd80d44672c66140d767b3ffb78937501021691",
+     "content_sha256": "f1c45257d56277e458bef22b6855fd87d22654617f3bebe440a52b6bf40fe58a",
+     "page_start": 13,
+     "page_end": 13,
+     "retrieval_score": 0.9271961
+    },
+    {
+     "excerpt_sha256": "e4a37898132f32f3926e10709372ef62525ec4dcf67a3b422932f974a1edb8f8",
+     "content_sha256": "bc9ae391770e6b34eccb3139339531f8cc1f5530f8eae1e13c8a53ceabf9933c",
+     "page_start": 13,
+     "page_end": 13,
+     "retrieval_score": 0.92342436
+    }
+   ],
+   "query_sha256": "a6a1b50a930772230fa16cf17e39bf62ea36af7db808ec6c8e24ec9832c9f79f",
+   "recorded_display_order_content_sha256": [
+    "a1a77d8c2aa6ee230d53ad64aa66345b38af8f288a3a0ebf9963891c9b76c332",
+    "f1c45257d56277e458bef22b6855fd87d22654617f3bebe440a52b6bf40fe58a",
+    "bc9ae391770e6b34eccb3139339531f8cc1f5530f8eae1e13c8a53ceabf9933c"
+   ],
+   "recorded_display_order_consistent": true
+  },
+  {
+   "id": "R5",
+   "query": "Đăng ký khai sinh khai_sinh_v1 Xuất trình giấy tờ tùy thân còn giá trị sử dụng (Hộ chiếu/Thẻ căn cước công dân/Thẻ căn cước/Căn cước điện tử/Giấy chứng nhận căn cước hoặc giấy tờ khác có dán ảnh) Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư trú từ Cơ sở dữ liệu quốc gia về dân cư) Tờ khai đăng ký khai sinh theo mẫu Biên bản về việc trẻ bị bỏ rơi do cơ quan có thẩm quyền lập Tờ khai đăng ký khai sinh",
+   "statements": [
+    "Xuất trình giấy tờ tùy thân còn giá trị sử dụng (Hộ chiếu/Thẻ căn cước công dân/Thẻ căn cước/Căn cước điện tử/Giấy chứng nhận căn cước hoặc giấy tờ khác có dán ảnh)",
+    "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư trú từ Cơ sở dữ liệu quốc gia về dân cư)",
+    "Tờ khai đăng ký khai sinh theo mẫu",
+    "Biên bản về việc trẻ bị bỏ rơi do cơ quan có thẩm quyền lập",
+    "Tờ khai đăng ký khai sinh"
+   ],
+   "procedure_version": "8.56970.897",
+   "message_ids": [
+    "9b9de23f-b6b0-4cfb-b32c-5b51a492a166"
+   ],
+   "recorded_citations": [
+    {
+     "excerpt_sha256": "f8222d5e6e4a8dc3ebdab547ebd80d44672c66140d767b3ffb78937501021691",
+     "content_sha256": "f1c45257d56277e458bef22b6855fd87d22654617f3bebe440a52b6bf40fe58a",
+     "page_start": 13,
+     "page_end": 13,
+     "retrieval_score": 0.9278812
+    },
+    {
+     "excerpt_sha256": "27d141af82e0fd612261e4938bac17bb6b3eac17f724b471ca0b41ed08a5cead",
+     "content_sha256": "a1a77d8c2aa6ee230d53ad64aa66345b38af8f288a3a0ebf9963891c9b76c332",
+     "page_start": 19,
+     "page_end": 19,
+     "retrieval_score": 0.9243375
+    },
+    {
+     "excerpt_sha256": "a7ba4cf2fcdccd43678efdc083f65cdfad500f16357507dfe2be3abb3f5a0c22",
+     "content_sha256": "0d5e0b7bbd30b8cb066e418aa9e8c379c5f12643be50c9e4e15e4365b23f7953",
+     "page_start": 12,
+     "page_end": 13,
+     "retrieval_score": 0.92257345
+    }
+   ],
+   "query_sha256": "0b1068a95705f497965f8f5e1afd6f52a4620af6dc1f9585905d337b207a9dfc",
+   "recorded_display_order_content_sha256": [
+    "f1c45257d56277e458bef22b6855fd87d22654617f3bebe440a52b6bf40fe58a",
+    "a1a77d8c2aa6ee230d53ad64aa66345b38af8f288a3a0ebf9963891c9b76c332",
+    "0d5e0b7bbd30b8cb066e418aa9e8c379c5f12643be50c9e4e15e4365b23f7953"
+   ],
+   "recorded_display_order_consistent": true
+  },
+  {
+   "id": "R6",
+   "query": "Đăng ký khai sinh khai_sinh_v1 Xuất trình giấy tờ tùy thân còn giá trị sử dụng (Hộ chiếu/Thẻ căn cước công dân/Thẻ căn cước/Căn cước điện tử/Giấy chứng nhận căn cước hoặc giấy tờ khác có dán ảnh) Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư trú từ Cơ sở dữ liệu quốc gia về dân cư) Tờ khai đăng ký khai sinh theo mẫu Văn bản của người làm chứng xác nhận về việc sinh Tờ khai đăng ký khai sinh",
+   "statements": [
+    "Xuất trình giấy tờ tùy thân còn giá trị sử dụng (Hộ chiếu/Thẻ căn cước công dân/Thẻ căn cước/Căn cước điện tử/Giấy chứng nhận căn cước hoặc giấy tờ khác có dán ảnh)",
+    "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư trú từ Cơ sở dữ liệu quốc gia về dân cư)",
+    "Tờ khai đăng ký khai sinh theo mẫu",
+    "Văn bản của người làm chứng xác nhận về việc sinh",
+    "Tờ khai đăng ký khai sinh"
+   ],
+   "procedure_version": "8.36898.196",
+   "message_ids": [
+    "39b13c1e-5c55-4980-970d-cf57bd307bd4"
+   ],
+   "recorded_citations": [
+    {
+     "excerpt_sha256": "f8222d5e6e4a8dc3ebdab547ebd80d44672c66140d767b3ffb78937501021691",
+     "content_sha256": "f1c45257d56277e458bef22b6855fd87d22654617f3bebe440a52b6bf40fe58a",
+     "page_start": 13,
+     "page_end": 13,
+     "retrieval_score": 0.9306587
+    },
+    {
+     "excerpt_sha256": "27d141af82e0fd612261e4938bac17bb6b3eac17f724b471ca0b41ed08a5cead",
+     "content_sha256": "a1a77d8c2aa6ee230d53ad64aa66345b38af8f288a3a0ebf9963891c9b76c332",
+     "page_start": 19,
+     "page_end": 19,
+     "retrieval_score": 0.9298712
+    },
+    {
+     "excerpt_sha256": "e4a37898132f32f3926e10709372ef62525ec4dcf67a3b422932f974a1edb8f8",
+     "content_sha256": "bc9ae391770e6b34eccb3139339531f8cc1f5530f8eae1e13c8a53ceabf9933c",
+     "page_start": 13,
+     "page_end": 13,
+     "retrieval_score": 0.9227534
+    }
+   ],
+   "query_sha256": "3048729b788d82abd8c142a057daba6d931fc2260f72d2dccadc96eb50a992c2",
+   "recorded_display_order_content_sha256": [
+    "f1c45257d56277e458bef22b6855fd87d22654617f3bebe440a52b6bf40fe58a",
+    "a1a77d8c2aa6ee230d53ad64aa66345b38af8f288a3a0ebf9963891c9b76c332",
+    "bc9ae391770e6b34eccb3139339531f8cc1f5530f8eae1e13c8a53ceabf9933c"
+   ],
+   "recorded_display_order_consistent": true
+  },
+  {
+   "id": "R7",
+   "query": "Đăng ký khai sinh khai_sinh_v1 Xuất trình giấy tờ tùy thân còn giá trị sử dụng (Hộ chiếu/Thẻ căn cước công dân/Thẻ căn cước/Căn cước điện tử/Giấy chứng nhận căn cước hoặc giấy tờ khác có dán ảnh) Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư trú từ Cơ sở dữ liệu quốc gia về dân cư) Thông tin cung cấp theo Mẫu hộ tịch điện tử tương tác đăng ký khai sinh kèm bản chụp hoặc bản sao điện tử các giấy tờ theo quy định Văn bản của người làm chứng xác nhận về việc sinh Biên bản về việc trẻ bị bỏ rơi do cơ quan có thẩm quyền lập Mẫu hộ tịch điện tử tương tác đăng ký khai sinh",
+   "statements": [
+    "Xuất trình giấy tờ tùy thân còn giá trị sử dụng (Hộ chiếu/Thẻ căn cước công dân/Thẻ căn cước/Căn cước điện tử/Giấy chứng nhận căn cước hoặc giấy tờ khác có dán ảnh)",
+    "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư trú từ Cơ sở dữ liệu quốc gia về dân cư)",
+    "Thông tin cung cấp theo Mẫu hộ tịch điện tử tương tác đăng ký khai sinh kèm bản chụp hoặc bản sao điện tử các giấy tờ theo quy định",
+    "Văn bản của người làm chứng xác nhận về việc sinh",
+    "Biên bản về việc trẻ bị bỏ rơi do cơ quan có thẩm quyền lập",
+    "Mẫu hộ tịch điện tử tương tác đăng ký khai sinh"
+   ],
+   "procedure_version": "8.36898.196",
+   "message_ids": [
+    "600cf21e-f873-442d-bf30-074566311b63",
+    "f02814d0-7563-42fe-950d-c7bf987f6584"
+   ],
+   "recorded_citations": [
+    {
+     "excerpt_sha256": "a7ba4cf2fcdccd43678efdc083f65cdfad500f16357507dfe2be3abb3f5a0c22",
+     "content_sha256": "0d5e0b7bbd30b8cb066e418aa9e8c379c5f12643be50c9e4e15e4365b23f7953",
+     "page_start": 12,
+     "page_end": 13,
+     "retrieval_score": 0.93148124
+    },
+    {
+     "excerpt_sha256": "27d141af82e0fd612261e4938bac17bb6b3eac17f724b471ca0b41ed08a5cead",
+     "content_sha256": "a1a77d8c2aa6ee230d53ad64aa66345b38af8f288a3a0ebf9963891c9b76c332",
+     "page_start": 19,
+     "page_end": 19,
+     "retrieval_score": 0.92774653
+    },
+    {
+     "excerpt_sha256": "f8222d5e6e4a8dc3ebdab547ebd80d44672c66140d767b3ffb78937501021691",
+     "content_sha256": "f1c45257d56277e458bef22b6855fd87d22654617f3bebe440a52b6bf40fe58a",
+     "page_start": 13,
+     "page_end": 13,
+     "retrieval_score": 0.9267904
+    }
+   ],
+   "query_sha256": "db97480f12b3b6636e39663d94f3a49df546dae6a572088376848912aea7f0e5",
+   "recorded_display_order_content_sha256": [
+    "0d5e0b7bbd30b8cb066e418aa9e8c379c5f12643be50c9e4e15e4365b23f7953",
+    "a1a77d8c2aa6ee230d53ad64aa66345b38af8f288a3a0ebf9963891c9b76c332",
+    "f1c45257d56277e458bef22b6855fd87d22654617f3bebe440a52b6bf40fe58a"
+   ],
+   "recorded_display_order_consistent": true
+  }
+ ]
+}
