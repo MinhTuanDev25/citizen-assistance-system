@@ -212,17 +212,32 @@ On a clean stop, `pg-lease` releases the lease (renamed `workspace.lease.release
 
 ## Embedding model and CPU
 
-The ai-service picks the embedding model variant from the CPU it runs on (`apps/ai-service/app/indexing/embed.py`, `select_embedding_variant`):
+`EMBEDDING_VARIANT` chooses the ONNX graph of `intfloat/multilingual-e5-small` (same pinned revision, tokenizer, 384 dimensions, `query:` / `passage:` prefixes, mean pooling and normalization in both). The ai-service applies it in `apps/ai-service/app/indexing/embed.py` (`select_embedding_variant`), from the real CPU flags:
 
-| CPU | Variant | Manifest |
+| `EMBEDDING_VARIANT` | CPU with AVX-512 VNNI | CPU without it (e.g. AMD EPYC 7B13 / Zen 3, arm64) |
 |---|---|---|
-| x86 with `avx512f`, `avx512bw`, `avx512dq`, `avx512vl` and `avx512vnni` | int8 (`onnx/model_qint8_avx512_vnni.onnx`, 118 MB) | `models/embedding.manifest.int8-vnni.json` |
-| arm64 / aarch64 | fp32 (`onnx/model.onnx`, 470 MB) | `models/embedding.manifest.fp32.json` |
-| any other x86 (no AVX-512 VNNI) | **refused** (`embedding_cpu_unsupported`) | — |
+| `fp32` (**image default**) | fp32 (`onnx/model.onnx`, 470 MB) | fp32 |
+| `int8-vnni` | int8 (`onnx/model_qint8_avx512_vnni.onnx`, 118 MB) | **refused** (`embedding_cpu_unsupported`) |
+| `auto` | int8 | fp32 |
 
-- Fetch the model **on the host that will run the image**: `deploy/runpod/fetch_models.sh --variant auto <dest>`. On the RunPod pod, run it against `/workspace/cas/models/embedding`.
-- `entrypoint.sh` validates the installed model with the ai-service's own rules (variant for this CPU + SHA-256 of every file). A model fetched for another CPU stops the boot with the variant this host needs. Smoke tests N9 and N10 cover this.
-- **RunPod requirement (8.1-B):** the GPU pod's CPU must support AVX-512 VNNI (for example AMD EPYC Genoa / Zen 4, or Intel Xeon Cascade Lake or newer). Hosts without it, such as AMD EPYC Milan / Zen 3, cannot run the indexing pipeline with the current ai-service code. Check `grep -o avx512_vnni /proc/cpuinfo` on the pod before preparing the volume.
+Manifests: `models/embedding.manifest.fp32.json`, `models/embedding.manifest.int8-vnni.json` (SHA-256 of every file).
+
+- **Why fp32 is the default:** a RunPod pod can restart on another host CPU. With `auto`, a pod that moves between a VNNI and a non-VNNI host would need the other model. fp32 runs on every x86_64 (AVX2) and arm64 host, so the model and the vector identity stay the same.
+- **Vectors of the two variants are not mixed:** each index generation stores the model checksum (`embedding_checksum`). Retrieval only uses chunks whose checksum equals the running model's, and answers `embedding_identity_mismatch` otherwise. Changing the variant on a volume that already has indexed documents therefore needs a reindex (see below).
+- Fetch the model for the variant you run: `deploy/runpod/fetch_models.sh --variant fp32 /workspace/cas/models/embedding`. `--variant auto` applies the rule to the machine running the script. `EMBEDDING_VARIANT` is read when `--variant` and `CAS_MODEL_VARIANT` are unset.
+- `entrypoint.sh` validates `EMBEDDING_VARIANT`, then checks the installed model with the ai-service's own rules (variant on this CPU + SHA-256 of every file). The log line `embedding model verified ...` shows the variant, the CPU model and `avx512_vnni=yes|no`.
+- `EMBEDDING_CPU_FLAGS` replaces the real CPU flags in the ai-service. It is for tests only: `entrypoint.sh` refuses it unless `CAS_ALLOW_CPU_FLAGS_OVERRIDE=true`.
+- Tests: smoke N9–N13 and V1, `tests/embedding_in_image.sh` (real inference of both graphs on the CI runner), `tests/fetch_models_test.sh` FM10–FM12, and the retrieval comparison in `eval/`.
+
+### Changing the variant on a volume with indexed documents
+
+Never switch in place:
+
+1. `backup.sh` (pg_dump + Qdrant snapshot).
+2. Fetch the new variant's model into a new directory, set `EMBEDDING_VARIANT` and `EMBEDDING_MODEL_DIR`, restart.
+3. Reindex each document from the admin page. Until a document is reindexed, retrieval answers `embedding_identity_mismatch` for it instead of returning vectors of the other model.
+4. Rollback: set the previous `EMBEDDING_VARIANT` and `EMBEDDING_MODEL_DIR` back and reindex again, or restore the backup of step 1. A reindex marks the previous generation `SUPERSEDED`; only failed generations are cleaned from Qdrant, so do not count on the old vectors being usable: the backup is the rollback.
+5. Procedure activation is not touched by any of these steps; review and Activate stay manual.
 
 ## LLM provider
 

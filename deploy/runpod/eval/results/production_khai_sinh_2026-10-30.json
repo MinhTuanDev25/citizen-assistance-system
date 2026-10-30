@@ -1,0 +1,4350 @@
+{
+ "provenance": {
+  "cas_revision": "1a902f799532279ca8c8edb61622c12bd1edacf4+worktree",
+  "spec_sha256": "ec59c954ec7869e16cab05f39e5211ca10615d96d91cbc0797e43fbce99415ac",
+  "requests_sha256": "a97c653e9e211f814cb3c5d5d814bc73cd7135336a513f2b2ce640ea4f834b26",
+  "corpus_fingerprint_sha256": "f764d32ac6332d93fe5a39b6c718cb82320156b69283717b51ba568308f2b8e9",
+  "corpus_fingerprint_rule": "sha256 of '<chunk id>:<text_sha256>' lines, rows ordered by page_start, id",
+  "generation_id": "d6872f43-2882-4398-8ab1-e14d80cc6843",
+  "chunks": 87,
+  "models": {
+   "live-fp32": {
+    "variant": "fp32",
+    "checksum": "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665"
+   },
+   "offline-fp32": {
+    "variant": "fp32",
+    "checksum": "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665"
+   },
+   "offline-int8": {
+    "variant": "qint8_avx512_vnni",
+    "checksum": "dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2d88"
+   }
+  },
+  "int8_cpu_flags_simulated": true,
+  "machine": "aarch64",
+  "onnxruntime": "1.20.1",
+  "stored_vs_reembedded_fp32_cosine_min": 1.0
+ },
+ "thresholds": {
+  "P1_live_status": {
+   "pass": true,
+   "evidence": "7/7 ok"
+  },
+  "P2_harness_fidelity": {
+   "pass": true,
+   "evidence": "22/22 identical hit lists"
+  },
+  "P3_statement_coverage": {
+   "pass": false,
+   "evidence": "coverage@12 0.767"
+  },
+  "P5_recorded_citations": {
+   "pass": true,
+   "evidence": "adjusted after first run: 15/15 comparable citations in live top-12; 6 cite text of another generation, not evaluated. Original definition: 15/21 = FAIL"
+  },
+  "Q1_questions_hit5": {
+   "pass": true,
+   "evidence": "Hit@5 1.0 (any labelled topic; Complete@5 0.933, TopicCoverage@5 0.95)"
+  },
+  "P4_variant_coverage": {
+   "pass": true,
+   "evidence": "fp32 0.767 vs int8 0.733"
+  },
+  "Q2_questions_variant": {
+   "pass": true,
+   "evidence": "Hit@5 1.0 vs 1.0, MRR@10 0.922 vs 0.917"
+  }
+ },
+ "metrics": {
+  "live-fp32": {
+   "requests": {
+    "per_request": {
+     "R1": {
+      "status": "ok",
+      "coverage12": 1.0,
+      "score_top3_coverage": 1.0
+     },
+     "R2": {
+      "status": "ok",
+      "coverage12": 0.667,
+      "score_top3_coverage": 0.333
+     },
+     "R3": {
+      "status": "ok",
+      "coverage12": 1.0,
+      "score_top3_coverage": 0.6
+     },
+     "R4": {
+      "status": "ok",
+      "coverage12": 0.75,
+      "score_top3_coverage": 0.25
+     },
+     "R5": {
+      "status": "ok",
+      "coverage12": 0.4,
+      "score_top3_coverage": 0.4
+     },
+     "R6": {
+      "status": "ok",
+      "coverage12": 0.8,
+      "score_top3_coverage": 0.2
+     },
+     "R7": {
+      "status": "ok",
+      "coverage12": 0.833,
+      "score_top3_coverage": 0.5
+     }
+    },
+    "statement_coverage12": 0.767,
+    "statement_score_top3_coverage": 0.433,
+    "statements": 30,
+    "status_ok": 7
+   },
+   "questions": {
+    "hit5": 1.0,
+    "complete5": 0.933,
+    "topic_coverage5": 0.95,
+    "topics": 20,
+    "mrr10": 0.922,
+    "per_question": {
+     "Q1": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "chungsinh",
+       "tuythan"
+      ],
+      "topics_missing_top5": [
+       "tokhai"
+      ]
+     },
+     "Q2": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "thoihan"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q3": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "noinop"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q4": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "lamchung",
+       "camdoan"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q5": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 2,
+      "topics_in_top5": [
+       "lephi"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q6": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "trinhtu"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q7": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "tokhai",
+       "mauhtdt"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q8": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "bori"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q9": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "trachnhiem"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q10": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "mangthaiho"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q11": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "uyquyen"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q12": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "tuythan"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q13": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 3,
+      "topics_in_top5": [
+       "cutru"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q14": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "camdoan"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q15": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "mauhtdt",
+       "banchup"
+      ],
+      "topics_missing_top5": []
+     }
+    }
+   }
+  },
+  "offline-fp32": {
+   "requests": {
+    "per_request": {
+     "R1": {
+      "status": "ok",
+      "coverage12": 1.0,
+      "score_top3_coverage": 1.0
+     },
+     "R2": {
+      "status": "ok",
+      "coverage12": 0.667,
+      "score_top3_coverage": 0.333
+     },
+     "R3": {
+      "status": "ok",
+      "coverage12": 1.0,
+      "score_top3_coverage": 0.6
+     },
+     "R4": {
+      "status": "ok",
+      "coverage12": 0.75,
+      "score_top3_coverage": 0.25
+     },
+     "R5": {
+      "status": "ok",
+      "coverage12": 0.4,
+      "score_top3_coverage": 0.4
+     },
+     "R6": {
+      "status": "ok",
+      "coverage12": 0.8,
+      "score_top3_coverage": 0.2
+     },
+     "R7": {
+      "status": "ok",
+      "coverage12": 0.833,
+      "score_top3_coverage": 0.5
+     }
+    },
+    "statement_coverage12": 0.767,
+    "statement_score_top3_coverage": 0.433,
+    "statements": 30,
+    "status_ok": 7
+   },
+   "questions": {
+    "hit5": 1.0,
+    "complete5": 0.933,
+    "topic_coverage5": 0.95,
+    "topics": 20,
+    "mrr10": 0.922,
+    "per_question": {
+     "Q1": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "chungsinh",
+       "tuythan"
+      ],
+      "topics_missing_top5": [
+       "tokhai"
+      ]
+     },
+     "Q2": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "thoihan"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q3": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "noinop"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q4": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "lamchung",
+       "camdoan"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q5": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 2,
+      "topics_in_top5": [
+       "lephi"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q6": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "trinhtu"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q7": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "tokhai",
+       "mauhtdt"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q8": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "bori"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q9": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "trachnhiem"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q10": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "mangthaiho"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q11": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "uyquyen"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q12": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "tuythan"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q13": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 3,
+      "topics_in_top5": [
+       "cutru"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q14": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "camdoan"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q15": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "mauhtdt",
+       "banchup"
+      ],
+      "topics_missing_top5": []
+     }
+    }
+   }
+  },
+  "offline-int8": {
+   "requests": {
+    "per_request": {
+     "R1": {
+      "status": "ok",
+      "coverage12": 1.0,
+      "score_top3_coverage": 1.0
+     },
+     "R2": {
+      "status": "ok",
+      "coverage12": 1.0,
+      "score_top3_coverage": 0.333
+     },
+     "R3": {
+      "status": "ok",
+      "coverage12": 1.0,
+      "score_top3_coverage": 0.8
+     },
+     "R4": {
+      "status": "ok",
+      "coverage12": 0.75,
+      "score_top3_coverage": 0.25
+     },
+     "R5": {
+      "status": "ok",
+      "coverage12": 0.4,
+      "score_top3_coverage": 0.4
+     },
+     "R6": {
+      "status": "ok",
+      "coverage12": 0.4,
+      "score_top3_coverage": 0.2
+     },
+     "R7": {
+      "status": "ok",
+      "coverage12": 0.833,
+      "score_top3_coverage": 0.5
+     }
+    },
+    "statement_coverage12": 0.733,
+    "statement_score_top3_coverage": 0.467,
+    "statements": 30,
+    "status_ok": 7
+   },
+   "questions": {
+    "hit5": 1.0,
+    "complete5": 0.933,
+    "topic_coverage5": 0.95,
+    "topics": 20,
+    "mrr10": 0.917,
+    "per_question": {
+     "Q1": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "chungsinh",
+       "tuythan"
+      ],
+      "topics_missing_top5": [
+       "tokhai"
+      ]
+     },
+     "Q2": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "thoihan"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q3": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 2,
+      "topics_in_top5": [
+       "noinop"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q4": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "lamchung",
+       "camdoan"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q5": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "lephi"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q6": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "trinhtu"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q7": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "tokhai",
+       "mauhtdt"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q8": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "bori"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q9": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "trachnhiem"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q10": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "mangthaiho"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q11": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "uyquyen"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q12": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "tuythan"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q13": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 4,
+      "topics_in_top5": [
+       "cutru"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q14": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "camdoan"
+      ],
+      "topics_missing_top5": []
+     },
+     "Q15": {
+      "status": "ok",
+      "reason": "",
+      "first_relevant_rank": 1,
+      "topics_in_top5": [
+       "mauhtdt",
+       "banchup"
+      ],
+      "topics_missing_top5": []
+     }
+    }
+   }
+  }
+ },
+ "pairs": {
+  "offline-fp32 vs offline-int8": {
+   "top12_overlap_mean": 0.794,
+   "top3_same_set_share": 0.636,
+   "status_same_share": 1.0
+  }
+ },
+ "recorded_citations": [
+  {
+   "request": "R1",
+   "result": "text_not_in_generation"
+  },
+  {
+   "request": "R1",
+   "result": "text_not_in_generation"
+  },
+  {
+   "request": "R1",
+   "result": "text_not_in_generation"
+  },
+  {
+   "request": "R2",
+   "result": "text_not_in_generation"
+  },
+  {
+   "request": "R2",
+   "result": "text_not_in_generation"
+  },
+  {
+   "request": "R2",
+   "result": "text_not_in_generation"
+  },
+  {
+   "request": "R3",
+   "result": "in_top12",
+   "recorded_score": 0.9403,
+   "live_score": 0.9403
+  },
+  {
+   "request": "R3",
+   "result": "in_top12",
+   "recorded_score": 0.934,
+   "live_score": 0.934
+  },
+  {
+   "request": "R3",
+   "result": "in_top12",
+   "recorded_score": 0.9316,
+   "live_score": 0.9316
+  },
+  {
+   "request": "R4",
+   "result": "in_top12",
+   "recorded_score": 0.931,
+   "live_score": 0.931
+  },
+  {
+   "request": "R4",
+   "result": "in_top12",
+   "recorded_score": 0.9272,
+   "live_score": 0.9272
+  },
+  {
+   "request": "R4",
+   "result": "in_top12",
+   "recorded_score": 0.9234,
+   "live_score": 0.9234
+  },
+  {
+   "request": "R5",
+   "result": "in_top12",
+   "recorded_score": 0.9279,
+   "live_score": 0.9279
+  },
+  {
+   "request": "R5",
+   "result": "in_top12",
+   "recorded_score": 0.9243,
+   "live_score": 0.9243
+  },
+  {
+   "request": "R5",
+   "result": "in_top12",
+   "recorded_score": 0.9226,
+   "live_score": 0.9226
+  },
+  {
+   "request": "R6",
+   "result": "in_top12",
+   "recorded_score": 0.9307,
+   "live_score": 0.9307
+  },
+  {
+   "request": "R6",
+   "result": "in_top12",
+   "recorded_score": 0.9299,
+   "live_score": 0.9299
+  },
+  {
+   "request": "R6",
+   "result": "in_top12",
+   "recorded_score": 0.9228,
+   "live_score": 0.9228
+  },
+  {
+   "request": "R7",
+   "result": "in_top12",
+   "recorded_score": 0.9315,
+   "live_score": 0.9315
+  },
+  {
+   "request": "R7",
+   "result": "in_top12",
+   "recorded_score": 0.9277,
+   "live_score": 0.9277
+  },
+  {
+   "request": "R7",
+   "result": "in_top12",
+   "recorded_score": 0.9268,
+   "live_score": 0.9268
+  }
+ ],
+ "missed_statements": {
+  "live-fp32": [
+   {
+    "request": "R2",
+    "topics": [
+     "tuythan"
+    ],
+    "statement": "Xuất trình giấy tờ tùy thân còn giá trị sử dụng (Hộ chiếu, Căn cước công dân, Thẻ căn cước, Căn cước điện tử, Giấy chứng"
+   },
+   {
+    "request": "R4",
+    "topics": [
+     "cutru"
+    ],
+    "statement": "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư "
+   },
+   {
+    "request": "R5",
+    "topics": [
+     "cutru"
+    ],
+    "statement": "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư "
+   },
+   {
+    "request": "R5",
+    "topics": [
+     "tokhai"
+    ],
+    "statement": "Tờ khai đăng ký khai sinh theo mẫu"
+   },
+   {
+    "request": "R5",
+    "topics": [
+     "tokhai"
+    ],
+    "statement": "Tờ khai đăng ký khai sinh"
+   },
+   {
+    "request": "R6",
+    "topics": [
+     "cutru"
+    ],
+    "statement": "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư "
+   },
+   {
+    "request": "R7",
+    "topics": [
+     "cutru"
+    ],
+    "statement": "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư "
+   }
+  ],
+  "offline-fp32": [
+   {
+    "request": "R2",
+    "topics": [
+     "tuythan"
+    ],
+    "statement": "Xuất trình giấy tờ tùy thân còn giá trị sử dụng (Hộ chiếu, Căn cước công dân, Thẻ căn cước, Căn cước điện tử, Giấy chứng"
+   },
+   {
+    "request": "R4",
+    "topics": [
+     "cutru"
+    ],
+    "statement": "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư "
+   },
+   {
+    "request": "R5",
+    "topics": [
+     "cutru"
+    ],
+    "statement": "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư "
+   },
+   {
+    "request": "R5",
+    "topics": [
+     "tokhai"
+    ],
+    "statement": "Tờ khai đăng ký khai sinh theo mẫu"
+   },
+   {
+    "request": "R5",
+    "topics": [
+     "tokhai"
+    ],
+    "statement": "Tờ khai đăng ký khai sinh"
+   },
+   {
+    "request": "R6",
+    "topics": [
+     "cutru"
+    ],
+    "statement": "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư "
+   },
+   {
+    "request": "R7",
+    "topics": [
+     "cutru"
+    ],
+    "statement": "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư "
+   }
+  ],
+  "offline-int8": [
+   {
+    "request": "R4",
+    "topics": [
+     "cutru"
+    ],
+    "statement": "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư "
+   },
+   {
+    "request": "R5",
+    "topics": [
+     "cutru"
+    ],
+    "statement": "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư "
+   },
+   {
+    "request": "R5",
+    "topics": [
+     "tokhai"
+    ],
+    "statement": "Tờ khai đăng ký khai sinh theo mẫu"
+   },
+   {
+    "request": "R5",
+    "topics": [
+     "tokhai"
+    ],
+    "statement": "Tờ khai đăng ký khai sinh"
+   },
+   {
+    "request": "R6",
+    "topics": [
+     "cutru"
+    ],
+    "statement": "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư "
+   },
+   {
+    "request": "R6",
+    "topics": [
+     "tokhai"
+    ],
+    "statement": "Tờ khai đăng ký khai sinh theo mẫu"
+   },
+   {
+    "request": "R6",
+    "topics": [
+     "tokhai"
+    ],
+    "statement": "Tờ khai đăng ký khai sinh"
+   },
+   {
+    "request": "R7",
+    "topics": [
+     "cutru"
+    ],
+    "statement": "Giấy tờ có giá trị chứng minh nơi cư trú (trong trường hợp cơ quan đăng ký hộ tịch không thể khai thác thông tin nơi cư "
+   }
+  ]
+ },
+ "labels": {
+  "tokhai": [
+   {
+    "chunk_id": "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+    "page": 12
+   },
+   {
+    "chunk_id": "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+    "page": 16
+   },
+   {
+    "chunk_id": "c1d8c1b8-6fa2-5fa2-9270-098120c13501",
+    "page": 17
+   }
+  ],
+  "mauhtdt": [
+   {
+    "chunk_id": "dbc0330a-981a-58bc-891c-5b0102f48291",
+    "page": 10
+   },
+   {
+    "chunk_id": "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+    "page": 12
+   },
+   {
+    "chunk_id": "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+    "page": 16
+   },
+   {
+    "chunk_id": "af13ab11-ca87-5588-906f-3c060698635e",
+    "page": 19
+   },
+   {
+    "chunk_id": "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+    "page": 20
+   }
+  ],
+  "chungsinh": [
+   {
+    "chunk_id": "9306ca28-6912-5262-af8b-61fbe437bea5",
+    "page": 12
+   },
+   {
+    "chunk_id": "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+    "page": 12
+   }
+  ],
+  "lamchung": [
+   {
+    "chunk_id": "9306ca28-6912-5262-af8b-61fbe437bea5",
+    "page": 12
+   },
+   {
+    "chunk_id": "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+    "page": 12
+   }
+  ],
+  "camdoan": [
+   {
+    "chunk_id": "9306ca28-6912-5262-af8b-61fbe437bea5",
+    "page": 12
+   }
+  ],
+  "bori": [
+   {
+    "chunk_id": "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+    "page": 11
+   },
+   {
+    "chunk_id": "7afea252-ebd5-5285-81b8-556c43957ca0",
+    "page": 12
+   },
+   {
+    "chunk_id": "9306ca28-6912-5262-af8b-61fbe437bea5",
+    "page": 12
+   },
+   {
+    "chunk_id": "d7aba136-3670-5357-b29e-7da813fe65ac",
+    "page": 12
+   },
+   {
+    "chunk_id": "b18b7d53-55fa-562f-a99f-56d12a548598",
+    "page": 15
+   }
+  ],
+  "mangthaiho": [
+   {
+    "chunk_id": "9306ca28-6912-5262-af8b-61fbe437bea5",
+    "page": 12
+   },
+   {
+    "chunk_id": "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+    "page": 13
+   }
+  ],
+  "uyquyen": [
+   {
+    "chunk_id": "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+    "page": 12
+   },
+   {
+    "chunk_id": "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+    "page": 13
+   },
+   {
+    "chunk_id": "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+    "page": 14
+   }
+  ],
+  "tuythan": [
+   {
+    "chunk_id": "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+    "page": 13
+   },
+   {
+    "chunk_id": "b7083f9a-5221-5c7f-be60-488be27913be",
+    "page": 13
+   },
+   {
+    "chunk_id": "41364f7e-1bc9-5265-9ec5-cbc4ac406d58",
+    "page": 18
+   },
+   {
+    "chunk_id": "b35cc23c-3164-5535-9bba-b73d7bdb4969",
+    "page": 18
+   },
+   {
+    "chunk_id": "f6537b6f-c3fe-5a52-b2da-c4e54779c217",
+    "page": 18
+   },
+   {
+    "chunk_id": "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+    "page": 19
+   },
+   {
+    "chunk_id": "22ab5588-0de4-542e-8e14-b1d2fbde1797",
+    "page": 20
+   },
+   {
+    "chunk_id": "240dfb35-d26d-5519-b04c-ed6c129d6964",
+    "page": 20
+   },
+   {
+    "chunk_id": "7fd26239-edc6-5f71-b550-a00cb60d2298",
+    "page": 20
+   },
+   {
+    "chunk_id": "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+    "page": 20
+   }
+  ],
+  "cutru": [
+   {
+    "chunk_id": "eeb102a8-e4af-529b-8c73-0e34d037a3ea",
+    "page": 13
+   },
+   {
+    "chunk_id": "f630df56-07f1-5530-89db-810151cf20d5",
+    "page": 21
+   }
+  ],
+  "banchup": [
+   {
+    "chunk_id": "66838589-c262-5c51-b381-8b2ae823c94f",
+    "page": 10
+   },
+   {
+    "chunk_id": "dbc0330a-981a-58bc-891c-5b0102f48291",
+    "page": 10
+   },
+   {
+    "chunk_id": "25ab14bd-dd78-5cf6-9e86-4b66d2553eaa",
+    "page": 14
+   },
+   {
+    "chunk_id": "6a37ff49-21cb-5e79-9ffa-2b3548a1a90e",
+    "page": 14
+   },
+   {
+    "chunk_id": "22ab5588-0de4-542e-8e14-b1d2fbde1797",
+    "page": 20
+   },
+   {
+    "chunk_id": "240dfb35-d26d-5519-b04c-ed6c129d6964",
+    "page": 20
+   },
+   {
+    "chunk_id": "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+    "page": 20
+   }
+  ],
+  "lephi": [
+   {
+    "chunk_id": "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+    "page": 9
+   },
+   {
+    "chunk_id": "66838589-c262-5c51-b381-8b2ae823c94f",
+    "page": 10
+   },
+   {
+    "chunk_id": "dbc0330a-981a-58bc-891c-5b0102f48291",
+    "page": 10
+   },
+   {
+    "chunk_id": "e35273d8-7f3b-54af-86a0-991efd324dbe",
+    "page": 15
+   },
+   {
+    "chunk_id": "f5f34d8e-c488-544c-be77-b25414280708",
+    "page": 15
+   },
+   {
+    "chunk_id": "1ea339b5-7741-5e89-8589-74083abe6c16",
+    "page": 17
+   },
+   {
+    "chunk_id": "b17d4fb1-38fb-56a1-8953-f01b8f3285c9",
+    "page": 17
+   }
+  ],
+  "thoihan": [
+   {
+    "chunk_id": "997508aa-0dca-5fc3-ae6a-1832234217c7",
+    "page": 15
+   }
+  ],
+  "trinhtu": [
+   {
+    "chunk_id": "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+    "page": 9
+   }
+  ],
+  "trachnhiem": [
+   {
+    "chunk_id": "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+    "page": 11
+   },
+   {
+    "chunk_id": "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+    "page": 11
+   },
+   {
+    "chunk_id": "b18b7d53-55fa-562f-a99f-56d12a548598",
+    "page": 15
+   }
+  ],
+  "noinop": [
+   {
+    "chunk_id": "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+    "page": 9
+   },
+   {
+    "chunk_id": "0c7962a1-f90f-5e79-914b-018823cf546a",
+    "page": 10
+   },
+   {
+    "chunk_id": "33d5bf37-5ecc-5c49-a92a-157142fb4aa0",
+    "page": 10
+   },
+   {
+    "chunk_id": "3f6ee802-f8ca-579f-8a31-132a0e4be4a3",
+    "page": 10
+   },
+   {
+    "chunk_id": "66838589-c262-5c51-b381-8b2ae823c94f",
+    "page": 10
+   },
+   {
+    "chunk_id": "6a61fbd5-db87-5bc2-88ab-2063af54a29f",
+    "page": 10
+   },
+   {
+    "chunk_id": "dbc0330a-981a-58bc-891c-5b0102f48291",
+    "page": 10
+   },
+   {
+    "chunk_id": "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed",
+    "page": 11
+   },
+   {
+    "chunk_id": "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+    "page": 12
+   },
+   {
+    "chunk_id": "d59d4390-c2ab-5e67-bd72-38dd74e7430d",
+    "page": 14
+   },
+   {
+    "chunk_id": "b18b7d53-55fa-562f-a99f-56d12a548598",
+    "page": 15
+   }
+  ]
+ },
+ "runs": {
+  "live-fp32": {
+   "name": "live-fp32",
+   "variant": "fp32",
+   "checksum": "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665",
+   "cases": {
+    "R1": {
+     "status": "ok",
+     "reason": "",
+     "ms": 68.8,
+     "hits": [
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "0c7962a1-f90f-5e79-914b-018823cf546a",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "6a61fbd5-db87-5bc2-88ab-2063af54a29f",
+      "33d5bf37-5ecc-5c49-a92a-157142fb4aa0",
+      "a2cedd22-9fd2-5673-b89b-1ef3322efc4a",
+      "d59d4390-c2ab-5e67-bd72-38dd74e7430d"
+     ],
+     "pages": [
+      10,
+      12,
+      9,
+      11,
+      11,
+      11,
+      10,
+      12,
+      10,
+      10,
+      11,
+      14
+     ],
+     "scores": [
+      0.9525,
+      0.9219,
+      0.9217,
+      0.9207,
+      0.9203,
+      0.9191,
+      0.919,
+      0.9171,
+      0.9169,
+      0.9148,
+      0.9117,
+      0.9101
+     ]
+    },
+    "R2": {
+     "status": "ok",
+     "reason": "",
+     "ms": 102.8,
+     "hits": [
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "d7aba136-3670-5357-b29e-7da813fe65ac",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe"
+     ],
+     "pages": [
+      15,
+      12,
+      12,
+      11,
+      11,
+      12,
+      12,
+      12,
+      11,
+      16,
+      11,
+      15
+     ],
+     "scores": [
+      0.9381,
+      0.9313,
+      0.9299,
+      0.9268,
+      0.9262,
+      0.921,
+      0.9202,
+      0.9177,
+      0.9169,
+      0.9147,
+      0.9142,
+      0.9131
+     ]
+    },
+    "R3": {
+     "status": "ok",
+     "reason": "",
+     "ms": 88.6,
+     "hits": [
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed",
+      "d7aba136-3670-5357-b29e-7da813fe65ac",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "af13ab11-ca87-5588-906f-3c060698635e"
+     ],
+     "pages": [
+      12,
+      12,
+      15,
+      10,
+      13,
+      12,
+      11,
+      11,
+      11,
+      12,
+      11,
+      19
+     ],
+     "scores": [
+      0.9403,
+      0.934,
+      0.9316,
+      0.9303,
+      0.9294,
+      0.9281,
+      0.9217,
+      0.9215,
+      0.9205,
+      0.9184,
+      0.9173,
+      0.9166
+     ]
+    },
+    "R4": {
+     "status": "ok",
+     "reason": "",
+     "ms": 73.0,
+     "hits": [
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "240dfb35-d26d-5519-b04c-ed6c129d6964",
+      "8642db52-b54e-58e3-8f42-58e3a8013ede",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "7fd26239-edc6-5f71-b550-a00cb60d2298",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+      "c8e50fea-b085-59f8-8d36-fbc33664bac3"
+     ],
+     "pages": [
+      19,
+      13,
+      13,
+      14,
+      19,
+      20,
+      13,
+      20,
+      15,
+      20,
+      16,
+      13
+     ],
+     "scores": [
+      0.931,
+      0.9272,
+      0.9234,
+      0.9214,
+      0.9204,
+      0.9113,
+      0.9112,
+      0.9106,
+      0.909,
+      0.9073,
+      0.9062,
+      0.9061
+     ]
+    },
+    "R5": {
+     "status": "ok",
+     "reason": "",
+     "ms": 47.6,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "240dfb35-d26d-5519-b04c-ed6c129d6964",
+      "7fd26239-edc6-5f71-b550-a00cb60d2298",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "8642db52-b54e-58e3-8f42-58e3a8013ede"
+     ],
+     "pages": [
+      13,
+      19,
+      12,
+      19,
+      13,
+      14,
+      15,
+      20,
+      20,
+      15,
+      12,
+      13
+     ],
+     "scores": [
+      0.9279,
+      0.9243,
+      0.9226,
+      0.9186,
+      0.9155,
+      0.9143,
+      0.9118,
+      0.9061,
+      0.9061,
+      0.906,
+      0.9059,
+      0.9048
+     ]
+    },
+    "R6": {
+     "status": "ok",
+     "reason": "",
+     "ms": 49.9,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "8642db52-b54e-58e3-8f42-58e3a8013ede",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "240dfb35-d26d-5519-b04c-ed6c129d6964",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6"
+     ],
+     "pages": [
+      13,
+      19,
+      13,
+      14,
+      19,
+      13,
+      12,
+      20,
+      12,
+      20,
+      15,
+      16
+     ],
+     "scores": [
+      0.9307,
+      0.9299,
+      0.9228,
+      0.9226,
+      0.9206,
+      0.9126,
+      0.9119,
+      0.9118,
+      0.9116,
+      0.9103,
+      0.9098,
+      0.9089
+     ]
+    },
+    "R7": {
+     "status": "ok",
+     "reason": "",
+     "ms": 75.6,
+     "hits": [
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "8642db52-b54e-58e3-8f42-58e3a8013ede",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "b18b7d53-55fa-562f-a99f-56d12a548598"
+     ],
+     "pages": [
+      12,
+      19,
+      13,
+      12,
+      19,
+      16,
+      13,
+      14,
+      15,
+      13,
+      20,
+      15
+     ],
+     "scores": [
+      0.9315,
+      0.9277,
+      0.9268,
+      0.9218,
+      0.9203,
+      0.919,
+      0.919,
+      0.9189,
+      0.9143,
+      0.9133,
+      0.9127,
+      0.9123
+     ]
+    },
+    "Q1": {
+     "status": "ok",
+     "reason": "",
+     "ms": 28.7,
+     "hits": [
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "45362993-86a4-5c5a-856d-6c8c154e2ac9",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe"
+     ],
+     "pages": [
+      12,
+      21,
+      13,
+      19,
+      12,
+      12,
+      12,
+      14,
+      14,
+      15,
+      11,
+      15
+     ],
+     "scores": [
+      0.9062,
+      0.9027,
+      0.9011,
+      0.8985,
+      0.8982,
+      0.8932,
+      0.891,
+      0.8872,
+      0.8845,
+      0.8838,
+      0.8836,
+      0.8831
+     ]
+    },
+    "Q2": {
+     "status": "ok",
+     "reason": "",
+     "ms": 32.5,
+     "hits": [
+      "997508aa-0dca-5fc3-ae6a-1832234217c7",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "a2cedd22-9fd2-5673-b89b-1ef3322efc4a",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "d7aba136-3670-5357-b29e-7da813fe65ac",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029"
+     ],
+     "pages": [
+      15,
+      11,
+      11,
+      12,
+      12,
+      11,
+      15,
+      19,
+      11,
+      11,
+      12,
+      12
+     ],
+     "scores": [
+      0.8845,
+      0.8762,
+      0.8758,
+      0.8727,
+      0.8726,
+      0.8691,
+      0.869,
+      0.8681,
+      0.8663,
+      0.8661,
+      0.8658,
+      0.8651
+     ]
+    },
+    "Q3": {
+     "status": "ok",
+     "reason": "",
+     "ms": 28.7,
+     "hits": [
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "a2cedd22-9fd2-5673-b89b-1ef3322efc4a",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24"
+     ],
+     "pages": [
+      10,
+      12,
+      11,
+      19,
+      12,
+      11,
+      11,
+      9,
+      21,
+      12,
+      14,
+      13
+     ],
+     "scores": [
+      0.8869,
+      0.8867,
+      0.8848,
+      0.8799,
+      0.8767,
+      0.8764,
+      0.875,
+      0.8746,
+      0.8732,
+      0.873,
+      0.8726,
+      0.8707
+     ]
+    },
+    "Q4": {
+     "status": "ok",
+     "reason": "",
+     "ms": 27.4,
+     "hits": [
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "b5c8a23b-ab28-542d-a6f6-ff9b19feb3a0",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "a2cedd22-9fd2-5673-b89b-1ef3322efc4a",
+      "0c7962a1-f90f-5e79-914b-018823cf546a"
+     ],
+     "pages": [
+      12,
+      12,
+      19,
+      12,
+      12,
+      21,
+      13,
+      18,
+      15,
+      10,
+      11,
+      10
+     ],
+     "scores": [
+      0.8954,
+      0.8945,
+      0.8905,
+      0.8875,
+      0.8862,
+      0.8823,
+      0.8813,
+      0.881,
+      0.8806,
+      0.8751,
+      0.8747,
+      0.8738
+     ]
+    },
+    "Q5": {
+     "status": "ok",
+     "reason": "",
+     "ms": 28.2,
+     "hits": [
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "45362993-86a4-5c5a-856d-6c8c154e2ac9"
+     ],
+     "pages": [
+      21,
+      15,
+      11,
+      14,
+      12,
+      12,
+      10,
+      12,
+      15,
+      9,
+      20,
+      15
+     ],
+     "scores": [
+      0.8817,
+      0.8794,
+      0.8744,
+      0.874,
+      0.8664,
+      0.8642,
+      0.8625,
+      0.8615,
+      0.8589,
+      0.8572,
+      0.8546,
+      0.8545
+     ]
+    },
+    "Q6": {
+     "status": "ok",
+     "reason": "",
+     "ms": 26.6,
+     "hits": [
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "0c7962a1-f90f-5e79-914b-018823cf546a",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "9da8f29b-be60-50c3-b1f3-95c8f3b94399",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "8b905b43-c2e5-576b-a431-f6edcfb0243e",
+      "af13ab11-ca87-5588-906f-3c060698635e",
+      "33d5bf37-5ecc-5c49-a92a-157142fb4aa0",
+      "04143eff-7cf4-5898-9861-a5e5510b2bf7"
+     ],
+     "pages": [
+      9,
+      10,
+      15,
+      18,
+      11,
+      11,
+      12,
+      11,
+      18,
+      19,
+      10,
+      11
+     ],
+     "scores": [
+      0.9004,
+      0.8974,
+      0.8937,
+      0.8923,
+      0.8901,
+      0.8898,
+      0.8834,
+      0.882,
+      0.8812,
+      0.881,
+      0.8809,
+      0.8773
+     ]
+    },
+    "Q7": {
+     "status": "ok",
+     "reason": "",
+     "ms": 26.3,
+     "hits": [
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "9da8f29b-be60-50c3-b1f3-95c8f3b94399",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "af13ab11-ca87-5588-906f-3c060698635e"
+     ],
+     "pages": [
+      12,
+      12,
+      12,
+      11,
+      20,
+      13,
+      19,
+      18,
+      16,
+      12,
+      10,
+      19
+     ],
+     "scores": [
+      0.8957,
+      0.8886,
+      0.8867,
+      0.8836,
+      0.8832,
+      0.8828,
+      0.8826,
+      0.8821,
+      0.8818,
+      0.8804,
+      0.8796,
+      0.8775
+     ]
+    },
+    "Q8": {
+     "status": "ok",
+     "reason": "",
+     "ms": 30.2,
+     "hits": [
+      "d7aba136-3670-5357-b29e-7da813fe65ac",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "45362993-86a4-5c5a-856d-6c8c154e2ac9",
+      "dbc0330a-981a-58bc-891c-5b0102f48291"
+     ],
+     "pages": [
+      12,
+      11,
+      12,
+      15,
+      12,
+      21,
+      12,
+      14,
+      13,
+      19,
+      15,
+      10
+     ],
+     "scores": [
+      0.9213,
+      0.9146,
+      0.9125,
+      0.9106,
+      0.904,
+      0.8773,
+      0.8757,
+      0.8716,
+      0.8693,
+      0.8631,
+      0.8622,
+      0.8592
+     ]
+    },
+    "Q9": {
+     "status": "ok",
+     "reason": "",
+     "ms": 29.3,
+     "hits": [
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "d7aba136-3670-5357-b29e-7da813fe65ac",
+      "45362993-86a4-5c5a-856d-6c8c154e2ac9",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed"
+     ],
+     "pages": [
+      11,
+      21,
+      14,
+      12,
+      15,
+      12,
+      12,
+      11,
+      12,
+      15,
+      13,
+      11
+     ],
+     "scores": [
+      0.8928,
+      0.8891,
+      0.8866,
+      0.8848,
+      0.8832,
+      0.8813,
+      0.8807,
+      0.8757,
+      0.8728,
+      0.8676,
+      0.8661,
+      0.8659
+     ]
+    },
+    "Q10": {
+     "status": "ok",
+     "reason": "",
+     "ms": 28.1,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "25ab14bd-dd78-5cf6-9e86-4b66d2553eaa",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c"
+     ],
+     "pages": [
+      13,
+      12,
+      12,
+      19,
+      14,
+      12,
+      21,
+      12,
+      15,
+      9,
+      14,
+      11
+     ],
+     "scores": [
+      0.9165,
+      0.8927,
+      0.8815,
+      0.8805,
+      0.8799,
+      0.8775,
+      0.8719,
+      0.8707,
+      0.8693,
+      0.8682,
+      0.8682,
+      0.866
+     ]
+    },
+    "Q11": {
+     "status": "ok",
+     "reason": "",
+     "ms": 37.0,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "0c7962a1-f90f-5e79-914b-018823cf546a",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "d7aba136-3670-5357-b29e-7da813fe65ac"
+     ],
+     "pages": [
+      13,
+      12,
+      14,
+      12,
+      12,
+      21,
+      15,
+      11,
+      10,
+      11,
+      15,
+      12
+     ],
+     "scores": [
+      0.8879,
+      0.8877,
+      0.8838,
+      0.8807,
+      0.8781,
+      0.8778,
+      0.8724,
+      0.8722,
+      0.8708,
+      0.87,
+      0.8698,
+      0.8698
+     ]
+    },
+    "Q12": {
+     "status": "ok",
+     "reason": "",
+     "ms": 30.6,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "25ab14bd-dd78-5cf6-9e86-4b66d2553eaa",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "fb1d1f2d-f881-544c-ada6-4f90a2a5c8a7",
+      "7fd26239-edc6-5f71-b550-a00cb60d2298",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "d59d4390-c2ab-5e67-bd72-38dd74e7430d",
+      "f56c29b0-ee05-589d-a93a-025e307f209b"
+     ],
+     "pages": [
+      13,
+      21,
+      14,
+      12,
+      12,
+      12,
+      19,
+      21,
+      20,
+      13,
+      14,
+      11
+     ],
+     "scores": [
+      0.9053,
+      0.8884,
+      0.8879,
+      0.8833,
+      0.8803,
+      0.8802,
+      0.8801,
+      0.8786,
+      0.8766,
+      0.8753,
+      0.8718,
+      0.8717
+     ]
+    },
+    "Q13": {
+     "status": "ok",
+     "reason": "",
+     "ms": 29.6,
+     "hits": [
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "eeb102a8-e4af-529b-8c73-0e34d037a3ea",
+      "c8e50fea-b085-59f8-8d36-fbc33664bac3",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "f56c29b0-ee05-589d-a93a-025e307f209b"
+     ],
+     "pages": [
+      19,
+      12,
+      21,
+      12,
+      13,
+      13,
+      12,
+      14,
+      13,
+      15,
+      19,
+      11
+     ],
+     "scores": [
+      0.8966,
+      0.8949,
+      0.8898,
+      0.888,
+      0.879,
+      0.8767,
+      0.8764,
+      0.8762,
+      0.8732,
+      0.8714,
+      0.8709,
+      0.8708
+     ]
+    },
+    "Q14": {
+     "status": "ok",
+     "reason": "",
+     "ms": 36.7,
+     "hits": [
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "a2cedd22-9fd2-5673-b89b-1ef3322efc4a",
+      "0c7962a1-f90f-5e79-914b-018823cf546a",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "25ab14bd-dd78-5cf6-9e86-4b66d2553eaa"
+     ],
+     "pages": [
+      12,
+      13,
+      21,
+      19,
+      12,
+      12,
+      12,
+      11,
+      10,
+      14,
+      11,
+      14
+     ],
+     "scores": [
+      0.9049,
+      0.8899,
+      0.8867,
+      0.8783,
+      0.8753,
+      0.8746,
+      0.8737,
+      0.8723,
+      0.8707,
+      0.8707,
+      0.8705,
+      0.8697
+     ]
+    },
+    "Q15": {
+     "status": "ok",
+     "reason": "",
+     "ms": 28.5,
+     "hits": [
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "a2cedd22-9fd2-5673-b89b-1ef3322efc4a"
+     ],
+     "pages": [
+      12,
+      10,
+      11,
+      11,
+      12,
+      12,
+      16,
+      9,
+      19,
+      14,
+      21,
+      11
+     ],
+     "scores": [
+      0.9125,
+      0.9108,
+      0.9066,
+      0.9046,
+      0.9041,
+      0.895,
+      0.8926,
+      0.8922,
+      0.8855,
+      0.8822,
+      0.882,
+      0.8816
+     ]
+    }
+   }
+  },
+  "offline-fp32": {
+   "name": "offline-fp32",
+   "variant": "fp32",
+   "checksum": "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665",
+   "cases": {
+    "R1": {
+     "status": "ok",
+     "reason": "",
+     "ms": 21.4,
+     "hits": [
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "0c7962a1-f90f-5e79-914b-018823cf546a",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "6a61fbd5-db87-5bc2-88ab-2063af54a29f",
+      "33d5bf37-5ecc-5c49-a92a-157142fb4aa0",
+      "a2cedd22-9fd2-5673-b89b-1ef3322efc4a",
+      "d59d4390-c2ab-5e67-bd72-38dd74e7430d"
+     ],
+     "pages": [
+      10,
+      12,
+      9,
+      11,
+      11,
+      11,
+      10,
+      12,
+      10,
+      10,
+      11,
+      14
+     ],
+     "scores": [
+      0.9525,
+      0.9219,
+      0.9217,
+      0.9207,
+      0.9203,
+      0.9191,
+      0.919,
+      0.9171,
+      0.9169,
+      0.9148,
+      0.9117,
+      0.9101
+     ]
+    },
+    "R2": {
+     "status": "ok",
+     "reason": "",
+     "ms": 37.6,
+     "hits": [
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "d7aba136-3670-5357-b29e-7da813fe65ac",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe"
+     ],
+     "pages": [
+      15,
+      12,
+      12,
+      11,
+      11,
+      12,
+      12,
+      12,
+      11,
+      16,
+      11,
+      15
+     ],
+     "scores": [
+      0.9381,
+      0.9313,
+      0.9299,
+      0.9268,
+      0.9262,
+      0.921,
+      0.9202,
+      0.9177,
+      0.9169,
+      0.9147,
+      0.9142,
+      0.9131
+     ]
+    },
+    "R3": {
+     "status": "ok",
+     "reason": "",
+     "ms": 50.9,
+     "hits": [
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed",
+      "d7aba136-3670-5357-b29e-7da813fe65ac",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "af13ab11-ca87-5588-906f-3c060698635e"
+     ],
+     "pages": [
+      12,
+      12,
+      15,
+      10,
+      13,
+      12,
+      11,
+      11,
+      11,
+      12,
+      11,
+      19
+     ],
+     "scores": [
+      0.9403,
+      0.934,
+      0.9316,
+      0.9303,
+      0.9294,
+      0.9281,
+      0.9217,
+      0.9215,
+      0.9205,
+      0.9184,
+      0.9173,
+      0.9166
+     ]
+    },
+    "R4": {
+     "status": "ok",
+     "reason": "",
+     "ms": 22.4,
+     "hits": [
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "240dfb35-d26d-5519-b04c-ed6c129d6964",
+      "8642db52-b54e-58e3-8f42-58e3a8013ede",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "7fd26239-edc6-5f71-b550-a00cb60d2298",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+      "c8e50fea-b085-59f8-8d36-fbc33664bac3"
+     ],
+     "pages": [
+      19,
+      13,
+      13,
+      14,
+      19,
+      20,
+      13,
+      20,
+      15,
+      20,
+      16,
+      13
+     ],
+     "scores": [
+      0.931,
+      0.9272,
+      0.9234,
+      0.9214,
+      0.9204,
+      0.9113,
+      0.9112,
+      0.9106,
+      0.909,
+      0.9073,
+      0.9062,
+      0.9061
+     ]
+    },
+    "R5": {
+     "status": "ok",
+     "reason": "",
+     "ms": 27.4,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "240dfb35-d26d-5519-b04c-ed6c129d6964",
+      "7fd26239-edc6-5f71-b550-a00cb60d2298",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "8642db52-b54e-58e3-8f42-58e3a8013ede"
+     ],
+     "pages": [
+      13,
+      19,
+      12,
+      19,
+      13,
+      14,
+      15,
+      20,
+      20,
+      15,
+      12,
+      13
+     ],
+     "scores": [
+      0.9279,
+      0.9243,
+      0.9226,
+      0.9186,
+      0.9155,
+      0.9143,
+      0.9118,
+      0.9061,
+      0.9061,
+      0.906,
+      0.9059,
+      0.9048
+     ]
+    },
+    "R6": {
+     "status": "ok",
+     "reason": "",
+     "ms": 27.2,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "8642db52-b54e-58e3-8f42-58e3a8013ede",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "240dfb35-d26d-5519-b04c-ed6c129d6964",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6"
+     ],
+     "pages": [
+      13,
+      19,
+      13,
+      14,
+      19,
+      13,
+      12,
+      20,
+      12,
+      20,
+      15,
+      16
+     ],
+     "scores": [
+      0.9307,
+      0.9299,
+      0.9228,
+      0.9226,
+      0.9206,
+      0.9126,
+      0.9119,
+      0.9118,
+      0.9116,
+      0.9103,
+      0.9098,
+      0.9089
+     ]
+    },
+    "R7": {
+     "status": "ok",
+     "reason": "",
+     "ms": 35.0,
+     "hits": [
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "8642db52-b54e-58e3-8f42-58e3a8013ede",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "b18b7d53-55fa-562f-a99f-56d12a548598"
+     ],
+     "pages": [
+      12,
+      19,
+      13,
+      12,
+      19,
+      16,
+      13,
+      14,
+      15,
+      13,
+      20,
+      15
+     ],
+     "scores": [
+      0.9315,
+      0.9277,
+      0.9268,
+      0.9218,
+      0.9203,
+      0.919,
+      0.919,
+      0.9189,
+      0.9143,
+      0.9133,
+      0.9127,
+      0.9123
+     ]
+    },
+    "Q1": {
+     "status": "ok",
+     "reason": "",
+     "ms": 7.4,
+     "hits": [
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "45362993-86a4-5c5a-856d-6c8c154e2ac9",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe"
+     ],
+     "pages": [
+      12,
+      21,
+      13,
+      19,
+      12,
+      12,
+      12,
+      14,
+      14,
+      15,
+      11,
+      15
+     ],
+     "scores": [
+      0.9062,
+      0.9027,
+      0.9011,
+      0.8985,
+      0.8982,
+      0.8932,
+      0.891,
+      0.8872,
+      0.8845,
+      0.8838,
+      0.8836,
+      0.8831
+     ]
+    },
+    "Q2": {
+     "status": "ok",
+     "reason": "",
+     "ms": 7.7,
+     "hits": [
+      "997508aa-0dca-5fc3-ae6a-1832234217c7",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "a2cedd22-9fd2-5673-b89b-1ef3322efc4a",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "d7aba136-3670-5357-b29e-7da813fe65ac",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029"
+     ],
+     "pages": [
+      15,
+      11,
+      11,
+      12,
+      12,
+      11,
+      15,
+      19,
+      11,
+      11,
+      12,
+      12
+     ],
+     "scores": [
+      0.8845,
+      0.8762,
+      0.8758,
+      0.8727,
+      0.8726,
+      0.8691,
+      0.869,
+      0.8681,
+      0.8663,
+      0.8661,
+      0.8658,
+      0.8651
+     ]
+    },
+    "Q3": {
+     "status": "ok",
+     "reason": "",
+     "ms": 5.9,
+     "hits": [
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "a2cedd22-9fd2-5673-b89b-1ef3322efc4a",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24"
+     ],
+     "pages": [
+      10,
+      12,
+      11,
+      19,
+      12,
+      11,
+      11,
+      9,
+      21,
+      12,
+      14,
+      13
+     ],
+     "scores": [
+      0.8869,
+      0.8867,
+      0.8848,
+      0.8799,
+      0.8767,
+      0.8764,
+      0.875,
+      0.8746,
+      0.8732,
+      0.873,
+      0.8726,
+      0.8707
+     ]
+    },
+    "Q4": {
+     "status": "ok",
+     "reason": "",
+     "ms": 4.9,
+     "hits": [
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "b5c8a23b-ab28-542d-a6f6-ff9b19feb3a0",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "a2cedd22-9fd2-5673-b89b-1ef3322efc4a",
+      "0c7962a1-f90f-5e79-914b-018823cf546a"
+     ],
+     "pages": [
+      12,
+      12,
+      19,
+      12,
+      12,
+      21,
+      13,
+      18,
+      15,
+      10,
+      11,
+      10
+     ],
+     "scores": [
+      0.8954,
+      0.8945,
+      0.8905,
+      0.8875,
+      0.8862,
+      0.8823,
+      0.8813,
+      0.881,
+      0.8806,
+      0.8751,
+      0.8747,
+      0.8738
+     ]
+    },
+    "Q5": {
+     "status": "ok",
+     "reason": "",
+     "ms": 5.3,
+     "hits": [
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "45362993-86a4-5c5a-856d-6c8c154e2ac9"
+     ],
+     "pages": [
+      21,
+      15,
+      11,
+      14,
+      12,
+      12,
+      10,
+      12,
+      15,
+      9,
+      20,
+      15
+     ],
+     "scores": [
+      0.8817,
+      0.8794,
+      0.8744,
+      0.874,
+      0.8664,
+      0.8642,
+      0.8625,
+      0.8615,
+      0.8589,
+      0.8572,
+      0.8546,
+      0.8545
+     ]
+    },
+    "Q6": {
+     "status": "ok",
+     "reason": "",
+     "ms": 5.4,
+     "hits": [
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "0c7962a1-f90f-5e79-914b-018823cf546a",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "9da8f29b-be60-50c3-b1f3-95c8f3b94399",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "8b905b43-c2e5-576b-a431-f6edcfb0243e",
+      "af13ab11-ca87-5588-906f-3c060698635e",
+      "33d5bf37-5ecc-5c49-a92a-157142fb4aa0",
+      "04143eff-7cf4-5898-9861-a5e5510b2bf7"
+     ],
+     "pages": [
+      9,
+      10,
+      15,
+      18,
+      11,
+      11,
+      12,
+      11,
+      18,
+      19,
+      10,
+      11
+     ],
+     "scores": [
+      0.9004,
+      0.8974,
+      0.8937,
+      0.8923,
+      0.8901,
+      0.8898,
+      0.8834,
+      0.882,
+      0.8812,
+      0.881,
+      0.8809,
+      0.8773
+     ]
+    },
+    "Q7": {
+     "status": "ok",
+     "reason": "",
+     "ms": 4.8,
+     "hits": [
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "9da8f29b-be60-50c3-b1f3-95c8f3b94399",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "af13ab11-ca87-5588-906f-3c060698635e"
+     ],
+     "pages": [
+      12,
+      12,
+      12,
+      11,
+      20,
+      13,
+      19,
+      18,
+      16,
+      12,
+      10,
+      19
+     ],
+     "scores": [
+      0.8957,
+      0.8886,
+      0.8867,
+      0.8836,
+      0.8832,
+      0.8828,
+      0.8826,
+      0.8821,
+      0.8818,
+      0.8804,
+      0.8796,
+      0.8775
+     ]
+    },
+    "Q8": {
+     "status": "ok",
+     "reason": "",
+     "ms": 6.0,
+     "hits": [
+      "d7aba136-3670-5357-b29e-7da813fe65ac",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "45362993-86a4-5c5a-856d-6c8c154e2ac9",
+      "dbc0330a-981a-58bc-891c-5b0102f48291"
+     ],
+     "pages": [
+      12,
+      11,
+      12,
+      15,
+      12,
+      21,
+      12,
+      14,
+      13,
+      19,
+      15,
+      10
+     ],
+     "scores": [
+      0.9213,
+      0.9146,
+      0.9125,
+      0.9106,
+      0.904,
+      0.8773,
+      0.8757,
+      0.8716,
+      0.8693,
+      0.8631,
+      0.8622,
+      0.8592
+     ]
+    },
+    "Q9": {
+     "status": "ok",
+     "reason": "",
+     "ms": 6.4,
+     "hits": [
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "d7aba136-3670-5357-b29e-7da813fe65ac",
+      "45362993-86a4-5c5a-856d-6c8c154e2ac9",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed"
+     ],
+     "pages": [
+      11,
+      21,
+      14,
+      12,
+      15,
+      12,
+      12,
+      11,
+      12,
+      15,
+      13,
+      11
+     ],
+     "scores": [
+      0.8928,
+      0.8891,
+      0.8866,
+      0.8848,
+      0.8832,
+      0.8813,
+      0.8807,
+      0.8757,
+      0.8728,
+      0.8676,
+      0.8661,
+      0.8659
+     ]
+    },
+    "Q10": {
+     "status": "ok",
+     "reason": "",
+     "ms": 6.0,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "25ab14bd-dd78-5cf6-9e86-4b66d2553eaa",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c"
+     ],
+     "pages": [
+      13,
+      12,
+      12,
+      19,
+      14,
+      12,
+      21,
+      12,
+      15,
+      9,
+      14,
+      11
+     ],
+     "scores": [
+      0.9165,
+      0.8927,
+      0.8815,
+      0.8805,
+      0.8799,
+      0.8775,
+      0.8719,
+      0.8707,
+      0.8693,
+      0.8682,
+      0.8682,
+      0.866
+     ]
+    },
+    "Q11": {
+     "status": "ok",
+     "reason": "",
+     "ms": 5.8,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "0c7962a1-f90f-5e79-914b-018823cf546a",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "d7aba136-3670-5357-b29e-7da813fe65ac"
+     ],
+     "pages": [
+      13,
+      12,
+      14,
+      12,
+      12,
+      21,
+      15,
+      11,
+      10,
+      11,
+      15,
+      12
+     ],
+     "scores": [
+      0.8879,
+      0.8877,
+      0.8838,
+      0.8807,
+      0.8781,
+      0.8778,
+      0.8724,
+      0.8722,
+      0.8708,
+      0.87,
+      0.8698,
+      0.8698
+     ]
+    },
+    "Q12": {
+     "status": "ok",
+     "reason": "",
+     "ms": 5.7,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "25ab14bd-dd78-5cf6-9e86-4b66d2553eaa",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "fb1d1f2d-f881-544c-ada6-4f90a2a5c8a7",
+      "7fd26239-edc6-5f71-b550-a00cb60d2298",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "d59d4390-c2ab-5e67-bd72-38dd74e7430d",
+      "f56c29b0-ee05-589d-a93a-025e307f209b"
+     ],
+     "pages": [
+      13,
+      21,
+      14,
+      12,
+      12,
+      12,
+      19,
+      21,
+      20,
+      13,
+      14,
+      11
+     ],
+     "scores": [
+      0.9053,
+      0.8884,
+      0.8879,
+      0.8833,
+      0.8803,
+      0.8802,
+      0.8801,
+      0.8786,
+      0.8766,
+      0.8753,
+      0.8718,
+      0.8717
+     ]
+    },
+    "Q13": {
+     "status": "ok",
+     "reason": "",
+     "ms": 5.6,
+     "hits": [
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "eeb102a8-e4af-529b-8c73-0e34d037a3ea",
+      "c8e50fea-b085-59f8-8d36-fbc33664bac3",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "f56c29b0-ee05-589d-a93a-025e307f209b"
+     ],
+     "pages": [
+      19,
+      12,
+      21,
+      12,
+      13,
+      13,
+      12,
+      14,
+      13,
+      15,
+      19,
+      11
+     ],
+     "scores": [
+      0.8966,
+      0.8949,
+      0.8898,
+      0.888,
+      0.879,
+      0.8767,
+      0.8764,
+      0.8762,
+      0.8732,
+      0.8714,
+      0.8709,
+      0.8708
+     ]
+    },
+    "Q14": {
+     "status": "ok",
+     "reason": "",
+     "ms": 7.8,
+     "hits": [
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "a2cedd22-9fd2-5673-b89b-1ef3322efc4a",
+      "0c7962a1-f90f-5e79-914b-018823cf546a",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "25ab14bd-dd78-5cf6-9e86-4b66d2553eaa"
+     ],
+     "pages": [
+      12,
+      13,
+      21,
+      19,
+      12,
+      12,
+      12,
+      11,
+      10,
+      14,
+      11,
+      14
+     ],
+     "scores": [
+      0.9049,
+      0.8899,
+      0.8867,
+      0.8783,
+      0.8753,
+      0.8746,
+      0.8737,
+      0.8723,
+      0.8707,
+      0.8707,
+      0.8705,
+      0.8697
+     ]
+    },
+    "Q15": {
+     "status": "ok",
+     "reason": "",
+     "ms": 6.6,
+     "hits": [
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "a2cedd22-9fd2-5673-b89b-1ef3322efc4a"
+     ],
+     "pages": [
+      12,
+      10,
+      11,
+      11,
+      12,
+      12,
+      16,
+      9,
+      19,
+      14,
+      21,
+      11
+     ],
+     "scores": [
+      0.9125,
+      0.9108,
+      0.9066,
+      0.9046,
+      0.9041,
+      0.895,
+      0.8926,
+      0.8922,
+      0.8855,
+      0.8822,
+      0.882,
+      0.8816
+     ]
+    }
+   }
+  },
+  "offline-int8": {
+   "name": "offline-int8",
+   "variant": "qint8_avx512_vnni",
+   "checksum": "dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2d88",
+   "cases": {
+    "R1": {
+     "status": "ok",
+     "reason": "",
+     "ms": 14.1,
+     "hits": [
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "6a61fbd5-db87-5bc2-88ab-2063af54a29f",
+      "d59d4390-c2ab-5e67-bd72-38dd74e7430d",
+      "33d5bf37-5ecc-5c49-a92a-157142fb4aa0",
+      "6a37ff49-21cb-5e79-9ffa-2b3548a1a90e",
+      "0c7962a1-f90f-5e79-914b-018823cf546a"
+     ],
+     "pages": [
+      10,
+      11,
+      11,
+      12,
+      9,
+      11,
+      12,
+      10,
+      14,
+      10,
+      14,
+      10
+     ],
+     "scores": [
+      0.947,
+      0.9181,
+      0.9173,
+      0.917,
+      0.9157,
+      0.9141,
+      0.9132,
+      0.9126,
+      0.9115,
+      0.9094,
+      0.907,
+      0.9058
+     ]
+    },
+    "R2": {
+     "status": "ok",
+     "reason": "",
+     "ms": 19.0,
+     "hits": [
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "d7aba136-3670-5357-b29e-7da813fe65ac",
+      "37d77ffb-c6fd-57c4-bba8-01cf3bde5809",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6"
+     ],
+     "pages": [
+      15,
+      12,
+      11,
+      12,
+      11,
+      12,
+      11,
+      12,
+      12,
+      13,
+      13,
+      16
+     ],
+     "scores": [
+      0.9325,
+      0.9321,
+      0.9282,
+      0.9267,
+      0.9228,
+      0.9218,
+      0.9146,
+      0.9137,
+      0.9121,
+      0.9114,
+      0.9113,
+      0.9111
+     ]
+    },
+    "R3": {
+     "status": "ok",
+     "reason": "",
+     "ms": 24.0,
+     "hits": [
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "af13ab11-ca87-5588-906f-3c060698635e",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "37d77ffb-c6fd-57c4-bba8-01cf3bde5809"
+     ],
+     "pages": [
+      12,
+      12,
+      13,
+      10,
+      12,
+      15,
+      11,
+      11,
+      19,
+      11,
+      19,
+      13
+     ],
+     "scores": [
+      0.9426,
+      0.9364,
+      0.933,
+      0.9296,
+      0.928,
+      0.9257,
+      0.9177,
+      0.9176,
+      0.917,
+      0.917,
+      0.9169,
+      0.9163
+     ]
+    },
+    "R4": {
+     "status": "ok",
+     "reason": "",
+     "ms": 14.4,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "240dfb35-d26d-5519-b04c-ed6c129d6964",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "7fd26239-edc6-5f71-b550-a00cb60d2298",
+      "8642db52-b54e-58e3-8f42-58e3a8013ede",
+      "c8e50fea-b085-59f8-8d36-fbc33664bac3",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029"
+     ],
+     "pages": [
+      13,
+      19,
+      13,
+      14,
+      19,
+      20,
+      20,
+      20,
+      13,
+      13,
+      16,
+      12
+     ],
+     "scores": [
+      0.9259,
+      0.9253,
+      0.9178,
+      0.9166,
+      0.9161,
+      0.9112,
+      0.9102,
+      0.9073,
+      0.9065,
+      0.9064,
+      0.9045,
+      0.9039
+     ]
+    },
+    "R5": {
+     "status": "ok",
+     "reason": "",
+     "ms": 15.7,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "240dfb35-d26d-5519-b04c-ed6c129d6964",
+      "7fd26239-edc6-5f71-b550-a00cb60d2298",
+      "c8e50fea-b085-59f8-8d36-fbc33664bac3",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "7afea252-ebd5-5285-81b8-556c43957ca0"
+     ],
+     "pages": [
+      13,
+      19,
+      12,
+      19,
+      13,
+      14,
+      15,
+      20,
+      20,
+      13,
+      20,
+      12
+     ],
+     "scores": [
+      0.9312,
+      0.9242,
+      0.9215,
+      0.9194,
+      0.9164,
+      0.9155,
+      0.9113,
+      0.9096,
+      0.9076,
+      0.9076,
+      0.9075,
+      0.9068
+     ]
+    },
+    "R6": {
+     "status": "ok",
+     "reason": "",
+     "ms": 15.9,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "240dfb35-d26d-5519-b04c-ed6c129d6964",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "8642db52-b54e-58e3-8f42-58e3a8013ede",
+      "c8e50fea-b085-59f8-8d36-fbc33664bac3",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe"
+     ],
+     "pages": [
+      13,
+      19,
+      13,
+      19,
+      14,
+      20,
+      12,
+      20,
+      12,
+      13,
+      13,
+      15
+     ],
+     "scores": [
+      0.9319,
+      0.928,
+      0.9208,
+      0.9206,
+      0.9199,
+      0.9137,
+      0.913,
+      0.9112,
+      0.9109,
+      0.9105,
+      0.9097,
+      0.9086
+     ]
+    },
+    "R7": {
+     "status": "ok",
+     "reason": "",
+     "ms": 19.2,
+     "hits": [
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "240dfb35-d26d-5519-b04c-ed6c129d6964",
+      "dbc0330a-981a-58bc-891c-5b0102f48291"
+     ],
+     "pages": [
+      12,
+      13,
+      19,
+      12,
+      19,
+      13,
+      14,
+      16,
+      20,
+      15,
+      20,
+      10
+     ],
+     "scores": [
+      0.9292,
+      0.9287,
+      0.9262,
+      0.9223,
+      0.9197,
+      0.9185,
+      0.9177,
+      0.9169,
+      0.9147,
+      0.914,
+      0.9139,
+      0.9135
+     ]
+    },
+    "Q1": {
+     "status": "ok",
+     "reason": "",
+     "ms": 5.6,
+     "hits": [
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "45362993-86a4-5c5a-856d-6c8c154e2ac9",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "d7aba136-3670-5357-b29e-7da813fe65ac"
+     ],
+     "pages": [
+      12,
+      21,
+      12,
+      13,
+      19,
+      12,
+      12,
+      14,
+      15,
+      14,
+      15,
+      12
+     ],
+     "scores": [
+      0.9046,
+      0.9014,
+      0.9001,
+      0.899,
+      0.8983,
+      0.8953,
+      0.8916,
+      0.8896,
+      0.8862,
+      0.8832,
+      0.8818,
+      0.881
+     ]
+    },
+    "Q2": {
+     "status": "ok",
+     "reason": "",
+     "ms": 4.3,
+     "hits": [
+      "997508aa-0dca-5fc3-ae6a-1832234217c7",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "a2cedd22-9fd2-5673-b89b-1ef3322efc4a",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "d7aba136-3670-5357-b29e-7da813fe65ac",
+      "6a61fbd5-db87-5bc2-88ab-2063af54a29f"
+     ],
+     "pages": [
+      15,
+      11,
+      11,
+      11,
+      12,
+      19,
+      11,
+      12,
+      15,
+      11,
+      12,
+      10
+     ],
+     "scores": [
+      0.8826,
+      0.8769,
+      0.8751,
+      0.8723,
+      0.8723,
+      0.8718,
+      0.8715,
+      0.8714,
+      0.87,
+      0.8688,
+      0.8688,
+      0.8673
+     ]
+    },
+    "Q3": {
+     "status": "ok",
+     "reason": "",
+     "ms": 4.0,
+     "hits": [
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "a2cedd22-9fd2-5673-b89b-1ef3322efc4a",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "4e9c16d2-6e31-5c40-9442-cb39c3f8260a"
+     ],
+     "pages": [
+      11,
+      12,
+      10,
+      12,
+      19,
+      9,
+      12,
+      11,
+      14,
+      11,
+      15,
+      20
+     ],
+     "scores": [
+      0.8851,
+      0.8848,
+      0.8846,
+      0.8798,
+      0.8783,
+      0.8757,
+      0.8736,
+      0.8733,
+      0.8711,
+      0.8706,
+      0.8696,
+      0.8689
+     ]
+    },
+    "Q4": {
+     "status": "ok",
+     "reason": "",
+     "ms": 4.0,
+     "hits": [
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "b5c8a23b-ab28-542d-a6f6-ff9b19feb3a0",
+      "fb1d1f2d-f881-544c-ada6-4f90a2a5c8a7",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "2d662449-b997-5b76-a77e-85533f83722c"
+     ],
+     "pages": [
+      12,
+      12,
+      19,
+      12,
+      12,
+      18,
+      21,
+      15,
+      13,
+      10,
+      21,
+      14
+     ],
+     "scores": [
+      0.9003,
+      0.8925,
+      0.8917,
+      0.8835,
+      0.8831,
+      0.8789,
+      0.8781,
+      0.8779,
+      0.8772,
+      0.8768,
+      0.8757,
+      0.872
+     ]
+    },
+    "Q5": {
+     "status": "ok",
+     "reason": "",
+     "ms": 4.6,
+     "hits": [
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185"
+     ],
+     "pages": [
+      15,
+      21,
+      11,
+      14,
+      10,
+      12,
+      12,
+      12,
+      12,
+      9,
+      15,
+      20
+     ],
+     "scores": [
+      0.8804,
+      0.8768,
+      0.8718,
+      0.8714,
+      0.8655,
+      0.8652,
+      0.8648,
+      0.8616,
+      0.8614,
+      0.8583,
+      0.8563,
+      0.8562
+     ]
+    },
+    "Q6": {
+     "status": "ok",
+     "reason": "",
+     "ms": 4.4,
+     "hits": [
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "0c7962a1-f90f-5e79-914b-018823cf546a",
+      "9da8f29b-be60-50c3-b1f3-95c8f3b94399",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "fb1d1f2d-f881-544c-ada6-4f90a2a5c8a7",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "33d5bf37-5ecc-5c49-a92a-157142fb4aa0",
+      "af13ab11-ca87-5588-906f-3c060698635e",
+      "f5f34d8e-c488-544c-be77-b25414280708"
+     ],
+     "pages": [
+      9,
+      15,
+      11,
+      10,
+      18,
+      11,
+      11,
+      21,
+      12,
+      10,
+      19,
+      15
+     ],
+     "scores": [
+      0.8947,
+      0.8899,
+      0.8894,
+      0.8889,
+      0.885,
+      0.8832,
+      0.8828,
+      0.8787,
+      0.8787,
+      0.8772,
+      0.876,
+      0.8744
+     ]
+    },
+    "Q7": {
+     "status": "ok",
+     "reason": "",
+     "ms": 4.3,
+     "hits": [
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "af13ab11-ca87-5588-906f-3c060698635e",
+      "e7af10b6-2ab6-5434-a8cc-f5ff5522a185",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c"
+     ],
+     "pages": [
+      12,
+      12,
+      12,
+      19,
+      19,
+      20,
+      16,
+      11,
+      13,
+      10,
+      12,
+      11
+     ],
+     "scores": [
+      0.899,
+      0.8888,
+      0.8862,
+      0.8856,
+      0.8839,
+      0.8815,
+      0.8815,
+      0.8813,
+      0.8806,
+      0.8802,
+      0.8798,
+      0.8796
+     ]
+    },
+    "Q8": {
+     "status": "ok",
+     "reason": "",
+     "ms": 4.1,
+     "hits": [
+      "d7aba136-3670-5357-b29e-7da813fe65ac",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "45362993-86a4-5c5a-856d-6c8c154e2ac9",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16"
+     ],
+     "pages": [
+      12,
+      11,
+      12,
+      15,
+      12,
+      21,
+      12,
+      13,
+      14,
+      15,
+      15,
+      19
+     ],
+     "scores": [
+      0.917,
+      0.9119,
+      0.908,
+      0.9036,
+      0.9034,
+      0.8727,
+      0.8714,
+      0.8693,
+      0.8676,
+      0.8617,
+      0.8607,
+      0.8604
+     ]
+    },
+    "Q9": {
+     "status": "ok",
+     "reason": "",
+     "ms": 6.8,
+     "hits": [
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "d7aba136-3670-5357-b29e-7da813fe65ac",
+      "45362993-86a4-5c5a-856d-6c8c154e2ac9",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed"
+     ],
+     "pages": [
+      11,
+      21,
+      15,
+      12,
+      14,
+      12,
+      12,
+      11,
+      12,
+      15,
+      13,
+      11
+     ],
+     "scores": [
+      0.8939,
+      0.8851,
+      0.8843,
+      0.8843,
+      0.8842,
+      0.8807,
+      0.8767,
+      0.8738,
+      0.8728,
+      0.8705,
+      0.8683,
+      0.8683
+     ]
+    },
+    "Q10": {
+     "status": "ok",
+     "reason": "",
+     "ms": 4.3,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "25ab14bd-dd78-5cf6-9e86-4b66d2553eaa",
+      "03fb8b0d-0956-5c8d-bc4a-e447b28b51ed"
+     ],
+     "pages": [
+      13,
+      12,
+      12,
+      14,
+      19,
+      12,
+      12,
+      21,
+      15,
+      9,
+      14,
+      11
+     ],
+     "scores": [
+      0.9115,
+      0.8901,
+      0.8821,
+      0.8778,
+      0.8777,
+      0.8746,
+      0.8709,
+      0.8694,
+      0.8684,
+      0.8665,
+      0.8661,
+      0.8651
+     ]
+    },
+    "Q11": {
+     "status": "ok",
+     "reason": "",
+     "ms": 4.3,
+     "hits": [
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "b3dc09f7-5f0a-52fb-9896-3ed0d17431b3",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "e35273d8-7f3b-54af-86a0-991efd324dbe",
+      "126e3d4b-0eaf-51b7-b103-4747322aaa97",
+      "25ab14bd-dd78-5cf6-9e86-4b66d2553eaa",
+      "d7aba136-3670-5357-b29e-7da813fe65ac"
+     ],
+     "pages": [
+      12,
+      13,
+      14,
+      12,
+      12,
+      15,
+      21,
+      11,
+      15,
+      11,
+      14,
+      12
+     ],
+     "scores": [
+      0.8878,
+      0.8859,
+      0.8793,
+      0.8762,
+      0.8756,
+      0.8746,
+      0.8718,
+      0.8708,
+      0.8703,
+      0.8702,
+      0.8678,
+      0.8675
+     ]
+    },
+    "Q12": {
+     "status": "ok",
+     "reason": "",
+     "ms": 4.0,
+     "hits": [
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "25ab14bd-dd78-5cf6-9e86-4b66d2553eaa",
+      "7fd26239-edc6-5f71-b550-a00cb60d2298",
+      "fb1d1f2d-f881-544c-ada6-4f90a2a5c8a7",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "b7083f9a-5221-5c7f-be60-488be27913be",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "dbc0330a-981a-58bc-891c-5b0102f48291"
+     ],
+     "pages": [
+      13,
+      14,
+      20,
+      21,
+      21,
+      12,
+      12,
+      19,
+      12,
+      13,
+      11,
+      10
+     ],
+     "scores": [
+      0.9031,
+      0.8848,
+      0.8822,
+      0.8815,
+      0.8802,
+      0.8801,
+      0.8795,
+      0.8793,
+      0.8792,
+      0.8786,
+      0.8745,
+      0.8715
+     ]
+    },
+    "Q13": {
+     "status": "ok",
+     "reason": "",
+     "ms": 4.3,
+     "hits": [
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "eeb102a8-e4af-529b-8c73-0e34d037a3ea",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "b18b7d53-55fa-562f-a99f-56d12a548598",
+      "c8e50fea-b085-59f8-8d36-fbc33664bac3",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "7afea252-ebd5-5285-81b8-556c43957ca0"
+     ],
+     "pages": [
+      12,
+      19,
+      12,
+      21,
+      13,
+      12,
+      14,
+      15,
+      13,
+      13,
+      19,
+      12
+     ],
+     "scores": [
+      0.8999,
+      0.8992,
+      0.8926,
+      0.8844,
+      0.8784,
+      0.8781,
+      0.8777,
+      0.8758,
+      0.8756,
+      0.8755,
+      0.8728,
+      0.8727
+     ]
+    },
+    "Q14": {
+     "status": "ok",
+     "reason": "",
+     "ms": 4.1,
+     "hits": [
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "a140cc63-6efa-52d7-9f2a-b862890f7e24",
+      "f630df56-07f1-5530-89db-810151cf20d5",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "7afea252-ebd5-5285-81b8-556c43957ca0",
+      "13e32522-6c1f-5ef4-9cb9-150ddde2f0f0",
+      "25ab14bd-dd78-5cf6-9e86-4b66d2553eaa",
+      "af380002-f92d-574e-8c38-cb2d1dcc02e7",
+      "eeb102a8-e4af-529b-8c73-0e34d037a3ea"
+     ],
+     "pages": [
+      12,
+      13,
+      21,
+      19,
+      12,
+      12,
+      14,
+      12,
+      11,
+      14,
+      19,
+      13
+     ],
+     "scores": [
+      0.9051,
+      0.8923,
+      0.8876,
+      0.879,
+      0.8774,
+      0.8739,
+      0.8738,
+      0.8731,
+      0.8721,
+      0.8715,
+      0.8696,
+      0.8689
+     ]
+    },
+    "Q15": {
+     "status": "ok",
+     "reason": "",
+     "ms": 5.9,
+     "hits": [
+      "f247f0de-98af-5c4c-a9f0-1dd50bbc1029",
+      "dbc0330a-981a-58bc-891c-5b0102f48291",
+      "416853ac-e3b3-5068-a5fe-9888b825a79c",
+      "e0cd4a3d-0775-5297-8924-fbd129fea1e5",
+      "f56c29b0-ee05-589d-a93a-025e307f209b",
+      "efe2e83e-95e5-58f0-8a0a-99ee39840cd6",
+      "9306ca28-6912-5262-af8b-61fbe437bea5",
+      "9c4d706b-0cd8-5187-a510-39bb51280dbb",
+      "fb1d1f2d-f881-544c-ada6-4f90a2a5c8a7",
+      "2d662449-b997-5b76-a77e-85533f83722c",
+      "1de31cd9-47e4-5c18-a3ea-708f75536b16",
+      "f630df56-07f1-5530-89db-810151cf20d5"
+     ],
+     "pages": [
+      12,
+      10,
+      11,
+      12,
+      11,
+      16,
+      12,
+      9,
+      21,
+      14,
+      19,
+      21
+     ],
+     "scores": [
+      0.9128,
+      0.9114,
+      0.9051,
+      0.903,
+      0.8955,
+      0.8905,
+      0.8896,
+      0.8876,
+      0.882,
+      0.8817,
+      0.8815,
+      0.879
+     ]
+    }
+   }
+  }
+ }
+}

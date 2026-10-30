@@ -1,0 +1,1456 @@
+{
+ "provenance": {
+  "corpus_rows": 3215,
+  "corpus_fingerprint_sha256": "8ee2182de1ab87d8f9aedc5da7f562200283fa4579cad857f19fd8add87774ba",
+  "corpus_fingerprint_rule": "sha256 of '<chunk id>:<sha256(content)>' lines in corpus order",
+  "queries_sha256": "e4bed88d0410629f38163725bc43d9e7a0ae7e20e45eda83e88a6c5caa0c1a0d"
+ },
+ "runs": {
+  "fp32_arm64": {
+   "meta": {
+    "variant_requested": "fp32",
+    "variant": "fp32",
+    "checksum": "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665",
+    "machine": "aarch64",
+    "cpu": "aarch64",
+    "avx2": false,
+    "avx512_vnni": false,
+    "cpu_flags_simulated": false,
+    "onnxruntime": "1.20.1",
+    "load_s": 1.32,
+    "passages": 3215,
+    "passage_embed_s": 54.8,
+    "passage_ms_per_chunk": 17.05,
+    "query_ms_p50": 4.7,
+    "query_ms_p95": 7.4,
+    "rss_before_mb": 41.0,
+    "rss_peak_mb": 1156.0
+   },
+   "all": {
+    "n": 35,
+    "recall5_strict": 0.857,
+    "mrr10_strict": 0.629,
+    "recall5_family": 1.0,
+    "mrr10_family": 0.9
+   },
+   "khai_sinh_1": {
+    "n": 9,
+    "recall5_strict": 0.556,
+    "mrr10_strict": 0.303,
+    "recall5_family": 1.0,
+    "mrr10_family": 0.944
+   },
+   "khai_sinh_other": {
+    "n": 7,
+    "recall5_strict": 0.857,
+    "mrr10_strict": 0.714,
+    "recall5_family": 1.0,
+    "mrr10_family": 0.929
+   },
+   "other": {
+    "n": 19,
+    "recall5_strict": 1.0,
+    "mrr10_strict": 0.752,
+    "recall5_family": 1.0,
+    "mrr10_family": 0.868
+   }
+  },
+  "int8_arm64_simflags": {
+   "meta": {
+    "variant_requested": "int8-vnni",
+    "variant": "qint8_avx512_vnni",
+    "checksum": "dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2d88",
+    "machine": "aarch64",
+    "cpu": "aarch64",
+    "avx2": false,
+    "avx512_vnni": false,
+    "cpu_flags_simulated": true,
+    "onnxruntime": "1.20.1",
+    "load_s": 0.63,
+    "passages": 3215,
+    "passage_embed_s": 31.8,
+    "passage_ms_per_chunk": 9.88,
+    "query_ms_p50": 3.0,
+    "query_ms_p95": 4.1,
+    "rss_before_mb": 41.0,
+    "rss_peak_mb": 595.0
+   },
+   "all": {
+    "n": 35,
+    "recall5_strict": 0.829,
+    "mrr10_strict": 0.576,
+    "recall5_family": 1.0,
+    "mrr10_family": 0.862
+   },
+   "khai_sinh_1": {
+    "n": 9,
+    "recall5_strict": 0.556,
+    "mrr10_strict": 0.32,
+    "recall5_family": 1.0,
+    "mrr10_family": 1.0
+   },
+   "khai_sinh_other": {
+    "n": 7,
+    "recall5_strict": 1.0,
+    "mrr10_strict": 0.762,
+    "recall5_family": 1.0,
+    "mrr10_family": 0.905
+   },
+   "other": {
+    "n": 19,
+    "recall5_strict": 0.895,
+    "mrr10_strict": 0.629,
+    "recall5_family": 1.0,
+    "mrr10_family": 0.781
+   }
+  }
+ },
+ "pairs": {
+  "fp32_arm64 vs int8_arm64_simflags": {
+   "cos_query_mean": 0.99659,
+   "cos_query_min": 0.99447,
+   "cos_passage_mean": 0.99429,
+   "cos_passage_min": 0.98246,
+   "cos_passage_p01": 0.98463,
+   "top5_overlap_mean": 0.76,
+   "top10_identical_share": 0.0,
+   "top1_same_share": 0.714
+  }
+ },
+ "per_query": {
+  "fp32_arm64": [
+   {
+    "q": "Đăng ký khai sinh cho con cần chuẩn bị những giấy tờ gì?",
+    "rank_strict": 10,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "9a66a98d-20c3-592c-b3b8-8ca5b58a468d",
+     "19dd0fc0-ced1-5845-8866-10430dcf974f",
+     "35bfcba4-75ea-587b-8e68-10bb9d78e78f",
+     "0ae2c6d0-d44d-57a1-918c-f85bda92bb75",
+     "70744c4c-1189-5a2e-a817-cb5090f4a036"
+    ],
+    "top5_pages": [
+     360,
+     123,
+     111,
+     24,
+     112
+    ]
+   },
+   {
+    "q": "Thời hạn giải quyết đăng ký khai sinh là bao lâu?",
+    "rank_strict": 4,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "4614a11b-b3e7-59f6-8f6c-51eda2a7069d",
+     "56f75513-ac13-5a12-9abe-3cc43d12dc67",
+     "287fd6d8-3ea1-5378-9347-3612bf7b6f70",
+     "94f45b10-53b8-54cb-89b9-df2d4c3b00e3",
+     "b25e6e8f-ead2-5c33-9456-68ef2bb621ee"
+    ],
+    "top5_pages": [
+     83,
+     39,
+     27,
+     15,
+     51
+    ]
+   },
+   {
+    "q": "Nộp hồ sơ đăng ký khai sinh ở đâu?",
+    "rank_strict": 8,
+    "rank_family": 2,
+    "top5_chunk_ids": [
+     "5a0727f5-a466-590a-b51c-a8251a0e42d9",
+     "70744c4c-1189-5a2e-a817-cb5090f4a036",
+     "19dd0fc0-ced1-5845-8866-10430dcf974f",
+     "80501cdf-403c-5313-a7e6-d15d1fc58a87",
+     "ab709b78-f776-5f0f-820a-bfe5ee2576c2"
+    ],
+    "top5_pages": [
+     121,
+     112,
+     123,
+     121,
+     48
+    ]
+   },
+   {
+    "q": "Không có giấy chứng sinh thì đăng ký khai sinh thế nào?",
+    "rank_strict": 4,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "98fbfa6f-9e58-5fb6-9e19-96db0585c12f",
+     "9a66a98d-20c3-592c-b3b8-8ca5b58a468d",
+     "13f62405-7217-55cb-a246-384718863e21",
+     "63480d92-58d5-563f-8521-d11bc110bab4",
+     "70744c4c-1189-5a2e-a817-cb5090f4a036"
+    ],
+    "top5_pages": [
+     23,
+     360,
+     117,
+     18,
+     112
+    ]
+   },
+   {
+    "q": "Lệ phí đăng ký khai sinh cho trẻ em là bao nhiêu?",
+    "rank_strict": 2,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "0866b6ae-c6ee-53fd-af3b-0eeb60f4621f",
+     "66df68d4-ecf0-5272-ae51-3b86ec9d3fc1",
+     "ef781d28-394b-52e9-9fff-6f1441424878",
+     "fc2bf5fe-06b7-5871-bf6f-961eaccf45c6",
+     "94f36f56-6eb2-5299-9dde-066b5cd811d8"
+    ],
+    "top5_pages": [
+     39,
+     15,
+     361,
+     382,
+     120
+    ]
+   },
+   {
+    "q": "Trình tự thực hiện thủ tục đăng ký khai sinh tại UBND cấp xã",
+    "rank_strict": null,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "d762e733-f342-5c54-a9ec-e6742b226051",
+     "2adc1198-de4a-5dba-b562-a2418f2bd98f",
+     "b25e6e8f-ead2-5c33-9456-68ef2bb621ee",
+     "20c95ce6-7ec5-5afc-aeef-22df60d6d939",
+     "086a8424-97cc-560f-a74b-5cd95c387322"
+    ],
+    "top5_pages": [
+     39,
+     51,
+     51,
+     111,
+     122
+    ]
+   },
+   {
+    "q": "Tờ khai đăng ký khai sinh theo mẫu nào?",
+    "rank_strict": null,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "05f19a51-7f2e-5f35-88cb-207a19c7fbbb",
+     "5c62eaa1-f12d-5537-96be-3debd4f1692b",
+     "7e090d49-b235-5a17-9778-acc974c75f8f",
+     "9043d4f3-63cc-5b56-89eb-4a151b072c7d",
+     "ad9eee16-d1fe-5baa-963b-52cd605895f1"
+    ],
+    "top5_pages": [
+     91,
+     65,
+     238,
+     76,
+     106
+    ]
+   },
+   {
+    "q": "Trẻ bị bỏ rơi thì đăng ký khai sinh cần biên bản gì?",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "ea70495b-2497-52f6-b285-37dc99c0f727",
+     "be846b02-0cc5-5f48-9608-b0b202469a89",
+     "78e4613b-6074-5820-8e05-23bea88743c8",
+     "9c473acc-8542-5048-84cf-e3e1b66b40e5",
+     "375fa38b-aca1-5967-81ec-3834b0865283"
+    ],
+    "top5_pages": [
+     12,
+     12,
+     11,
+     15,
+     12
+    ]
+   },
+   {
+    "q": "Ai có trách nhiệm đi đăng ký khai sinh cho trẻ?",
+    "rank_strict": 2,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "ef781d28-394b-52e9-9fff-6f1441424878",
+     "78e4613b-6074-5820-8e05-23bea88743c8",
+     "0b197a95-4237-5fe5-ba55-afe9afd68895",
+     "ab709b78-f776-5f0f-820a-bfe5ee2576c2",
+     "39df3897-efe1-52b3-9b1c-3ab999a5c58d"
+    ],
+    "top5_pages": [
+     361,
+     11,
+     24,
+     48,
+     21
+    ]
+   },
+   {
+    "q": "Đăng ký khai sinh cho trẻ có cha hoặc mẹ là người nước ngoài",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "88f785da-b747-537b-9720-58bb32c43e9a",
+     "0b197a95-4237-5fe5-ba55-afe9afd68895",
+     "4424f878-8927-54d1-98e3-009b15dd71da",
+     "747697f9-05b7-5f25-9f07-07d693801aed",
+     "a0c0c1cb-788f-5f92-8d78-7ffc1ef25992"
+    ],
+    "top5_pages": [
+     27,
+     24,
+     99,
+     25,
+     24
+    ]
+   },
+   {
+    "q": "Đăng ký lại khai sinh khi sổ hộ tịch bị mất cần giấy tờ gì?",
+    "rank_strict": 6,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "12bbf9c0-8d08-5edf-9f70-9ef5b58d61d3",
+     "e65bc7f9-684f-5c38-8967-7c97d5032f43",
+     "8c02c47e-094e-5254-93ea-37f8d57643dc",
+     "6ab18ae4-3358-5b14-b4dd-8014abe53c95",
+     "e47e40f2-6b2e-562b-aa07-a4969b431a68"
+    ],
+    "top5_pages": [
+     47,
+     97,
+     372,
+     13,
+     323
+    ]
+   },
+   {
+    "q": "Đăng ký khai sinh đồng thời nhận cha con",
+    "rank_strict": 2,
+    "rank_family": 2,
+    "top5_chunk_ids": [
+     "4424f878-8927-54d1-98e3-009b15dd71da",
+     "4614a11b-b3e7-59f6-8f6c-51eda2a7069d",
+     "7e6ea0ae-73ae-51c7-96c6-ab69460d3d66",
+     "55d97cdc-8e88-59bd-adc9-b8d4d5a3342b",
+     "136475dc-2733-56bd-8ca7-1fceba770225"
+    ],
+    "top5_pages": [
+     99,
+     83,
+     405,
+     96,
+     90
+    ]
+   },
+   {
+    "q": "Người lớn tuổi đã có giấy tờ cá nhân nhưng chưa đăng ký khai sinh",
+    "rank_strict": 3,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "63480d92-58d5-563f-8521-d11bc110bab4",
+     "9eaf6a95-4c91-5994-9e6e-3b1c955ca74d",
+     "13f62405-7217-55cb-a246-384718863e21",
+     "e53f3e80-ef59-55d4-8fbd-600a2578a3e0",
+     "bf616590-8014-50f6-b0df-4f7237d0d08e"
+    ],
+    "top5_pages": [
+     18,
+     128,
+     117,
+     87,
+     30
+    ]
+   },
+   {
+    "q": "Đăng ký khai sinh lưu động được thực hiện khi nào?",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "912831e0-6cd2-557c-8d41-1e08dd5bbf31",
+     "9ccc59e0-d36c-5fa6-b8e1-4d97f7720bc1",
+     "5e8d311e-4145-567f-9ba2-bbaf839a04b7",
+     "b25e6e8f-ead2-5c33-9456-68ef2bb621ee",
+     "f0e52028-3ace-5a2f-9ef8-ab7ccda7620f"
+    ],
+    "top5_pages": [
+     359,
+     51,
+     7,
+     51,
+     358
+    ]
+   },
+   {
+    "q": "Khai sinh cho trẻ sinh ra ở khu vực biên giới có cha mẹ là công dân nước láng giềng",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "7274e8d4-2b11-5522-9861-c110caab950d",
+     "9ebc6142-93f3-5c01-9665-d0fe438739b1",
+     "a1a6b0b6-c91a-5459-b544-9a385ab8c075",
+     "4424f878-8927-54d1-98e3-009b15dd71da",
+     "1fbb507f-3b9d-5a0d-a2c2-7cc931b4b335"
+    ],
+    "top5_pages": [
+     382,
+     379,
+     381,
+     99,
+     402
+    ]
+   },
+   {
+    "q": "Cấp bản sao giấy khai sinh từ cơ sở dữ liệu hộ tịch điện tử",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "d3c748a2-0225-5785-abe0-7fe9b1277e69",
+     "136475dc-2733-56bd-8ca7-1fceba770225",
+     "56ceae4a-d6d9-563b-bf47-80cd91de433a",
+     "3fc25e52-463d-54c6-85c5-76f63f3c9d06",
+     "ffb130ff-5819-5d47-a8b1-7303ecfa7879"
+    ],
+    "top5_pages": [
+     432,
+     90,
+     443,
+     9,
+     433
+    ]
+   },
+   {
+    "q": "Hồ sơ đăng ký kết hôn gồm những gì?",
+    "rank_strict": 5,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "12340538-9d47-5dae-8e42-b7615b8b4eab",
+     "41a64ffe-6d31-5ee1-a2c5-2dd6c366840e",
+     "279ce7a3-8e8e-5693-82a9-5ebcb175ed63",
+     "ce4a3c7d-f143-51e9-9ec8-d93b2f24bb9a",
+     "7167be8d-031b-5fd7-af36-0849a6264ada"
+    ],
+    "top5_pages": [
+     365,
+     168,
+     145,
+     390,
+     134
+    ]
+   },
+   {
+    "q": "Kết hôn với người nước ngoài làm thủ tục ở đâu?",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "eb6eb981-763d-5819-963a-e0cd430319c0",
+     "ca8941d8-d967-52fd-97bd-42740db5a71d",
+     "c39de7ce-ae5a-5fd9-9b91-6b42143c35c9",
+     "485dc963-a8ee-5ad6-8f21-7937c7fed2c6",
+     "14dd3026-fb62-5f5d-a7e8-716064ed7808"
+    ],
+    "top5_pages": [
+     148,
+     393,
+     326,
+     145,
+     325
+    ]
+   },
+   {
+    "q": "Đăng ký lại kết hôn khi mất giấy chứng nhận kết hôn",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "2b2e14bd-6d10-5faa-af15-a0f17b1396dd",
+     "7b500342-d5c9-532c-8468-03bd34eca9db",
+     "050e5dc6-0736-5a7f-81ac-bff5da574c58",
+     "b1572a80-a7fe-5598-971f-bb14764f187c",
+     "fc647fb9-34c5-52de-9149-4519b20e8c1d"
+    ],
+    "top5_pages": [
+     156,
+     167,
+     171,
+     170,
+     167
+    ]
+   },
+   {
+    "q": "Đăng ký kết hôn lưu động",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "dd3670fe-6379-5436-a5d2-7dcc79c101e8",
+     "5eef6fb0-b328-5f68-9643-1653f232ea5a",
+     "3c4056ea-0ff4-5fe9-8dbe-bbf933fc8fc1",
+     "ff95759c-f7c8-5e38-b1ea-209b03160e34",
+     "eea875c2-8726-567b-b02a-243fb187f2bf"
+    ],
+    "top5_pages": [
+     365,
+     365,
+     151,
+     364,
+     317
+    ]
+   },
+   {
+    "q": "Người thân mất thì đăng ký khai tử trong thời hạn bao lâu?",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "bd7ee8ad-9021-5ed0-b4b8-8da4702d6a31",
+     "b1c9c4e4-223d-58ca-a6d9-d93619678fc4",
+     "bfbbc434-243c-51e7-b920-a682353d17c6",
+     "47632046-d0c7-5438-b95e-bdeca748d37c",
+     "69a30732-4897-58e1-b1c7-002edd14ab05"
+    ],
+    "top5_pages": [
+     179,
+     214,
+     180,
+     372,
+     372
+    ]
+   },
+   {
+    "q": "Giấy báo tử dùng khi đăng ký khai tử",
+    "rank_strict": 3,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "37b4b4c8-dba5-5caa-9335-679bd865de2a",
+     "da78c749-26ef-5e9f-92c1-6a6359469a0b",
+     "95282be3-300a-528d-8d7a-a6103395bbd4",
+     "bf8358e0-36a6-5fe4-bbba-b24d180236e0",
+     "7326614c-d6ab-5b3c-a390-10c415dde88f"
+    ],
+    "top5_pages": [
+     196,
+     189,
+     178,
+     178,
+     210
+    ]
+   },
+   {
+    "q": "Khai tử cho người nước ngoài chết tại Việt Nam",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "4a021de0-2714-5c2b-a932-2def492ba07b",
+     "b1c9c4e4-223d-58ca-a6d9-d93619678fc4",
+     "c9242969-2e23-55d7-bdef-6f689cfab41a",
+     "4ff6d263-2796-51c8-8862-afa0e68b931b",
+     "305d563d-b74e-5ffb-9fd1-a8861224e01b"
+    ],
+    "top5_pages": [
+     192,
+     214,
+     423,
+     412,
+     214
+    ]
+   },
+   {
+    "q": "Đăng ký lại khai tử",
+    "rank_strict": 2,
+    "rank_family": 2,
+    "top5_chunk_ids": [
+     "b1c9c4e4-223d-58ca-a6d9-d93619678fc4",
+     "103b37c5-5b66-53c7-bc1a-ce3bf91c88de",
+     "9183b71d-d4f2-58bf-bc92-a9040244f358",
+     "7326614c-d6ab-5b3c-a390-10c415dde88f",
+     "d263f696-ccf2-56a1-82c1-af3b4e2c2614"
+    ],
+    "top5_pages": [
+     214,
+     206,
+     217,
+     210,
+     198
+    ]
+   },
+   {
+    "q": "Thủ tục nhận cha cho con ngoài giá thú",
+    "rank_strict": 4,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "8062c266-3c7a-51b1-9029-10864590e18e",
+     "9efd8105-91e3-51b3-a10e-1d16ce07eb93",
+     "db0ba9ca-71f5-57e2-8caa-f153b73b6710",
+     "63ea996a-0722-5253-918c-2853ca37a7b7",
+     "b47111a5-84dd-5f34-93ad-4869c012f4bd"
+    ],
+    "top5_pages": [
+     71,
+     76,
+     354,
+     65,
+     106
+    ]
+   },
+   {
+    "q": "Nhận con khi một bên là người nước ngoài",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "9efd8105-91e3-51b3-a10e-1d16ce07eb93",
+     "63ea996a-0722-5253-918c-2853ca37a7b7",
+     "61391191-0468-5605-bfb6-39502380b006",
+     "b47111a5-84dd-5f34-93ad-4869c012f4bd",
+     "c823d8d5-58d7-5fc8-b573-a9f1c35ff39a"
+    ],
+    "top5_pages": [
+     76,
+     65,
+     91,
+     106,
+     407
+    ]
+   },
+   {
+    "q": "Cử người giám hộ cho trẻ mồ côi",
+    "rank_strict": 2,
+    "rank_family": 2,
+    "top5_chunk_ids": [
+     "c21a7f6d-5483-594a-bd2b-41bc8e30bb0d",
+     "00841812-81d4-5105-94b4-468b270b4568",
+     "3f5ce80a-249a-5f8b-922b-7fdf6df925e0",
+     "051ad7b6-a2f5-516a-b0b7-26fe200702cb",
+     "33b929ec-77e6-5291-8a05-74cf6f1819f4"
+    ],
+    "top5_pages": [
+     259,
+     227,
+     259,
+     238,
+     238
+    ]
+   },
+   {
+    "q": "Chấm dứt việc giám hộ",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "e66ac075-02a5-5ce7-acf0-9f8a518f750b",
+     "3f5ce80a-249a-5f8b-922b-7fdf6df925e0",
+     "622a1c51-9cd5-5e40-9542-e8c2a09445d3",
+     "35919db9-1a6b-58fc-9fa9-c12e4340d127",
+     "f10ebb32-d959-5695-b34a-69ac6b996fb9"
+    ],
+    "top5_pages": [
+     248,
+     259,
+     281,
+     259,
+     281
+    ]
+   },
+   {
+    "q": "Đăng ký giám sát việc giám hộ",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "97efe4a6-99cf-5261-a179-016781276dfc",
+     "5a19dd0c-5e88-5775-ae79-385c0072b5a6",
+     "66dfb469-4c25-5b83-82be-ac7616aeb419",
+     "6a6b02df-b4a5-5418-848c-40b938bf6131",
+     "a3d01872-9558-5b87-9941-010a358b974a"
+    ],
+    "top5_pages": [
+     270,
+     270,
+     281,
+     270,
+     270
+    ]
+   },
+   {
+    "q": "Thay đổi họ tên, cải chính ngày sinh trong giấy khai sinh",
+    "rank_strict": 2,
+    "rank_family": 2,
+    "top5_chunk_ids": [
+     "f896245c-208e-5c12-952c-54f373fe23e7",
+     "eb15ab93-a9f9-5f47-b2e5-4c0b94519374",
+     "22b917bd-8373-5c17-ab0c-646dd8eee049",
+     "34c55495-8d1b-59de-a5ac-b92a489fc635",
+     "50185342-f525-5fcd-bc3f-dbed159f4542"
+    ],
+    "top5_pages": [
+     307,
+     294,
+     290,
+     54,
+     299
+    ]
+   },
+   {
+    "q": "Xác định lại dân tộc cho con",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "e3f103a5-d057-5021-97ae-811aeb146210",
+     "d46302bc-36a9-5815-af3c-79ddfaaf193d",
+     "4424f878-8927-54d1-98e3-009b15dd71da",
+     "2a284958-06cc-5638-95c1-506fb992f237",
+     "2d2a7be2-bd5c-5cee-961a-7ba78b9b4d5d"
+    ],
+    "top5_pages": [
+     289,
+     381,
+     99,
+     99,
+     308
+    ]
+   },
+   {
+    "q": "Ghi chú việc ly hôn đã giải quyết ở nước ngoài vào sổ hộ tịch",
+    "rank_strict": 2,
+    "rank_family": 2,
+    "top5_chunk_ids": [
+     "40ff3f67-36f2-5f4d-8b87-e82e838a55a7",
+     "e20cc9fd-3473-5773-b391-2bf3168d1c44",
+     "896e3b7f-fe85-5b35-b8e5-a4a737087ec3",
+     "ba26ce3c-ac64-5b39-ae47-b069a37885ab",
+     "f6ad15cc-00bc-560d-a793-7c53d304e93a"
+    ],
+    "top5_pages": [
+     346,
+     320,
+     135,
+     310,
+     6
+    ]
+   },
+   {
+    "q": "Xin giấy xác nhận tình trạng hôn nhân để kết hôn",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "17786ecc-18d4-5e96-8804-877d1390f621",
+     "58ac970b-399b-5c0e-9929-79077388a00c",
+     "3779b504-1acc-5f48-8c56-4a4f29c37e3f",
+     "96485f11-b4d4-5f1e-921a-92ab90aea947",
+     "79ee23f9-7380-58a2-8bf7-3d21f8b8cf63"
+    ],
+    "top5_pages": [
+     424,
+     429,
+     424,
+     128,
+     429
+    ]
+   },
+   {
+    "q": "Giấy xác nhận tình trạng độc thân có giá trị bao lâu?",
+    "rank_strict": 2,
+    "rank_family": 2,
+    "top5_chunk_ids": [
+     "34aee9a0-3986-5fe2-bc1e-d0fa6d419671",
+     "17786ecc-18d4-5e96-8804-877d1390f621",
+     "e45f118a-a580-505f-acaa-b84d98a36788",
+     "6c97616b-8be5-5c67-8121-605d0f755400",
+     "93c4fd3d-493c-5619-8706-286c2c0cf96b"
+    ],
+    "top5_pages": [
+     145,
+     424,
+     426,
+     431,
+     422
+    ]
+   },
+   {
+    "q": "Xác nhận thông tin hộ tịch trên cơ sở dữ liệu",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "6569a751-3ab8-5b8e-a698-6e3f0718c4ff",
+     "11b751ab-f71e-5e3c-bfaf-32394c6fae47",
+     "5234e2b3-a681-5743-afd9-8ab75762d8d5",
+     "16e3301c-8444-5b9b-b60a-f3b2f3fa7927",
+     "ccc38102-59d8-5231-91cb-a0d757adfa17"
+    ],
+    "top5_pages": [
+     448,
+     448,
+     443,
+     276,
+     244
+    ]
+   }
+  ],
+  "int8_arm64_simflags": [
+   {
+    "q": "Đăng ký khai sinh cho con cần chuẩn bị những giấy tờ gì?",
+    "rank_strict": null,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "9a66a98d-20c3-592c-b3b8-8ca5b58a468d",
+     "70744c4c-1189-5a2e-a817-cb5090f4a036",
+     "19dd0fc0-ced1-5845-8866-10430dcf974f",
+     "35bfcba4-75ea-587b-8e68-10bb9d78e78f",
+     "c8e6dd1c-c8da-573a-ac5c-452a7668e2fa"
+    ],
+    "top5_pages": [
+     360,
+     112,
+     123,
+     111,
+     96
+    ]
+   },
+   {
+    "q": "Thời hạn giải quyết đăng ký khai sinh là bao lâu?",
+    "rank_strict": 4,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "56f75513-ac13-5a12-9abe-3cc43d12dc67",
+     "4614a11b-b3e7-59f6-8f6c-51eda2a7069d",
+     "287fd6d8-3ea1-5378-9347-3612bf7b6f70",
+     "94f45b10-53b8-54cb-89b9-df2d4c3b00e3",
+     "b25e6e8f-ead2-5c33-9456-68ef2bb621ee"
+    ],
+    "top5_pages": [
+     39,
+     83,
+     27,
+     15,
+     51
+    ]
+   },
+   {
+    "q": "Nộp hồ sơ đăng ký khai sinh ở đâu?",
+    "rank_strict": 5,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "70744c4c-1189-5a2e-a817-cb5090f4a036",
+     "ab709b78-f776-5f0f-820a-bfe5ee2576c2",
+     "1e998e4c-ef02-55b1-bb9a-fb1bde84e631",
+     "5a0727f5-a466-590a-b51c-a8251a0e42d9",
+     "c5ed93d4-5f60-5ccc-a1da-9189b078b384"
+    ],
+    "top5_pages": [
+     112,
+     48,
+     22,
+     121,
+     10
+    ]
+   },
+   {
+    "q": "Không có giấy chứng sinh thì đăng ký khai sinh thế nào?",
+    "rank_strict": 10,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "98fbfa6f-9e58-5fb6-9e19-96db0585c12f",
+     "70744c4c-1189-5a2e-a817-cb5090f4a036",
+     "c8e6dd1c-c8da-573a-ac5c-452a7668e2fa",
+     "19dd0fc0-ced1-5845-8866-10430dcf974f",
+     "9a66a98d-20c3-592c-b3b8-8ca5b58a468d"
+    ],
+    "top5_pages": [
+     23,
+     112,
+     96,
+     123,
+     360
+    ]
+   },
+   {
+    "q": "Lệ phí đăng ký khai sinh cho trẻ em là bao nhiêu?",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "66df68d4-ecf0-5272-ae51-3b86ec9d3fc1",
+     "0866b6ae-c6ee-53fd-af3b-0eeb60f4621f",
+     "3c6f4653-7d7a-528b-9adb-77f5fd5091d7",
+     "c8d08229-f1f6-55dc-a78c-6c8c735ca9d5",
+     "b9ea867d-d8c6-5d3a-a412-c1f5d912b731"
+    ],
+    "top5_pages": [
+     15,
+     39,
+     125,
+     51,
+     84
+    ]
+   },
+   {
+    "q": "Trình tự thực hiện thủ tục đăng ký khai sinh tại UBND cấp xã",
+    "rank_strict": null,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "d762e733-f342-5c54-a9ec-e6742b226051",
+     "b25e6e8f-ead2-5c33-9456-68ef2bb621ee",
+     "2adc1198-de4a-5dba-b562-a2418f2bd98f",
+     "20c95ce6-7ec5-5afc-aeef-22df60d6d939",
+     "56f75513-ac13-5a12-9abe-3cc43d12dc67"
+    ],
+    "top5_pages": [
+     39,
+     51,
+     51,
+     111,
+     39
+    ]
+   },
+   {
+    "q": "Tờ khai đăng ký khai sinh theo mẫu nào?",
+    "rank_strict": null,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "05f19a51-7f2e-5f35-88cb-207a19c7fbbb",
+     "5c62eaa1-f12d-5537-96be-3debd4f1692b",
+     "5eaa0684-fccd-59b5-b85f-609a2b1b604c",
+     "850268ea-e606-5d40-b68f-0140fc019719",
+     "912831e0-6cd2-557c-8d41-1e08dd5bbf31"
+    ],
+    "top5_pages": [
+     91,
+     65,
+     407,
+     91,
+     359
+    ]
+   },
+   {
+    "q": "Trẻ bị bỏ rơi thì đăng ký khai sinh cần biên bản gì?",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "be846b02-0cc5-5f48-9608-b0b202469a89",
+     "ea70495b-2497-52f6-b285-37dc99c0f727",
+     "78e4613b-6074-5820-8e05-23bea88743c8",
+     "375fa38b-aca1-5967-81ec-3834b0865283",
+     "9c473acc-8542-5048-84cf-e3e1b66b40e5"
+    ],
+    "top5_pages": [
+     12,
+     12,
+     11,
+     12,
+     15
+    ]
+   },
+   {
+    "q": "Ai có trách nhiệm đi đăng ký khai sinh cho trẻ?",
+    "rank_strict": 3,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "70744c4c-1189-5a2e-a817-cb5090f4a036",
+     "0b197a95-4237-5fe5-ba55-afe9afd68895",
+     "78e4613b-6074-5820-8e05-23bea88743c8",
+     "ab709b78-f776-5f0f-820a-bfe5ee2576c2",
+     "39df3897-efe1-52b3-9b1c-3ab999a5c58d"
+    ],
+    "top5_pages": [
+     112,
+     24,
+     11,
+     48,
+     21
+    ]
+   },
+   {
+    "q": "Đăng ký khai sinh cho trẻ có cha hoặc mẹ là người nước ngoài",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "88f785da-b747-537b-9720-58bb32c43e9a",
+     "a0c0c1cb-788f-5f92-8d78-7ffc1ef25992",
+     "747697f9-05b7-5f25-9f07-07d693801aed",
+     "4424f878-8927-54d1-98e3-009b15dd71da",
+     "c8e6dd1c-c8da-573a-ac5c-452a7668e2fa"
+    ],
+    "top5_pages": [
+     27,
+     24,
+     25,
+     99,
+     96
+    ]
+   },
+   {
+    "q": "Đăng ký lại khai sinh khi sổ hộ tịch bị mất cần giấy tờ gì?",
+    "rank_strict": 2,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "12bbf9c0-8d08-5edf-9f70-9ef5b58d61d3",
+     "312de8e6-4309-5695-b5fd-9a3bead686fa",
+     "e65bc7f9-684f-5c38-8967-7c97d5032f43",
+     "7af50c70-7129-53f9-bdc7-321393b935e7",
+     "8c02c47e-094e-5254-93ea-37f8d57643dc"
+    ],
+    "top5_pages": [
+     47,
+     35,
+     97,
+     35,
+     372
+    ]
+   },
+   {
+    "q": "Đăng ký khai sinh đồng thời nhận cha con",
+    "rank_strict": 3,
+    "rank_family": 3,
+    "top5_chunk_ids": [
+     "4424f878-8927-54d1-98e3-009b15dd71da",
+     "55d97cdc-8e88-59bd-adc9-b8d4d5a3342b",
+     "4614a11b-b3e7-59f6-8f6c-51eda2a7069d",
+     "bd22663d-5937-582d-b2ef-25c42b5d9e7d",
+     "01479ccc-43f7-5aa8-be65-32b00949079a"
+    ],
+    "top5_pages": [
+     99,
+     96,
+     83,
+     84,
+     96
+    ]
+   },
+   {
+    "q": "Người lớn tuổi đã có giấy tờ cá nhân nhưng chưa đăng ký khai sinh",
+    "rank_strict": 2,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "63480d92-58d5-563f-8521-d11bc110bab4",
+     "13f62405-7217-55cb-a246-384718863e21",
+     "9eaf6a95-4c91-5994-9e6e-3b1c955ca74d",
+     "e53f3e80-ef59-55d4-8fbd-600a2578a3e0",
+     "bf616590-8014-50f6-b0df-4f7237d0d08e"
+    ],
+    "top5_pages": [
+     18,
+     117,
+     128,
+     87,
+     30
+    ]
+   },
+   {
+    "q": "Đăng ký khai sinh lưu động được thực hiện khi nào?",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "912831e0-6cd2-557c-8d41-1e08dd5bbf31",
+     "9ccc59e0-d36c-5fa6-b8e1-4d97f7720bc1",
+     "42cbeae2-2934-593c-91c4-429b57b77400",
+     "5e8d311e-4145-567f-9ba2-bbaf839a04b7",
+     "b25e6e8f-ead2-5c33-9456-68ef2bb621ee"
+    ],
+    "top5_pages": [
+     359,
+     51,
+     7,
+     7,
+     51
+    ]
+   },
+   {
+    "q": "Khai sinh cho trẻ sinh ra ở khu vực biên giới có cha mẹ là công dân nước láng giềng",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "7274e8d4-2b11-5522-9861-c110caab950d",
+     "9ebc6142-93f3-5c01-9665-d0fe438739b1",
+     "a1a6b0b6-c91a-5459-b544-9a385ab8c075",
+     "1fbb507f-3b9d-5a0d-a2c2-7cc931b4b335",
+     "3f7589aa-e999-5935-bd9e-2d8555da6834"
+    ],
+    "top5_pages": [
+     382,
+     379,
+     381,
+     402,
+     89
+    ]
+   },
+   {
+    "q": "Cấp bản sao giấy khai sinh từ cơ sở dữ liệu hộ tịch điện tử",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "d3c748a2-0225-5785-abe0-7fe9b1277e69",
+     "136475dc-2733-56bd-8ca7-1fceba770225",
+     "ffb130ff-5819-5d47-a8b1-7303ecfa7879",
+     "3fc25e52-463d-54c6-85c5-76f63f3c9d06",
+     "4c7ab171-1c48-5653-807e-af0fdb86bb63"
+    ],
+    "top5_pages": [
+     432,
+     90,
+     433,
+     9,
+     82
+    ]
+   },
+   {
+    "q": "Hồ sơ đăng ký kết hôn gồm những gì?",
+    "rank_strict": null,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "12340538-9d47-5dae-8e42-b7615b8b4eab",
+     "068a6c39-79e4-5784-9c81-1312c9990ab2",
+     "279ce7a3-8e8e-5693-82a9-5ebcb175ed63",
+     "820f8fc6-46d6-5fae-bdf9-92564ec5f107",
+     "ce4a3c7d-f143-51e9-9ec8-d93b2f24bb9a"
+    ],
+    "top5_pages": [
+     365,
+     156,
+     145,
+     365,
+     390
+    ]
+   },
+   {
+    "q": "Kết hôn với người nước ngoài làm thủ tục ở đâu?",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "eb6eb981-763d-5819-963a-e0cd430319c0",
+     "c39de7ce-ae5a-5fd9-9b91-6b42143c35c9",
+     "ca8941d8-d967-52fd-97bd-42740db5a71d",
+     "485dc963-a8ee-5ad6-8f21-7937c7fed2c6",
+     "33d950ea-cb10-531b-ae8a-055667f240b4"
+    ],
+    "top5_pages": [
+     148,
+     326,
+     393,
+     145,
+     389
+    ]
+   },
+   {
+    "q": "Đăng ký lại kết hôn khi mất giấy chứng nhận kết hôn",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "2b2e14bd-6d10-5faa-af15-a0f17b1396dd",
+     "050e5dc6-0736-5a7f-81ac-bff5da574c58",
+     "fc647fb9-34c5-52de-9149-4519b20e8c1d",
+     "7b500342-d5c9-532c-8468-03bd34eca9db",
+     "45eb073b-428a-5aac-9ca6-bc87aa735808"
+    ],
+    "top5_pages": [
+     156,
+     171,
+     167,
+     167,
+     169
+    ]
+   },
+   {
+    "q": "Đăng ký kết hôn lưu động",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "dd3670fe-6379-5436-a5d2-7dcc79c101e8",
+     "5eef6fb0-b328-5f68-9643-1653f232ea5a",
+     "ff95759c-f7c8-5e38-b1ea-209b03160e34",
+     "3c4056ea-0ff4-5fe9-8dbe-bbf933fc8fc1",
+     "eea875c2-8726-567b-b02a-243fb187f2bf"
+    ],
+    "top5_pages": [
+     365,
+     365,
+     364,
+     151,
+     317
+    ]
+   },
+   {
+    "q": "Người thân mất thì đăng ký khai tử trong thời hạn bao lâu?",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "bd7ee8ad-9021-5ed0-b4b8-8da4702d6a31",
+     "b1c9c4e4-223d-58ca-a6d9-d93619678fc4",
+     "0af89bd0-00a1-5b21-a9bb-18db36c7cc1c",
+     "47632046-d0c7-5438-b95e-bdeca748d37c",
+     "69a30732-4897-58e1-b1c7-002edd14ab05"
+    ],
+    "top5_pages": [
+     179,
+     214,
+     219,
+     372,
+     372
+    ]
+   },
+   {
+    "q": "Giấy báo tử dùng khi đăng ký khai tử",
+    "rank_strict": 2,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "37b4b4c8-dba5-5caa-9335-679bd865de2a",
+     "95282be3-300a-528d-8d7a-a6103395bbd4",
+     "da78c749-26ef-5e9f-92c1-6a6359469a0b",
+     "bf8358e0-36a6-5fe4-bbba-b24d180236e0",
+     "71491a60-5326-57cb-97e8-cf368a8dc32e"
+    ],
+    "top5_pages": [
+     196,
+     178,
+     189,
+     178,
+     185
+    ]
+   },
+   {
+    "q": "Khai tử cho người nước ngoài chết tại Việt Nam",
+    "rank_strict": 3,
+    "rank_family": 3,
+    "top5_chunk_ids": [
+     "b1c9c4e4-223d-58ca-a6d9-d93619678fc4",
+     "c9242969-2e23-55d7-bdef-6f689cfab41a",
+     "4a021de0-2714-5c2b-a932-2def492ba07b",
+     "4ff6d263-2796-51c8-8862-afa0e68b931b",
+     "305d563d-b74e-5ffb-9fd1-a8861224e01b"
+    ],
+    "top5_pages": [
+     214,
+     423,
+     192,
+     412,
+     214
+    ]
+   },
+   {
+    "q": "Đăng ký lại khai tử",
+    "rank_strict": 4,
+    "rank_family": 4,
+    "top5_chunk_ids": [
+     "b1c9c4e4-223d-58ca-a6d9-d93619678fc4",
+     "9183b71d-d4f2-58bf-bc92-a9040244f358",
+     "7cb09fb2-6904-5743-9cdf-52dd948a0ba2",
+     "b5b0a6ec-a9d0-5d70-a16f-a6d16fb66799",
+     "7326614c-d6ab-5b3c-a390-10c415dde88f"
+    ],
+    "top5_pages": [
+     214,
+     217,
+     211,
+     200,
+     210
+    ]
+   },
+   {
+    "q": "Thủ tục nhận cha cho con ngoài giá thú",
+    "rank_strict": 9,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "8062c266-3c7a-51b1-9029-10864590e18e",
+     "2c43d132-439c-54af-8640-7ff04b0a4232",
+     "96ebebde-7a23-5692-be26-9ef8d1b23dd4",
+     "9576851b-9150-50ed-ab47-add05de8e711",
+     "db0ba9ca-71f5-57e2-8caa-f153b73b6710"
+    ],
+    "top5_pages": [
+     71,
+     427,
+     73,
+     100,
+     354
+    ]
+   },
+   {
+    "q": "Nhận con khi một bên là người nước ngoài",
+    "rank_strict": 4,
+    "rank_family": 4,
+    "top5_chunk_ids": [
+     "4424f878-8927-54d1-98e3-009b15dd71da",
+     "61391191-0468-5605-bfb6-39502380b006",
+     "555e7c01-5dee-5418-a2d2-8ef5f179c712",
+     "9efd8105-91e3-51b3-a10e-1d16ce07eb93",
+     "c823d8d5-58d7-5fc8-b573-a9f1c35ff39a"
+    ],
+    "top5_pages": [
+     99,
+     91,
+     99,
+     76,
+     407
+    ]
+   },
+   {
+    "q": "Cử người giám hộ cho trẻ mồ côi",
+    "rank_strict": 2,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "6a6b02df-b4a5-5418-848c-40b938bf6131",
+     "ab0795dc-687e-5630-aace-05f2a05a752e",
+     "051ad7b6-a2f5-516a-b0b7-26fe200702cb",
+     "3f5ce80a-249a-5f8b-922b-7fdf6df925e0",
+     "c21a7f6d-5483-594a-bd2b-41bc8e30bb0d"
+    ],
+    "top5_pages": [
+     270,
+     227,
+     238,
+     259,
+     259
+    ]
+   },
+   {
+    "q": "Chấm dứt việc giám hộ",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "e66ac075-02a5-5ce7-acf0-9f8a518f750b",
+     "3f5ce80a-249a-5f8b-922b-7fdf6df925e0",
+     "622a1c51-9cd5-5e40-9542-e8c2a09445d3",
+     "f10ebb32-d959-5695-b34a-69ac6b996fb9",
+     "95c69dcc-ce5c-5074-9442-83bdde04ef3b"
+    ],
+    "top5_pages": [
+     248,
+     259,
+     281,
+     281,
+     248
+    ]
+   },
+   {
+    "q": "Đăng ký giám sát việc giám hộ",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "97efe4a6-99cf-5261-a179-016781276dfc",
+     "5a19dd0c-5e88-5775-ae79-385c0072b5a6",
+     "66dfb469-4c25-5b83-82be-ac7616aeb419",
+     "a3d01872-9558-5b87-9941-010a358b974a",
+     "6a6b02df-b4a5-5418-848c-40b938bf6131"
+    ],
+    "top5_pages": [
+     270,
+     270,
+     281,
+     270,
+     270
+    ]
+   },
+   {
+    "q": "Thay đổi họ tên, cải chính ngày sinh trong giấy khai sinh",
+    "rank_strict": 2,
+    "rank_family": 2,
+    "top5_chunk_ids": [
+     "f896245c-208e-5c12-952c-54f373fe23e7",
+     "22b917bd-8373-5c17-ab0c-646dd8eee049",
+     "50185342-f525-5fcd-bc3f-dbed159f4542",
+     "cc506a19-8193-5e93-9359-825822981246",
+     "eb15ab93-a9f9-5f47-b2e5-4c0b94519374"
+    ],
+    "top5_pages": [
+     307,
+     290,
+     299,
+     293,
+     294
+    ]
+   },
+   {
+    "q": "Xác định lại dân tộc cho con",
+    "rank_strict": 2,
+    "rank_family": 2,
+    "top5_chunk_ids": [
+     "51e776bf-3bc4-50b1-8826-cc711a4f250d",
+     "e3f103a5-d057-5021-97ae-811aeb146210",
+     "2a284958-06cc-5638-95c1-506fb992f237",
+     "d46302bc-36a9-5815-af3c-79ddfaaf193d",
+     "0d1444f8-b651-5132-bba9-aa8084b02cd9"
+    ],
+    "top5_pages": [
+     83,
+     289,
+     99,
+     381,
+     15
+    ]
+   },
+   {
+    "q": "Ghi chú việc ly hôn đã giải quyết ở nước ngoài vào sổ hộ tịch",
+    "rank_strict": 2,
+    "rank_family": 2,
+    "top5_chunk_ids": [
+     "896e3b7f-fe85-5b35-b8e5-a4a737087ec3",
+     "e20cc9fd-3473-5773-b391-2bf3168d1c44",
+     "40ff3f67-36f2-5f4d-8b87-e82e838a55a7",
+     "ba26ce3c-ac64-5b39-ae47-b069a37885ab",
+     "f6ad15cc-00bc-560d-a793-7c53d304e93a"
+    ],
+    "top5_pages": [
+     135,
+     320,
+     346,
+     310,
+     6
+    ]
+   },
+   {
+    "q": "Xin giấy xác nhận tình trạng hôn nhân để kết hôn",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "17786ecc-18d4-5e96-8804-877d1390f621",
+     "3779b504-1acc-5f48-8c56-4a4f29c37e3f",
+     "58ac970b-399b-5c0e-9929-79077388a00c",
+     "79ee23f9-7380-58a2-8bf7-3d21f8b8cf63",
+     "b7aaa0a1-a366-5658-a92c-a1f869efb867"
+    ],
+    "top5_pages": [
+     424,
+     424,
+     429,
+     429,
+     430
+    ]
+   },
+   {
+    "q": "Giấy xác nhận tình trạng độc thân có giá trị bao lâu?",
+    "rank_strict": 2,
+    "rank_family": 2,
+    "top5_chunk_ids": [
+     "34aee9a0-3986-5fe2-bc1e-d0fa6d419671",
+     "6c97616b-8be5-5c67-8121-605d0f755400",
+     "93c4fd3d-493c-5619-8706-286c2c0cf96b",
+     "17786ecc-18d4-5e96-8804-877d1390f621",
+     "e45f118a-a580-505f-acaa-b84d98a36788"
+    ],
+    "top5_pages": [
+     145,
+     431,
+     422,
+     424,
+     426
+    ]
+   },
+   {
+    "q": "Xác nhận thông tin hộ tịch trên cơ sở dữ liệu",
+    "rank_strict": 1,
+    "rank_family": 1,
+    "top5_chunk_ids": [
+     "6569a751-3ab8-5b8e-a698-6e3f0718c4ff",
+     "16e3301c-8444-5b9b-b60a-f3b2f3fa7927",
+     "11b751ab-f71e-5e3c-bfaf-32394c6fae47",
+     "21e9328f-3f71-5a91-9a2b-f7955ef78848",
+     "5234e2b3-a681-5743-afd9-8ab75762d8d5"
+    ],
+    "top5_pages": [
+     448,
+     276,
+     448,
+     147,
+     443
+    ]
+   }
+  ]
+ }
+}

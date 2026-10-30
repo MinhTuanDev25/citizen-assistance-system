@@ -25,7 +25,9 @@ exec > >(tee -a "$OUT/smoke.log") 2>&1
 rnd() { openssl rand -hex "$1"; }
 JWT="$(rnd 32)"; AIT="$(rnd 16)"; PGPW="$(rnd 16)"; MU="casminio$(rnd 4)"; MP="$(rnd 16)"
 ADMIN_EMAIL=admin@chuse.vn; ADMIN_PW="Smoke-$(rnd 8)"
-ENVS=(-e CAS_SPEECH_MODE=off -e JWT_SECRET="$JWT" -e AI_SERVICE_TOKEN="$AIT" -e POSTGRES_PASSWORD="$PGPW"
+# Embedding variant under test; models/embedding must hold that variant's model.
+EV="${SMOKE_EMBEDDING_VARIANT:-fp32}"
+ENVS=(-e CAS_SPEECH_MODE=off -e EMBEDDING_VARIANT="$EV" -e JWT_SECRET="$JWT" -e AI_SERVICE_TOKEN="$AIT" -e POSTGRES_PASSWORD="$PGPW"
       -e MINIO_ROOT_USER="$MU" -e MINIO_ROOT_PASSWORD="$MP" -e LLM_PROVIDER=mock -e CAS_ALLOW_MOCK_LLM=true
       -e GEMINI_API_KEY="smoke-unused-$(rnd 12)")
 MODELS=(-v "$ROOT/models:/workspace/cas/models:ro")
@@ -92,18 +94,24 @@ printf 'not the model' > "$BADM/model.onnx"
 neg N9 "embedding model with a wrong checksum is refused before any init" "is not usable by the ai-service on this host" \
   "${ENVS[@]}" -v "$BADM:/workspace/cas/models/embedding:ro"
 rm -rf "$BADM"
-# N10: a model pinned for the OTHER CPU variant (what the CI runner hit: fp32 model on
-# an AVX-512 VNNI host) is refused at boot with the variant this host needs.
-NEED="$(docker run --rm --entrypoint bash "$IMG" -c 'cd /opt/cas/ai && /opt/cas/venv-ai/bin/python -c "from app.indexing.embed import select_embedding_variant as s;print(s())"' 2>/dev/null | tail -1)"
+# N10: a model of the OTHER variant than EMBEDDING_VARIANT selects on this host is
+# refused at boot, naming the variant it needs.
+NEED="$(docker run --rm -e EMBEDDING_VARIANT="$EV" --entrypoint bash "$IMG" -c 'cd /opt/cas/ai && /opt/cas/venv-ai/bin/python -c "from app.indexing.embed import select_embedding_variant as s;print(s())"' 2>/dev/null | tail -1)"
 case "$NEED" in qint8_avx512_vnni) OTHER=fp32 ;; fp32) OTHER=int8-vnni ;; *) OTHER="" ;; esac
 if [[ -n "$OTHER" ]]; then
   WRONGV="$OUT/wrongvariant"; mkdir -p "$WRONGV"
   cp "$HERE/../models/embedding.manifest.$OTHER.json" "$WRONGV/manifest.json"
   cp "$ROOT/models/embedding/model.onnx" "$ROOT/models/embedding/tokenizer.json" "$WRONGV/"
-  neg N10 "model of the other CPU variant is refused at boot (host needs $NEED)" "this CPU needs the '$NEED' model" \
+  neg N10 "model of the other variant is refused at boot (EMBEDDING_VARIANT=$EV needs $NEED)" "needs the '$NEED' model" \
     "${ENVS[@]}" -v "$WRONGV:/workspace/cas/models/embedding:ro"
   rm -rf "$WRONGV"
 else fail N10 "cannot determine the variant this host needs" "$NEED"; fi
+neg N11 "unknown EMBEDDING_VARIANT is refused" "EMBEDDING_VARIANT must be auto, fp32 or int8-vnni" "${ENVS[@]}" -e EMBEDDING_VARIANT=int8
+neg N12 "EMBEDDING_CPU_FLAGS (fake CPU flags) is refused outside tests" "EMBEDDING_CPU_FLAGS is for tests only" \
+  "${ENVS[@]}" "${MODELS[@]}" -e EMBEDDING_CPU_FLAGS=avx512f,avx512bw,avx512dq,avx512vl,avx512vnni
+# N13 simulates a CPU without AVX-512 VNNI (test-only flag override): int8-vnni is refused.
+neg N13 "EMBEDDING_VARIANT=int8-vnni on a CPU without AVX-512 VNNI is refused (simulated CPU flags)" "cannot run on this CPU (embedding_cpu_unsupported)" \
+  "${ENVS[@]}" "${MODELS[@]}" -e EMBEDDING_VARIANT=int8-vnni -e CAS_ALLOW_CPU_FLAGS_OVERRIDE=true -e EMBEDDING_CPU_FLAGS=sse2,avx,avx2
 # Prove N5 stopped before init work (no pgdata/CA written on that volume).
 if docker run --rm -v "$NEGVOL:/w" --entrypoint bash "$IMG" -c '[ ! -e /w/cas/pgdata/PG_VERSION ] && [ ! -e /w/cas/tls/ca.crt ]'; then
   pass N5b "gpu refusal happened before initdb and CA creation"
@@ -130,6 +138,7 @@ m="$(grep -n -m1 "bootstrap complete" "$OUT/S1_boot.log" | cut -d: -f1)"
 a="$(grep -n -m1 "wait-for\[uvicorn\]: ready" "$OUT/S1_boot.log" | cut -d: -f1)"
 [[ -n "$a" && -n "$m" && "$a" -gt "$m" ]] || order_ok=0
 if [[ $order_ok == 1 ]]; then pass S2 "startup order: data ready -> migrate -> bucket -> marker -> apps" "S2_order.txt"; else fail S2 "startup order" "S2_order.txt"; fi
+
 
 sup > "$OUT/S3_supervisor.txt"
 s3=1
@@ -383,6 +392,16 @@ PY
     pass I1 "scanned PDF indexed: Tesseract OCR + e5 embedding + Qdrant, link READY" "$(cat "$OUT/I1_index_summary.txt")"
   else fail I1 "scanned PDF index" "$(cat "$OUT/I1_index_summary.txt")"; fi
 fi
+
+# V1: the live pipeline embedded with the model EMBEDDING_VARIANT selected on this CPU:
+# the READY generation stores that model's checksum (real CPU flags, real model).
+want_sha="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["files"]["model.onnx"])' "$ROOT/models/embedding/manifest.json")"
+got_sha="$(dx gosu cas psql "$DSN_V" -tAc "select string_agg(distinct embedding_checksum, ',') from document_index_generations where document_id = '${SDOC:-00000000-0000-0000-0000-000000000000}' and status = 'READY'" 2>&1 | tr -d '[:space:]')"
+vline="$(grep -m1 "embedding model verified" "$OUT/S1_boot.log")"
+printf 'want=%s\ngot=%s\n%s\n' "$want_sha" "$got_sha" "$vline" > "$OUT/V1_variant.txt"
+if [[ -n "$want_sha" && "$got_sha" == "$want_sha" && "$vline" == *"EMBEDDING_VARIANT=$EV -> $NEED"* ]]; then
+  pass V1 "indexed generation carries the $NEED model checksum (EMBEDDING_VARIANT=$EV, real CPU)" "${vline#*verified }"
+else fail V1 "live embedding variant" "V1_variant.txt"; fi
 
 # ---- R: dependency loss while running ---------------------------------------------
 db_count() { dx gosu cas psql "$DSN_V" -tAc "select count(*) from conversation_sessions" 2>/dev/null | tr -d '[:space:]'; }

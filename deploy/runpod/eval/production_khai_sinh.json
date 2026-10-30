@@ -1,0 +1,267 @@
+{
+  "purpose": "Đánh giá retrieval theo đúng luồng chat production cho thủ tục Đăng ký khai sinh: run_retrieve thật của ai-service, filter thật (xa_id + procedure_version_id + document_id/generation_id), top_k=12 như Go (liveSearchK), statements = checklist của Definition.",
+  "scope": {
+    "xa_id": "xa_chu_se",
+    "procedure_code": "khai_sinh_v1",
+    "procedure_id": "6e4293a2-bffc-42e8-894b-9f9593761621",
+    "procedure_version_id": "56365a40-3490-47c0-bb17-1bc5211141df",
+    "document_id": "8939d98f-ce2c-487f-9f28-a53510c29271",
+    "generation_id": "d6872f43-2882-4398-8ab1-e14d80cc6843",
+    "generation_content_sha256": "06f6ced81a66dd2448b2f50a61223da3930fc2ffc9546c75d1d5859e74849ca4",
+    "generation_chunk_count": 87,
+    "top_k": 12,
+    "display_k": 3
+  },
+  "inputs": {
+    "production_requests": "production_requests_khai_sinh.json: 7 retrieval_query khác nhau đã được Go gửi thật (message_metadata.retrieval_query), kèm checklist (statements) và citation người dùng đã thấy. 3 generation khai sinh trang 9-21 có cùng content_sha256 nên mọi request được chạy trên generation đang active.",
+    "citizen_questions": "Nhánh fallback của retrievalQuery (khi không có Definition): câu hỏi người dân làm query, statements rỗng."
+  },
+  "labels": {
+    "method": "Nhãn mức chunk theo cụm từ: một chunk liên quan tới một chủ đề khi nội dung (chữ thường, NFC, bỏ dấu câu ,;:()/- thành khoảng trắng) chứa một trong các cụm từ của chủ đề đó. Danh sách chunk khớp được ghi vào kết quả để đối chiếu. Đây là nhãn bạc do người đánh giá đặt, chưa được chuyên gia nghiệp vụ duyệt.",
+    "topics": {
+      "tokhai": [
+        "tờ khai đăng ký khai sinh"
+      ],
+      "mauhtdt": [
+        "mẫu hộ tịch điện tử tương tác",
+        "hộ tịch điện tử tương tác"
+      ],
+      "chungsinh": [
+        "giấy chứng sinh"
+      ],
+      "lamchung": [
+        "người làm chứng"
+      ],
+      "camdoan": [
+        "cam đoan về việc sinh",
+        "giấy cam đoan"
+      ],
+      "bori": [
+        "bị bỏ rơi",
+        "bỏ rơi"
+      ],
+      "mangthaiho": [
+        "mang thai hộ"
+      ],
+      "uyquyen": [
+        "ủy quyền",
+        "uỷ quyền"
+      ],
+      "tuythan": [
+        "giấy tờ tùy thân",
+        "giấy tờ tuỳ thân",
+        "hộ chiếu"
+      ],
+      "cutru": [
+        "chứng minh nơi cư trú"
+      ],
+      "banchup": [
+        "bản chụp",
+        "bản sao điện tử"
+      ],
+      "lephi": [
+        "lệ phí"
+      ],
+      "thoihan": [
+        "thời hạn giải quyết"
+      ],
+      "trinhtu": [
+        "trình tự thực hiện"
+      ],
+      "trachnhiem": [
+        "trách nhiệm đăng ký khai sinh",
+        "có trách nhiệm đi đăng ký",
+        "trách nhiệm khai sinh"
+      ],
+      "noinop": [
+        "nơi cư trú của người cha",
+        "trung tâm phục vụ hành chính công"
+      ]
+    },
+    "statement_topics": [
+      {
+        "contains": "mẫu hộ tịch điện tử tương tác đăng ký khai sinh (hoặc hồ sơ",
+        "topics": [
+          "mauhtdt"
+        ]
+      },
+      {
+        "contains": "Thông tin cung cấp theo Mẫu hộ tịch điện tử",
+        "topics": [
+          "mauhtdt"
+        ]
+      },
+      {
+        "contains": "Bản chụp hoặc bản sao điện tử",
+        "topics": [
+          "banchup"
+        ]
+      },
+      {
+        "contains": "Tờ khai đăng ký khai sinh",
+        "topics": [
+          "tokhai"
+        ]
+      },
+      {
+        "contains": "Giấy chứng sinh",
+        "topics": [
+          "chungsinh"
+        ]
+      },
+      {
+        "contains": "giấy tờ tùy thân",
+        "topics": [
+          "tuythan"
+        ]
+      },
+      {
+        "contains": "trẻ bị bỏ rơi",
+        "topics": [
+          "bori"
+        ]
+      },
+      {
+        "contains": "mang thai hộ",
+        "topics": [
+          "mangthaiho"
+        ]
+      },
+      {
+        "contains": "ủy quyền",
+        "topics": [
+          "uyquyen"
+        ]
+      },
+      {
+        "contains": "chứng minh nơi cư trú",
+        "topics": [
+          "cutru"
+        ]
+      },
+      {
+        "contains": "người làm chứng xác nhận",
+        "topics": [
+          "lamchung"
+        ]
+      },
+      {
+        "contains": "Mẫu hộ tịch điện tử tương tác",
+        "topics": [
+          "mauhtdt"
+        ]
+      }
+    ],
+    "statement_rule": "Mỗi statement lấy dòng statement_topics ĐẦU TIÊN có 'contains' xuất hiện trong statement (không phân biệt hoa thường). Statement không khớp dòng nào bị báo lỗi, không bỏ qua."
+  },
+  "citizen_questions": [
+    {
+      "q": "Đăng ký khai sinh cho con cần chuẩn bị những giấy tờ gì?",
+      "topics": [
+        "tokhai",
+        "chungsinh",
+        "tuythan"
+      ]
+    },
+    {
+      "q": "Thời hạn giải quyết đăng ký khai sinh là bao lâu?",
+      "topics": [
+        "thoihan"
+      ]
+    },
+    {
+      "q": "Nộp hồ sơ đăng ký khai sinh ở đâu?",
+      "topics": [
+        "noinop"
+      ]
+    },
+    {
+      "q": "Không có giấy chứng sinh thì đăng ký khai sinh thế nào?",
+      "topics": [
+        "lamchung",
+        "camdoan"
+      ]
+    },
+    {
+      "q": "Lệ phí đăng ký khai sinh cho trẻ em là bao nhiêu?",
+      "topics": [
+        "lephi"
+      ]
+    },
+    {
+      "q": "Trình tự thực hiện thủ tục đăng ký khai sinh tại UBND cấp xã",
+      "topics": [
+        "trinhtu"
+      ]
+    },
+    {
+      "q": "Tờ khai đăng ký khai sinh theo mẫu nào?",
+      "topics": [
+        "tokhai",
+        "mauhtdt"
+      ]
+    },
+    {
+      "q": "Trẻ bị bỏ rơi thì đăng ký khai sinh cần biên bản gì?",
+      "topics": [
+        "bori"
+      ]
+    },
+    {
+      "q": "Ai có trách nhiệm đi đăng ký khai sinh cho trẻ?",
+      "topics": [
+        "trachnhiem"
+      ]
+    },
+    {
+      "q": "Mang thai hộ thì cần thêm giấy tờ gì khi đăng ký khai sinh?",
+      "topics": [
+        "mangthaiho"
+      ]
+    },
+    {
+      "q": "Người khác đi đăng ký khai sinh thay cha mẹ có cần giấy ủy quyền không?",
+      "topics": [
+        "uyquyen"
+      ]
+    },
+    {
+      "q": "Khi đi đăng ký khai sinh cần xuất trình giấy tờ tùy thân nào?",
+      "topics": [
+        "tuythan"
+      ]
+    },
+    {
+      "q": "Có phải nộp giấy tờ chứng minh nơi cư trú khi đăng ký khai sinh không?",
+      "topics": [
+        "cutru"
+      ]
+    },
+    {
+      "q": "Không có người làm chứng thì phải làm giấy cam đoan về việc sinh không?",
+      "topics": [
+        "camdoan"
+      ]
+    },
+    {
+      "q": "Đăng ký khai sinh trực tuyến cần nộp những gì?",
+      "topics": [
+        "mauhtdt",
+        "banchup"
+      ]
+    }
+  ],
+  "thresholds_fixed_before_run": {
+    "P1_live_status": "fp32 live (Qdrant + Postgres thật): status ok cho 7/7 production request",
+    "P2_harness_fidelity": "fp32 offline (vector tự embed, payload/row thật) cho cùng danh sách hit và thứ tự như fp32 live ở >= 95% lượt chạy (request + câu hỏi)",
+    "P3_statement_coverage": "fp32 live: statement coverage@12 trung bình >= 0.80",
+    "P4_variant_coverage": "fp32 coverage@12 >= int8 coverage@12 - 0.05",
+    "P5_recorded_citations": ">= 90% citation retrieval người dùng đã thấy (theo content_sha256) nằm trong top-12 fp32 live của cùng request",
+    "Q2_questions_variant": "fp32 Hit@5 >= int8 - 0.05 và fp32 MRR@10 >= int8 - 0.03",
+    "Q1_questions_hit5": "Nhánh fallback, fp32 live: Hit@5 mức chunk >= 0.80"
+  },
+  "metric_corrections_after_first_run": [
+    "2026-10-30, lần chạy 1: P5 tính 15/21 = FAIL vì 6 citation của R1, R2 (lượt chat 26-27/10) trích văn bản của generation cũ có ranh giới chunk khác, không tồn tại trong generation đang đánh giá. Mẫu số được sửa thành 'citation có văn bản trong generation này'; 6 citation kia được báo riêng là không so sánh được. Ngưỡng 90% giữ nguyên.",
+    "2026-10-30, sau review: Q1 đổi tên Recall@5 -> Hit@5 (công thức không đổi: có ít nhất một chủ đề nhãn trong top-5). Bổ sung Complete@5 (đủ mọi chủ đề) và TopicCoverage@5 làm chỉ số báo cáo, không phải ngưỡng. P5 báo cả kết quả theo định nghĩa gốc lẫn định nghĩa đã chỉnh."
+  ]
+}

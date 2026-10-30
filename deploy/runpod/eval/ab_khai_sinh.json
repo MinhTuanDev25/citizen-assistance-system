@@ -1,0 +1,53 @@
+{
+  "purpose": "A/B offline cách truy xuất bằng chứng cho guidance turn (thủ tục Đăng ký khai sinh). Chỉ đánh giá, không sửa Go retrieval, ai-service runtime, Qdrant, E5 weights, ASR/MT.",
+  "locked_at": "2026-10-30, trước lần chạy A/B đầu tiên",
+  "same_conditions": "Mọi phương án dùng cùng generation (production_khai_sinh.json scope), cùng corpus fingerprint, cùng nhãn (production_khai_sinh.json labels), cùng 7 production request, cùng 15 câu hỏi, cùng model variant trong một lần so sánh.",
+  "variants": {
+    "A_baseline": {"query": "retrieval_query như Go đã gửi (nguyên văn)", "top_k": 12, "searches_per_turn": 1},
+    "B_topk20": {"query": "như A", "top_k": 20, "searches_per_turn": 1},
+    "C_topk24": {"query": "như A", "top_k": 24, "searches_per_turn": 1},
+    "D_short_query": {
+      "query": "'<tên thủ tục> <procedure_code> ' + các checklist statement nối bằng khoảng trắng (bỏ summary của guidance); chuẩn hóa khoảng trắng và cắt 2000 rune như Go retrievalQuery",
+      "procedure_name": "Đăng ký khai sinh", "procedure_code": "khai_sinh_v1", "top_k": 12, "searches_per_turn": 1},
+    "E_per_statement": {
+      "query_i": "'<tên thủ tục> ' + statement_i, mỗi statement của checklist một truy vấn",
+      "top_k_each": 12,
+      "statements_sent_to_ai_service": "toàn bộ checklist (giống production) để overlap/classify như cũ",
+      "merge": "Round-robin theo thứ tự checklist: hạng 1 của statement 1, hạng 1 của statement 2, ..., rồi hạng 2 của từng statement, ...; bỏ chunk_id đã có (giữ lần xuất hiện đầu); dừng ở 12 hit. Không dùng nhãn, không dùng score để sắp lại.",
+      "searches_per_turn": "bằng số statement (2-6 trong bộ này)"
+    }
+  },
+  "display": {
+    "rule": "3 citation hiển thị được chọn bằng chính code Go: chat.attachHTTPSources với retriever giả trả về đúng danh sách hit của phương án (lọc allowed source, procedure version, relevance floor, page range, lexical overlap; classifySupport; selectDisplayCitations, liveDisplayK=3). Harness: apps/api/internal/chat/display_eval_test.go.",
+    "equivalence_check": "Harness phải tái tạo đúng 3 citation người dùng đã thấy (content_sha256 và thứ tự) cho mọi production request có citation so sánh được, từ hit của fp32 live baseline. Không đạt thì DisplayCoverage@3 bị đánh dấu approximate."
+  },
+  "metrics": {
+    "Coverage@12": "Tỷ lệ lượt statement (pooled qua 7 request) có ít nhất một chunk mang nhãn chủ đề của statement trong 12 hit đầu (A, D, E) hoặc toàn bộ hit (B=20, C=24 báo cả @12 và @k).",
+    "Coverage@k": "Như trên với toàn bộ hit của phương án.",
+    "DisplayCoverage@3": "Như Coverage nhưng trên các citation Go chọn hiển thị (tối đa 3).",
+    "RequestComplete@display": "Tỷ lệ request mà mọi statement được phủ bởi citation hiển thị.",
+    "Hit@5": "Câu hỏi người dân (nhánh fallback): có ít nhất một chunk thuộc bất kỳ chủ đề nhãn nào trong top-5 (trước đây gọi nhầm là Recall@5).",
+    "Complete@5": "Câu hỏi: mọi chủ đề nhãn đều có chunk trong top-5.",
+    "TopicCoverage@5": "Câu hỏi: tổng chủ đề được phủ trong top-5 / tổng chủ đề nhãn.",
+    "MRR@10": "Câu hỏi: 1/hạng của chunk liên quan đầu tiên trong top-10.",
+    "calls": "Số lần embed truy vấn và số lần search Qdrant mỗi turn.",
+    "latency": "p50/p95 ms mỗi turn (embed + search + Postgres + kiểm tra) trên fp32 live (Qdrant/Postgres dev thật) cùng máy. Latency int8 không được báo vì cờ CPU giả lập.",
+    "duplication": "Trong citation hiển thị: tỷ lệ citation trùng content_sha256 hoặc trùng trang với một citation khác của cùng turn."
+  },
+  "applicability": "Câu hỏi người dân chỉ áp dụng cho A, B, C (D, E cần checklist).",
+  "decision_rule": {
+    "candidate_pass_requires_all": [
+      "DisplayCoverage@3 (fp32 live) >= A + 0.10",
+      "Coverage@12 (fp32 live) >= A",
+      "Mọi production request status ok và có >= 1 citation hiển thị",
+      "Hit@5 và Complete@5 câu hỏi (nếu áp dụng) >= A",
+      "Latency p95 (fp32 live) <= 2 x A và <= 1000 ms trên máy đo",
+      "Số search mỗi turn <= 8",
+      "Tỷ lệ citation trùng lặp hiển thị <= A + 0.10",
+      "Cùng chiều kết quả trên int8 offline: DisplayCoverage@3 int8 >= A int8"
+    ],
+    "tie_break": "Trong các phương án đạt: ít search mỗi turn hơn, rồi latency p95 thấp hơn.",
+    "if_none_pass": "Báo không có phương án đạt; không đề xuất sửa production dựa trên bộ này.",
+    "scope_of_claim": "7 request và nhãn bạc chỉ đủ để chọn phương án triển vọng cho thủ tục khai sinh; không được tuyên bố cải thiện cho mọi thủ tục. Trước khi sửa production cần bộ câu hỏi độc lập và kiểm tra citation thực tế."
+  }
+}
