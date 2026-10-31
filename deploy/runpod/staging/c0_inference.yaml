@@ -1,0 +1,38 @@
+# C0 serving config for the cas-aio pod on network volume bahnar-thesis-storage
+# (buppvu4d48, mounted at /workspace). Installed by pod_stage.sh apply as
+# /workspace/cas/config/c0_inference.yaml (C0_INFERENCE_CONFIG default).
+# Format and rules: bahnar-s2tt-thesis/configs/c0_inference.example.yaml.
+#
+# Checkpoints are read in place from the research tree; nothing there is written.
+# The two weight pins were hashed on the pod (8.1-B inventory, 2026-10-31).
+# A pin that does not match fails Speech start (checkpoint_checksum_mismatch).
+# These are operator pins: checkpoint_identity=configured_hash_match, and
+# research_provenance stays NOT_VERIFIED (configs/c0_research_pins.yaml is empty
+# on purpose and is not filled from here).
+
+asr_checkpoint: /workspace/bahnar-s2tt-thesis/bahnar_s2tt/full_state/contract_b5172ee0cc391e4f/checkpoints/full_train/full_xlsr300m_v1/ckpts/checkpoint-12500
+mt_checkpoint: /workspace/bahnar-s2tt-thesis/bahnar_s2tt/mt_full_state/contract_c3d7b95698738634/checkpoints/full_train/mt_bartpho_syllable_v1/ckpts/checkpoint-17500
+# Required by the Speech serving gate (tokenizer_parity must be VERIFIED).
+mt_training_contract: /workspace/bahnar-s2tt-thesis/bahnar_s2tt/mt_full_state/contract_c3d7b95698738634/mt_training_contract.json
+
+# The image also sets SPEECH_DEVICE=cuda, which overrides this value.
+device: cuda
+
+# Locked RQ1 generation contract; other values make /readyz answer generation_not_rq1.
+max_source_length: 256
+generation_max_length: 256
+num_beams: 4
+
+# Serving bounds. SPEECH_MAX_AUDIO_SECONDS / SPEECH_MAX_UPLOAD_BYTES override them at runtime.
+max_audio_duration_seconds: 30
+max_audio_bytes: 10485760
+
+asr_weights_sha256: dacbe7f82d8ed0a33f7e9798860d0e1808a20b9dc84725355a2db9b4229a6a2a
+mt_weights_sha256: f9bee0d53399f76548eee297fc67ff83bad4e43cd8fda630c9cb6dab93284ead
+
+# Absolute path inside the image (the default, written out).
+research_pins: /opt/cas/c0/configs/c0_research_pins.yaml
+
+# Locked BARTpho pin, loaded offline from HF_HOME=/workspace/cas/hf-cache.
+tokenizer_model_id: vinai/bartpho-syllable
+tokenizer_revision: 36eee8b4d648dd99da56462edcda3c5c97f7f3de

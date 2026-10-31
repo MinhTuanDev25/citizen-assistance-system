@@ -33,6 +33,7 @@ Data persists only on the volume at `/workspace/cas`. Only port **8088** listens
 | `rootfs/opt/cas/bin/svc-run` | Starts every supervisord program with `env -i` plus its own allowlist (`/run/cas-env/<service>.env`), then drops to the program's user |
 | `rootfs/etc/cas/*` | `supervisord.conf`, `nginx.conf.template` (rendered by `entrypoint.sh` to `/run/cas-nginx.conf` with the exact upload limits), `postgresql.cas.conf`, `pg_hba.conf` |
 | `env.staging.example` | Variable names for the RunPod template (no values) |
+| `staging/` | 8.1-B: switching the existing RTX 4090 pod to this image on volume `buppvu4d48`. `pod_stage.sh check/preserve/apply` (C0 config, checkpoint manifest, tokenizer cache, e5 fp32), `verify_after_switch.sh`, and the rollback. See `staging/README.md` |
 | `tests/smoke_cpu.sh`, `tests/c0_in_image.sh`, `tests/c0_in_image_negative.sh`, `tests/fetch_models_test.sh` | CPU smoke, C0 level (b) checks, proof that the C0 checker fails on broken images, offline all-or-nothing test of `fetch_models.sh`. All exit non-zero on any FAIL |
 
 ## Build
