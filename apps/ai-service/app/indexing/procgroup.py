@@ -274,6 +274,22 @@ def capture(pid: int, timeout_s: float = 1.0):
         time.sleep(0.01)
 
 
+def join_exited(proc, timeout_s: float) -> bool:
+    """Wait up to timeout_s for a multiprocessing child to exit. True once it has.
+
+    Process.join(timeout) can return as soon as the sentinel pipe closes, which
+    happens a moment before the kernel makes the child waitable; is_alive() is then
+    still True. Under CPU load that window grew past the single join (CI flake in
+    test_four_inflight_timeouts_finish_inside_one_grace_window), so poll is_alive()
+    until the deadline instead of trusting one join.
+    """
+    deadline = time.monotonic() + max(0.0, float(timeout_s))
+    proc.join(timeout_s)
+    while proc.is_alive() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    return not proc.is_alive()
+
+
 def reap_spawned(proc) -> bool:
     """SIGKILL and reap a process this parent just spawned. True only if it is gone."""
     if proc is None:
@@ -299,8 +315,7 @@ def reap_spawned(proc) -> bool:
             pass
         except PermissionError as exc:
             raise IdentityError("cannot stop spawned process") from exc
-    proc.join(1.0)
-    if proc.is_alive():
+    if not join_exited(proc, 1.0):
         return False
     leftover = read_process(pid)
     if leftover is not None:

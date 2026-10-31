@@ -10,7 +10,15 @@ import threading
 import time
 
 from app.indexing.errors import IndexFailure
-from app.indexing.procgroup import GroupKiller, IdentityError, become_group_leader, capture, read_process, reap_spawned
+from app.indexing.procgroup import (
+    GroupKiller,
+    IdentityError,
+    become_group_leader,
+    capture,
+    join_exited,
+    read_process,
+    reap_spawned,
+)
 
 log_name = "cas.index"
 
@@ -263,6 +271,8 @@ class _Slot:
         self.ready = False
         self.busy = False
         self.recovering = False
+        # Being stopped by cancel(): not ready, and not yet handed to a recovery thread.
+        self.stopping = False
         self.failures = 0
         self.state = None
         self.identity = None
@@ -486,10 +496,13 @@ class IndexGate:
                 slot.busy = False
                 self._pending = max(0, self._pending - 1)
             slot.ready = False
+            slot.stopping = True
             if not self._closed:
                 self._status = "recovering"
         cleaned = self._kill_tree(identity, slot)
         if self._closed:
+            with self._lock:
+                slot.stopping = False
             return
         if cleaned:
             self._begin_recovery(slot)
@@ -497,6 +510,7 @@ class IndexGate:
         with self._lock:
             slot.ready = False
             slot.recovering = False
+            slot.stopping = False
             self._status = "failed"
 
     def call(self, message: dict, timeout_s: float, cancel_event=None) -> dict:
@@ -609,10 +623,8 @@ class IndexGate:
             except IdentityError:
                 confirmed = False
         self._close_slot(slot)
-        if proc is not None:
-            proc.join(0.5)
-            if proc.is_alive():
-                confirmed = False
+        if proc is not None and not join_exited(proc, 0.5):
+            confirmed = False
         if identity and confirmed and not self._groups.kill(identity, 0):
             confirmed = False
         if identity:
@@ -683,6 +695,7 @@ class IndexGate:
 
     def _begin_recovery(self, slot: _Slot) -> None:
         with self._lock:
+            slot.stopping = False
             if self._closed:
                 self._status = "stopped"
                 return
@@ -738,15 +751,27 @@ class IndexGate:
                     slot.recovering = False
                     if self._closed:
                         return
-                    if any(item.recovering for item in self._slots):
-                        self._status = "recovering"
-                    else:
-                        self._status = "ready"
+                    self._settle_status_locked()
             except Exception:
                 self._fail_slot(slot)
         finally:
             with self._lock:
                 self._recovery.discard(threading.current_thread())
+
+    def _settle_status_locked(self) -> None:
+        """Gate status from the slots after a recovery (caller holds the lock).
+
+        "ready" only when every slot is ready. A slot left failed (its tree could not
+        be confirmed gone) keeps the gate failed; before, the next successful recovery
+        of another slot overwrote that with "ready" and the failed slot's old process
+        stayed in worker_pids().
+        """
+        if any(item.recovering or item.stopping for item in self._slots):
+            self._status = "recovering"
+        elif all(item.ready for item in self._slots):
+            self._status = "ready"
+        else:
+            self._status = "failed"
 
     def _fail_slot(self, slot: _Slot) -> None:
         with self._lock:
