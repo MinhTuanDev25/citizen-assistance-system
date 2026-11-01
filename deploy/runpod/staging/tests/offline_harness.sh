@@ -81,9 +81,12 @@ rc=$(run /tmp/t0c env -u CAS_STAGE_EXPECT_COMMIT CAS_STAGE_TEST_HW=$HW bash "$S"
 has "check: WARN source-commit" '^WARN  source-commit' /tmp/t0c
 has "volume is a mount point" '^PASS  volume-mount' /tmp/t0c
 
-t "T1 check on the real (Mac) hardware: FAIL cpu + gpu, rc 1, writes nothing"
+t "T1 check on the real host hardware (no GPU): FAIL gpu, cpu per AVX2, rc 1, writes nothing"
 rc=$(run /tmp/t1 bash "$S" check); check "rc" "$rc" 1
-has "FAIL cpu" '^FAIL  cpu ' /tmp/t1; has "FAIL gpu" '^FAIL  gpu ' /tmp/t1; absent "nothing created" $W
+# The cpu verdict follows this host: FAIL without AVX2 (Mac arm64), PASS with it (CI amd64).
+if grep -qw avx2 /proc/cpuinfo; then has "PASS cpu (host has AVX2)" '^PASS  cpu ' /tmp/t1
+else has "FAIL cpu (host has no AVX2)" '^FAIL  cpu ' /tmp/t1; fi
+has "FAIL gpu" '^FAIL  gpu ' /tmp/t1; absent "nothing created" $W
 
 t "T1b check with SIMULATED hardware: rc 0, reported as simulated"
 rc=$(run /tmp/t1b env CAS_STAGE_TEST_HW=$HW bash "$S" check); check "rc" "$rc" 0

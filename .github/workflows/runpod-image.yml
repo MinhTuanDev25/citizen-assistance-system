@@ -23,7 +23,11 @@ jobs:
     timeout-minutes: 180
     steps:
       # C0 (bahnar-s2tt-thesis/) is a tracked folder of this repository: checkout is enough.
+      # Full history: the staging harness clones this checkout and needs origin/main
+      # and the reviewed commit b474deb (a shallow clone has neither).
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: stage Speech C0 from committed blobs
         run: deploy/runpod/stage_c0.sh
