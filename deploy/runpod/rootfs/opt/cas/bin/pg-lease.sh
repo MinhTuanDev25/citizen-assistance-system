@@ -3,9 +3,9 @@
 # Keeps the workspace lease taken by entrypoint.sh alive:
 #   - every CAS_LEASE_HEARTBEAT_S writes the current epoch to lease/heartbeat
 #   - fencing: if owner.json no longer names this owner, or the heartbeat cannot
-#     be written, stops postgres/qdrant/minio at once and exits 1
+#     be written, stops every writer of the volume at once and exits 1
 #   - on SIGTERM (container shutdown): releases the lease only after Postgres,
-#     Qdrant and MinIO have stopped; otherwise keeps it (safe default)
+#     Qdrant and the WAL receiver have stopped; otherwise keeps it (safe default)
 set -uo pipefail
 
 W="${CAS_WORKSPACE:-/workspace/cas}"
@@ -14,10 +14,10 @@ EVERY="${CAS_LEASE_HEARTBEAT_S:-10}"
 ME="$(cat /run/cas-lease.owner 2>/dev/null || true)"
 log() { echo "[pg-lease] $(date -u +%FT%TZ) $*" >&2; }
 owner() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("owner_id",""))' "$LEASE/owner.json" 2>/dev/null; }
-data_running() { pgrep -u postgres -x postgres >/dev/null || pgrep -u qdrant -x qdrant >/dev/null || pgrep -u minio -x minio >/dev/null; }
+data_running() { pgrep -u postgres -x postgres >/dev/null || pgrep -u qdrant -x qdrant >/dev/null || pgrep -u postgres -x pg_receivewal >/dev/null; }
 fence() {
   log "FENCING: $*; stopping data services"
-  supervisorctl -c /etc/cas/supervisord.conf stop postgres qdrant minio >&2 || true
+  supervisorctl -c /etc/cas/supervisord.conf stop cas-keeper api ai-service postgres qdrant pg-receivewal >&2 || true
   exit 1
 }
 

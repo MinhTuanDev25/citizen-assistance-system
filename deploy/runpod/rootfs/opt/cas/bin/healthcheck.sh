@@ -5,8 +5,6 @@
 set -uo pipefail
 
 QUIET=0; [[ "${1:-}" == --quiet ]] && QUIET=1
-W="${CAS_WORKSPACE:-/workspace/cas}"
-CA="$W/tls/ca.crt"
 fail=0
 row() { [[ $QUIET == 1 ]] || printf '%-14s %-5s %s\n' "$1" "$2" "$3"; }
 check() {  # check <name> <required 1|0> <command...>
@@ -30,7 +28,31 @@ fi
 check bootstrap   1 boot_ok
 check postgres    1 pg_isready -h 127.0.0.1 -p 5432 -U cas -d citizen_assistance
 check qdrant      1 curl -fsS --max-time 3 http://127.0.0.1:6333/readyz
-check minio       1 curl -fsS --max-time 3 --cacert "$CA" https://127.0.0.1:9000/minio/health/ready
+# Commits reach the volume only while the receiver streams synchronously.
+receiver() {
+  local r; r="$(gosu postgres psql -h /run/postgresql -d postgres -XAtc \
+    "select state || ' ' || sync_state from pg_stat_replication where application_name = 'cas_vol'" 2>&1)"
+  echo "${r:-not connected}"; [[ "$r" == "streaming sync" ]]
+}
+# cas-keeper status: volume free space, receiver, slot, base backups; fresh (< 3 min).
+storage() {
+  python3 - <<'PY'
+import json, sys, time
+try:
+    s = json.load(open("/run/cas/storage-status.json"))
+except Exception as exc:
+    print(f"no keeper status: {type(exc).__name__}"); sys.exit(1)
+age = time.time() - s.get("updated_at", 0)
+if age > 180:
+    print(f"keeper status is {age:.0f}s old"); sys.exit(1)
+if not s.get("ok"):
+    print("; ".join(s.get("problems") or ["not ok"])); sys.exit(1)
+print(f"free {s.get('volume_free_gb')} GB, bases {len(s.get('base_backups') or [])}, snapshots {len(s.get('snapshots') or [])}"
+      + ("; " + "; ".join(s["warnings"]) if s.get("warnings") else ""))
+PY
+}
+check wal-receiver 1 receiver
+check storage     1 storage
 check ai-service  1 curl -fsS --max-time 3 http://127.0.0.1:8001/ready
 check api-ready   1 curl -fsS --max-time 3 http://127.0.0.1:8080/ready
 check nginx       1 curl -fsS --max-time 3 http://127.0.0.1:8088/readyz

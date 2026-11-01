@@ -333,9 +333,16 @@ def _object_bucket_name() -> str:
 
 def _require_pipeline_storage() -> None:
     """Refuse a pipeline process that cannot open the same object store as the API."""
+    from app.indexing.file_objects import backend, file_root
     from app.indexing.object_storage import storage_config
 
     prod = os.getenv("APP_ENV", "").strip().lower() == "prod"
+    if backend() == "file":
+        file_root()
+        declared_bucket = os.getenv("OBJECT_STORAGE_BUCKET")
+        if prod and (declared_bucket is None or not declared_bucket.strip()):
+            raise ConfigError("OBJECT_STORAGE_BUCKET is required when APP_ENV=prod")
+        return
     if not os.getenv("OBJECT_STORAGE_ENDPOINT", "").strip():
         raise ConfigError("OBJECT_STORAGE_ENDPOINT is required when INDEX_MODE=pipeline")
     declared_bucket = os.getenv("OBJECT_STORAGE_BUCKET")

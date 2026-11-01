@@ -41,8 +41,8 @@ ASR_OPTIONAL=(special_tokens_map.json added_tokens.json)
 MT_FILES=(model.safetensors config.json tokenizer_config.json sentencepiece.bpe.model dict.txt generation_config.json)
 # UIDs fixed in deploy/runpod/Dockerfile
 SPEECH_UID=10013 PG_UID=10010
-# Network volume bahnar-thesis-storage: 200 GB quota. Room for e5 (0.5 GB), Postgres,
-# Qdrant, MinIO and backups/ (pg_dump + Qdrant snapshots, CAS_BACKUP_KEEP=7).
+# Network volume bahnar-thesis-storage: 200 GB quota. Room for e5 (0.5 GB), the WAL,
+# base backups, dumps, Qdrant snapshots and the document files.
 VOL_QUOTA_GB="${VOL_QUOTA_GB:-200}" VOL_MIN_FREE_GB=20
 READY="$W/preflight/READY_TO_SWITCH"
 # Tests only: CAS_STAGE_TEST_HW=<dir> with a fake `cpuinfo` and `nvidia-smi` stands in
@@ -329,30 +329,44 @@ cmd_preserve() {
   echo "NOTE: secrets in the tar (ssh keys, tokens) are now on the volume: keep $dest at 0700 or move it off RunPod."
 }
 
-fs_probe() {  # what the image does on first boot: chown to service uids, 0700, fsync, rename, flock, mkdir
-  local d="$W/.fs-probe.$$"
+# What the image needs from the volume (storage design: engines on the container
+# disk, plain files on the volume): every writer (postgres 10010 for WAL and base
+# backups, cas 10001 for objects and dumps, root for snapshots) can mkdir, write,
+# fsync, rename and fsync the directory there; flock and atomic mkdir for the lease.
+# chown and modes are reported, not required (a FUSE volume refuses them).
+fs_probe() {
+  local d="$W/.fs-probe.$$" u owner_mode
   install -d -m 0755 "$d" || die "cannot create $d"
-  if chown "$PG_UID:$PG_UID" "$d" && chmod 0700 "$d" && python3 - "$PG_UID" "$d" <<'PY'
+  if chown "$PG_UID:$PG_UID" "$d" 2>/dev/null && chmod 0700 "$d" 2>/dev/null && [[ "$(stat -c '%u %a' "$d")" == "$PG_UID 700" ]]; then
+    owner_mode="POSIX owners and modes work"
+  else
+    owner_mode="owners/modes not kept ($(stat -c '%u %a' "$d")): fine for this design, no engine data or secret on the volume"
+  fi
+  info fs-owner-mode "$owner_mode"
+  chown 0:0 "$d" 2>/dev/null; chmod 0755 "$d" 2>/dev/null   # every writer must be able to enter it
+  for u in 0 "$PG_UID" 10001; do
+    rm -rf "$d/u$u"; mkdir -m 0777 "$d/u$u"; chown "$u:$u" "$d/u$u" 2>/dev/null; chmod 0777 "$d/u$u" 2>/dev/null
+    if python3 - "$u" "$d/u$u" <<'PY'
 import fcntl, os, sys
 uid, d = int(sys.argv[1]), sys.argv[2]
-os.setgroups([]); os.setgid(uid); os.setuid(uid)
+if uid:
+    os.setgroups([]); os.setgid(uid); os.setuid(uid)
 p = os.path.join(d, "f")
 with open(p + ".tmp", "wb") as f:
     f.write(b"x" * 8192); f.flush(); os.fsync(f.fileno())
 os.replace(p + ".tmp", p)
+fd = os.open(d, os.O_RDONLY | os.O_DIRECTORY); os.fsync(fd); os.close(fd)
 with open(p, "rb") as f:
     fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
 os.mkdir(os.path.join(d, "lease"))
+try:
+    os.mkdir(os.path.join(d, "lease")); sys.exit(3)
+except FileExistsError:
+    pass
 PY
-  then
-    if [[ "$(stat -c '%u %a' "$d")" == "$PG_UID 700" ]]; then ok fs-probe "chown/0700/fsync/rename/flock/mkdir work on the volume"
-    else bad fs-probe "ownership/mode not kept: $(stat -c '%u %a' "$d")"; fi
-  else
-    bad fs-probe "the volume refused chown/chmod/fsync/flock (Postgres/MinIO/Qdrant setup would fail)"
-  fi
-  if python3 -c "import os,sys; fd=os.open(sys.argv[1], os.O_CREAT|os.O_WRONLY|os.O_DIRECT, 0o600); os.close(fd)" "$d/odirect" 2>/dev/null
-  then ok fs-odirect "O_DIRECT supported (MinIO)"
-  else warn fs-odirect "O_DIRECT refused: MinIO may refuse the drive; check its log after the switch"; fi
+    then ok fs-probe-uid$u "uid $u: write, fsync, rename, directory fsync, flock, atomic mkdir"
+    else bad fs-probe-uid$u "uid $u cannot write/fsync/rename/flock/mkdir on the volume"; fi
+  done
   rm -rf "$d"
 }
 

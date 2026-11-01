@@ -55,7 +55,23 @@ func main() {
 	)
 
 	var objects storage.ObjectStore
-	if cfg.AdminIngestionEnabled {
+	if cfg.AdminIngestionEnabled && cfg.ObjectStorageBackend == "file" {
+		store, err := storage.NewFile(cfg.ObjectStorageFileRoot, cfg.ObjectStorageBucket)
+		if err == nil {
+			err = store.EnsureBucket(ctx)
+		}
+		if err != nil {
+			logger.Error("object storage is not ready", "backend", "file")
+			os.Exit(1)
+		}
+		if n, err := store.CleanupTemp(time.Hour); err != nil {
+			logger.Warn("object storage temp cleanup incomplete", "removed", n)
+		} else if n > 0 {
+			logger.Info("object storage temp cleanup", "removed", n)
+		}
+		objects = store
+		logger.Info("object storage ready", "backend", "file", "bucket", cfg.ObjectStorageBucket)
+	} else if cfg.AdminIngestionEnabled {
 		client, err := storage.NewMinIO(storage.MinIOConfig{
 			Endpoint:         cfg.ObjectStorageEndpoint,
 			AccessKey:        cfg.ObjectStorageAccessKey,

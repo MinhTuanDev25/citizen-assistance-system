@@ -6,12 +6,14 @@
 #      fail-closed in gpu mode (before any init work)
 #   3. single-writer lease on the workspace (flock + atomic lease dir); a lease of
 #      another owner puts the container in maintenance mode (see cas-pg-recover)
-#   4. directories + ownership on /workspace/cas (re-applied every start: a
-#      network volume may come from another pod)
-#   5. internal CA + leaf certs: create only when absent, never regenerate or
-#      overwrite existing keys; refuse a half-present or invalid set
-#   6. Postgres: first-time initdb + role/db/extensions (unix socket only),
-#      pg_hba/conf from the image on every start
+#   4. directories: engines on the container disk (/var/lib/cas, POSIX owners and
+#      modes); durable copies on the volume (/workspace/cas: plain files only, no
+#      chown or mode is relied on there, no secret or private key is written there)
+#   5. internal CA + leaf certs on the container disk: created when absent (a new
+#      container gets new ones), never overwritten; a half-present set is refused
+#   6. Postgres on the container disk: reuse this container's pgdata, or restore it
+#      from the volume (verified base backup + WAL, cas-pg-restore.sh), or initdb a
+#      new cluster only when the volume holds no cluster at all
 #   7. reset /run/cas (new boot id, remove stale bootstrap.ok); write one root-only
 #      env file per service (/run/cas-env, used by svc-run) so that each program
 #      sees only its own variables; exec supervisord (keeps the flock fd)
@@ -20,7 +22,17 @@ set -Eeuo pipefail
 W="${CAS_WORKSPACE:-/workspace/cas}"
 export CAS_WORKSPACE="$W"
 log() { echo "[entrypoint] $(date -u +%FT%TZ) $*" >&2; }
-die() { log "FATAL: $*"; exit 64; }
+# A fatal error after this boot took the workspace lease, and before supervisord
+# started any service, releases that lease like a clean shutdown: nothing of this
+# boot wrote to the volume yet, and the next container (after the operator fixed
+# the cause, e.g. a refused restore) must not need cas-pg-recover.
+LEASE_HELD=0
+release_own_lease() {
+  [[ $LEASE_HELD == 1 && "$(lease_owner)" == "$OWNER" ]] || return 0
+  mv "$LEASE" "$LEASE.released-$(date -u +%Y%m%dT%H%M%SZ)-$OWNER" 2>/dev/null \
+    && log "workspace lease released by $OWNER (boot failed before any service started)"
+}
+die() { log "FATAL: $*"; release_own_lease || true; exit 64; }
 trap 'die "failed at line $LINENO"' ERR
 
 # ---- 1. mode and secrets ------------------------------------------------------
@@ -42,8 +54,11 @@ need_secret() {
 need_secret JWT_SECRET 32
 need_secret AI_SERVICE_TOKEN 16
 need_secret POSTGRES_PASSWORD 16
-need_secret MINIO_ROOT_USER 8
-need_secret MINIO_ROOT_PASSWORD 16
+# MinIO is gone (objects are files on the volume): its old secrets are not needed.
+if [[ -n "${MINIO_ROOT_USER:-}${MINIO_ROOT_PASSWORD:-}" ]]; then
+  log "MINIO_ROOT_USER/MINIO_ROOT_PASSWORD are set but unused (object storage is the file store)"
+fi
+unset MINIO_ROOT_USER MINIO_ROOT_PASSWORD
 
 if [[ "$MODE" == off ]]; then
   if [[ -n "${SPEECH_ENABLED:-}" && "${SPEECH_ENABLED,,}" != false ]]; then
@@ -75,14 +90,18 @@ export LLM_PROVIDER
 # writes a per-service allowlist (/run/cas-env/<service>.env) and svc-run starts
 # every program with env -i plus that list only.
 urlenc() { python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$1"; }
+# Container disk: engines and TLS. Lost when the container is recreated; the
+# volume holds what is needed to rebuild it.
+L="${CAS_LOCAL:-/var/lib/cas}"
+export CAS_LOCAL="$L"
 export APP_ENV=prod
-export CAS_CA_CERT="$W/tls/ca.crt"
+export CAS_CA_CERT="$L/tls/ca.crt"
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 # verify-full: the client checks the server certificate chain (internal CA) and that
 # it was issued for 127.0.0.1 (SAN), not only that the channel is encrypted.
 pg_pw_enc="$(urlenc "$POSTGRES_PASSWORD")" || die "cannot URL-encode POSTGRES_PASSWORD"
 [[ -n "$pg_pw_enc" ]] || die "URL-encoded POSTGRES_PASSWORD is empty"
-export DATABASE_URL="postgres://cas:${pg_pw_enc}@127.0.0.1:5432/citizen_assistance?sslmode=verify-full&sslrootcert=$W/tls/ca.crt"
+export DATABASE_URL="postgres://cas:${pg_pw_enc}@127.0.0.1:5432/citizen_assistance?sslmode=verify-full&sslrootcert=$L/tls/ca.crt"
 export API_ADDR=127.0.0.1:8080
 export CONFIG_FILE=/opt/cas/api/configs/prod/config.yaml
 export XA_ID="${XA_ID:-xa_chu_se}"
@@ -111,17 +130,16 @@ fi
 export OCR_MODEL_DIR="${OCR_MODEL_DIR:-$W/models/ocr}"
 export QDRANT_URL=http://127.0.0.1:6333
 export QDRANT_COLLECTION="${QDRANT_COLLECTION:-knowledge_chunks}"
-export OBJECT_STORAGE_ENDPOINT=127.0.0.1:9000
-export OBJECT_STORAGE_ACCESS_KEY="$MINIO_ROOT_USER"
-export OBJECT_STORAGE_SECRET_KEY="$MINIO_ROOT_PASSWORD"
+# Objects: files on the volume (apps/api/internal/storage/file.go, read by
+# app/indexing/file_objects.py): <root>/<bucket>/<key>, atomic writes, no symlink
+# or ".." ever followed out of the root.
+export OBJECT_STORAGE_BACKEND=file
+export OBJECT_STORAGE_FILE_ROOT="$W/objects"
 export OBJECT_STORAGE_BUCKET="${OBJECT_STORAGE_BUCKET:-cas-documents}"
-export OBJECT_STORAGE_REGION="${OBJECT_STORAGE_REGION:-us-east-1}"
-export OBJECT_STORAGE_USE_SSL=true
 export OBJECT_STORAGE_AUTO_CREATE_BUCKET=false
-export MINIO_BROWSER=off
 export QDRANT__SERVICE__HOST=127.0.0.1
-export QDRANT__STORAGE__STORAGE_PATH="$W/qdrant/storage"
-export QDRANT__STORAGE__SNAPSHOTS_PATH="$W/qdrant/snapshots"
+export QDRANT__STORAGE__STORAGE_PATH="$L/qdrant/storage"
+export QDRANT__STORAGE__SNAPSHOTS_PATH="$L/qdrant/snapshots"
 export QDRANT__TELEMETRY_DISABLED=true
 # index-reaper runs once and exits unless an interval is set (same values as
 # docker-compose.production.yml).
@@ -129,7 +147,7 @@ export INDEX_REAPER_INTERVAL_SECONDS="${INDEX_REAPER_INTERVAL_SECONDS:-60}"
 export INDEX_ORPHAN_GRACE_SECONDS="${INDEX_ORPHAN_GRACE_SECONDS:-120}"
 export INDEX_CLEANUP_BATCH_SIZE="${INDEX_CLEANUP_BATCH_SIZE:-8}"
 export INDEX_REAPER_SHUTDOWN_SECONDS="${INDEX_REAPER_SHUTDOWN_SECONDS:-30}"
-export QDRANT_INIT_FILE_PATH="$W/qdrant/.qdrant-initialized"
+export QDRANT_INIT_FILE_PATH="$L/qdrant/.qdrant-initialized"
 export SPEECH_SERVICE_URL=http://127.0.0.1:8090
 export SPEECH_TIMEOUT_MS="${SPEECH_TIMEOUT_MS:-90000}"
 [[ "$SPEECH_TIMEOUT_MS" =~ ^[0-9]+$ ]] || die "SPEECH_TIMEOUT_MS must be an integer (ms), got '$SPEECH_TIMEOUT_MS'"
@@ -227,8 +245,9 @@ else
   log "speech disabled (mode=off): checkpoints and GPU not checked, program speech not started"
 fi
 
-# ---- 3. single-writer lease on the workspace (pgdata, qdrant, minio) -------------
-# Two writers on one volume would corrupt Postgres/Qdrant/MinIO data. Layers:
+# ---- 3. single-writer lease on the workspace (pg/, objects/, snapshots) -------------
+# Two writers on one volume would interleave WAL, base backups and objects of two
+# different databases. Layers:
 #   a. flock on locks/workspace.flock, held by supervisord (inherited fd 9) for the
 #      container's lifetime: blocks a second container on the same host/kernel.
 #   b. lease dir locks/workspace.lease created with mkdir (atomic): owner.json +
@@ -244,7 +263,8 @@ export CAS_LEASE_HEARTBEAT_S="${CAS_LEASE_HEARTBEAT_S:-10}" CAS_LEASE_STALE_S="$
   || die "CAS_LEASE_HEARTBEAT_S must be an integer in [2, 60]"
 [[ "$CAS_LEASE_STALE_S" =~ ^[0-9]+$ ]] && (( CAS_LEASE_STALE_S > 2 * CAS_LEASE_HEARTBEAT_S )) \
   || die "CAS_LEASE_STALE_S must be an integer greater than 2 x CAS_LEASE_HEARTBEAT_S"
-install -d -o root -g root -m 0755 "$W" "$LOCKS"
+# Plain mkdir on the volume: a FUSE network volume refuses chown and reports 0777.
+mkdir -p "$W" "$LOCKS" || die "cannot create $LOCKS on the volume"
 # Owner identity: the RunPod pod id, else the Docker container id (stable across
 # restarts of the same container, different for every new container even with
 # the same --hostname), else the hostname.
@@ -274,10 +294,6 @@ if [[ -d "$LEASE" ]]; then
   LEASE_STATE=reclaimed
   log "workspace lease reclaimed by the same owner ($OWNER) after a restart"
 else
-  # A postmaster.pid without any lease means an unknown writer (or a pre-lease
-  # image) may own pgdata: do not guess, require the verified procedure.
-  [[ ! -f "$W/pgdata/postmaster.pid" ]] \
-    || maintenance "pgdata/postmaster.pid exists but no workspace lease: cannot prove the previous Postgres stopped"
   mkdir "$LEASE" 2>/dev/null || maintenance "another container created the workspace lease first"
   LEASE_STATE=new
 fi
@@ -294,8 +310,9 @@ PY
 date +%s > "$LEASE/heartbeat.tmp" && mv -f "$LEASE/heartbeat.tmp" "$LEASE/heartbeat"
 chmod 0644 "$LEASE/owner.json" "$LEASE/heartbeat"
 log "workspace lease $LEASE_STATE: owner=$OWNER"
+LEASE_HELD=1
 
-# ---- 4. directories and ownership (only after the lease is held) ----------------------------------------------
+# ---- 4. directories (only after the lease is held) ----------------------------------
 dir() { install -d -o "$2" -g "$2" -m "$3" "$1"; }
 own_tree() {  # chown -R only when something is owned by another user (fast on reboot)
   if [[ -n "$(find "$1" ! -user "$2" -print -quit 2>/dev/null)" ]]; then
@@ -303,23 +320,46 @@ own_tree() {  # chown -R only when something is owned by another user (fast on r
     chown -R "$2:$2" "$1"
   fi
 }
-dir "$W" root 0755
-dir "$W/pgdata" postgres 0700;  own_tree "$W/pgdata" postgres
-dir "$W/qdrant" qdrant 0700;    own_tree "$W/qdrant" qdrant
-dir "$W/minio" minio 0700;      own_tree "$W/minio" minio
-dir "$W/backups" cas 0700;      own_tree "$W/backups" cas
-dir "$W/tls" root 0711
-dir "$W/tls/ca" root 0700
-dir "$W/tls/postgres" postgres 0700
-dir "$W/tls/minio" minio 0700
-dir "$W/config" root 0755
-dir "$W/manifests" root 0755
+# Volume directory: created with mkdir; owner and mode are applied where the
+# filesystem supports them (POSIX volume) and ignored where it does not (RunPod
+# FUSE volume: 0777, chown EPERM). What counts is that the writer can write.
+vol_dir() {  # vol_dir <path> <writer user> [mode, default 0750]
+  mkdir -p "$1" || die "cannot create $1 on the volume"
+  chown "$2:$2" "$1" 2>/dev/null || true
+  chmod "${3:-0750}" "$1" 2>/dev/null || true
+  gosu "$2" test -w "$1" -a -x "$1" || die "$1 on the volume is not writable by $2"
+}
+# An earlier layout kept live engine data on the volume; it is never migrated silently.
+for old in pgdata minio tls qdrant/storage; do
+  [[ ! -e "$W/$old" ]] || die "$W/$old exists (engine data of an older layout on the volume); move it aside after a backup, then start again"
+done
+dir "$L" root 0755
+dir "$L/pgdata" postgres 0700;  own_tree "$L/pgdata" postgres
+dir "$L/qdrant" qdrant 0700;    own_tree "$L/qdrant" qdrant
+dir "$L/tls" root 0711
+dir "$L/tls/ca" root 0700
+dir "$L/tls/postgres" postgres 0700
+vol_dir "$W/pg" postgres
+vol_dir "$W/pg/wal" postgres
+vol_dir "$W/pg/base" postgres
+vol_dir "$W/pg/state" root
+vol_dir "$W/backups" cas
+vol_dir "$W/backups/pg" cas
+vol_dir "$W/backups/pre-migrate" cas
+# Snapshots and per-generation baselines are written by cas-keeper (root) and read by
+# bootstrap (cas) to restore and verify.
+vol_dir "$W/qdrant" root 0755
+vol_dir "$W/qdrant/snapshots" root 0755
+vol_dir "$W/qdrant/baselines" root 0755
+vol_dir "$W/objects" cas
+vol_dir "$W/objects/$OBJECT_STORAGE_BUCKET" cas
+mkdir -p "$W/config" "$W/manifests"
 dir /run/postgresql postgres 2775
 dir /run/nginx web 0700
 dir /run/cas-log root 0755
 
 # ---- 5. internal CA and leaf certificates ---------------------------------------
-CA_KEY="$W/tls/ca/ca.key"; CA_CRT="$W/tls/ca.crt"
+CA_KEY="$L/tls/ca/ca.key"; CA_CRT="$L/tls/ca.crt"
 same_pubkey() { [[ "$(openssl pkey -in "$1" -pubout 2>/dev/null)" == "$(openssl x509 -in "$2" -noout -pubkey 2>/dev/null)" ]]; }
 
 if [[ -f "$CA_KEY" && -f "$CA_CRT" ]]; then
@@ -354,62 +394,89 @@ leaf() {  # leaf <dir> <key name> <cert name> <owner>
     openssl req -new -key "$key" -subj "/CN=127.0.0.1" -out "$d/req.csr"
     printf 'subjectAltName=IP:127.0.0.1,DNS:localhost\nextendedKeyUsage=serverAuth\nkeyUsage=critical,digitalSignature\n' > "$d/ext.cnf"
     openssl x509 -req -in "$d/req.csr" -CA "$CA_CRT" -CAkey "$CA_KEY" -CAcreateserial \
-      -CAserial "$W/tls/ca/ca.srl" -days 825 -sha256 -extfile "$d/ext.cnf" -out "$crt"
+      -CAserial "$L/tls/ca/ca.srl" -days 825 -sha256 -extfile "$d/ext.cnf" -out "$crt"
     rm -f "$d/req.csr" "$d/ext.cnf"
     log "certificate issued: $crt"
   fi
   chown "$owner:$owner" "$key" "$crt"; chmod 0600 "$key"; chmod 0644 "$crt"
 }
-leaf "$W/tls/postgres" server.key server.crt postgres
-leaf "$W/tls/minio" private.key public.crt minio
+leaf "$L/tls/postgres" server.key server.crt postgres
 
 cp "$CA_CRT" /usr/local/share/ca-certificates/cas-internal-ca.crt
 update-ca-certificates >/dev/null 2>&1 || die "update-ca-certificates failed"
 
-# ---- 6. Postgres ---------------------------------------------------------------
+# ---- 6. Postgres (container disk; durable copy on the volume) -----------------------
+# The volume holds the cluster identity (pg/state/system_identifier), verified base
+# backups (pg/base) and every WAL byte a commit waited for (pg/wal, pg_receivewal
+# --synchronous). Three cases, decided only from what is on disk:
+#   a. this container's pgdata exists (container restart): reuse it if it belongs to
+#      the volume's cluster
+#   b. no pgdata, the volume has a complete base backup: restore (cas-pg-restore.sh,
+#      fail-closed on any verification)
+#   c. no pgdata and no trace of a cluster on the volume: initdb a new cluster
+# Anything else (WAL or a cluster identity without a complete base backup) is refused:
+# a new empty cluster would silently replace data the volume says existed.
 PGBIN=/usr/lib/postgresql/16/bin
-PGDATA="$W/pgdata"
+PGDATA="$L/pgdata"
+STATE="$W/pg/state"
 as_pg() { gosu postgres "$@"; }
-if [[ ! -s "$PGDATA/PG_VERSION" ]]; then
+cluster_id() { as_pg "$PGBIN/pg_controldata" "$1" | awk -F': *' '/^Database system identifier/ {print $2}'; }
+NEED_BASE=0
+vol_id="$(cat "$STATE/system_identifier" 2>/dev/null || true)"
+if [[ -s "$PGDATA/PG_VERSION" ]]; then
+  [[ "$(cat "$PGDATA/PG_VERSION")" == 16 ]] || die "pgdata is PostgreSQL $(cat "$PGDATA/PG_VERSION"), image runs 16"
+  [[ -f "$PGDATA/.cas-init-complete" ]] \
+    || die "pgdata exists but its initialisation or restore did not complete (no .cas-init-complete); recreate the container to restore from the volume"
+  local_id="$(cluster_id "$PGDATA")"
+  [[ -n "$vol_id" && "$local_id" == "$vol_id" ]] \
+    || die "pgdata on the container disk is cluster ${local_id:-?}, the volume holds cluster ${vol_id:-<none>}; refusing to mix them"
+  log "postgres: reusing this container's pgdata (cluster $local_id)"
+  # Only this container wrote it (the container disk is not shared), so a leftover
+  # postmaster.pid is stale after a restart.
+  if [[ -f "$PGDATA/postmaster.pid" ]]; then
+    log "removing stale postmaster.pid of this container's previous boot"
+    rm -f "$PGDATA/postmaster.pid"
+  fi
+elif [[ -n "$(find "$W/pg/base" -mindepth 2 -maxdepth 2 -name .cas-complete -print -quit 2>/dev/null)" ]]; then
+  [[ -z "$(ls -A "$PGDATA")" ]] || die "$PGDATA is not empty but has no PG_VERSION; refusing to restore over it"
+  log "postgres: no pgdata on the container disk; restoring from the volume"
+  /opt/cas/bin/cas-pg-restore.sh || die "restore from the volume failed (see the cas-pg-restore lines above); nothing was opened"
+  NEED_BASE=1
+elif [[ -n "$vol_id" || -n "$(ls -A "$W/pg/wal" 2>/dev/null)" ]]; then
+  die "the volume has a cluster identity or WAL but no complete base backup: refusing to create a new empty database over it (see deploy/runpod/README.md, Storage)"
+else
   [[ -z "$(ls -A "$PGDATA")" ]] || die "$PGDATA is not empty but has no PG_VERSION; refusing to initdb over it"
-  log "initdb (first start on this volume)"
+  log "initdb (no cluster on the volume yet)"
   as_pg "$PGBIN/initdb" -D "$PGDATA" --username=postgres --auth-local=peer --auth-host=reject \
-    --encoding=UTF8 --locale=C.UTF-8 >/dev/null
+    --encoding=UTF8 --locale=C.UTF-8 --data-checksums >/dev/null
   echo "include_if_exists = '/etc/cas/postgresql.cas.conf'" >> "$PGDATA/postgresql.conf"
   install -o postgres -g postgres -m 0600 /etc/cas/pg_hba.conf "$PGDATA/pg_hba.conf"
-  # Temporary server: unix socket only, no TCP. Creates the app role, DB and the
-  # extensions the migrations need (CREATE EXTENSION requires superuser).
-  as_pg "$PGBIN/pg_ctl" -D "$PGDATA" -w -t 60 -o "-c listen_addresses='' -c ssl=off" start >/dev/null
+  # Temporary server: unix socket only, no TCP, no synchronous standby (the WAL
+  # receiver is not running yet). Creates the app role, DB and the extensions the
+  # migrations need (CREATE EXTENSION requires superuser).
+  as_pg "$PGBIN/pg_ctl" -D "$PGDATA" -w -t 60 -o "-c listen_addresses='' -c ssl=off -c synchronous_standby_names=''" start >/dev/null
   as_pg psql -v ON_ERROR_STOP=1 -h /run/postgresql -d postgres -q \
     -v pw="$POSTGRES_PASSWORD" <<'SQL'
 CREATE ROLE cas LOGIN PASSWORD :'pw';
+-- pg_monitor: bootstrap and the keeper read pg_stat_replication (receiver state).
+GRANT pg_monitor TO cas;
 CREATE DATABASE citizen_assistance OWNER cas ENCODING 'UTF8';
 \connect citizen_assistance
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS vector;
 SQL
   as_pg "$PGBIN/pg_ctl" -D "$PGDATA" -w -t 60 -m fast stop >/dev/null
-  # Written last: a first init interrupted after initdb (role/db/extensions
-  # missing) is detected on the next start instead of failing later in bootstrap.
+  new_id="$(cluster_id "$PGDATA")"
+  printf '%s' "$new_id" > "$STATE/system_identifier.tmp" && mv -f "$STATE/system_identifier.tmp" "$STATE/system_identifier"
+  printf '%s' "$new_id" > "$PGDATA/.cas-cluster-id"; chown postgres:postgres "$PGDATA/.cas-cluster-id"
+  # Written last: an init interrupted before this point is refused on the next start.
   as_pg touch "$PGDATA/.cas-init-complete"
-  log "postgres initialised (role cas, database citizen_assistance)"
-else
-  [[ "$(cat "$PGDATA/PG_VERSION")" == 16 ]] || die "pgdata is PostgreSQL $(cat "$PGDATA/PG_VERSION"), image runs 16"
-  [[ -f "$PGDATA/.cas-init-complete" ]] \
-    || die "pgdata exists but the first initialisation did not complete (no .cas-init-complete); inspect it, then move $PGDATA aside to re-initialise"
-  grep -q "/etc/cas/postgresql.cas.conf" "$PGDATA/postgresql.conf" \
-    || echo "include_if_exists = '/etc/cas/postgresql.cas.conf'" >> "$PGDATA/postgresql.conf"
-  install -o postgres -g postgres -m 0600 /etc/cas/pg_hba.conf "$PGDATA/pg_hba.conf"
-  # Only when this owner reclaimed its own lease: the previous Postgres was this
-  # same container/pod, which cannot run twice, so its postmaster.pid is stale and
-  # its PID may collide with a process of this boot. Any other case reached
-  # maintenance mode above.
-  if [[ -f "$PGDATA/postmaster.pid" ]]; then
-    [[ "$LEASE_STATE" == reclaimed ]] || die "postmaster.pid present on a new lease (should be unreachable)"
-    log "removing stale postmaster.pid of this owner's previous boot"
-    rm -f "$PGDATA/postmaster.pid"
-  fi
+  NEED_BASE=1
+  log "postgres initialised (cluster $new_id, role cas, database citizen_assistance)"
 fi
+grep -q "/etc/cas/postgresql.cas.conf" "$PGDATA/postgresql.conf" \
+  || echo "include_if_exists = '/etc/cas/postgresql.cas.conf'" >> "$PGDATA/postgresql.conf"
+install -o postgres -g postgres -m 0600 /etc/cas/pg_hba.conf "$PGDATA/pg_hba.conf"
 
 # ---- 7. boot state and per-service environments ------------------------------------
 # One allowlist per program. Only variables that are set are written. Values with
@@ -426,16 +493,20 @@ envfile() {
 }
 install -d -o root -g root -m 0700 /run/cas-env
 rm -f /run/cas-env/*.env
-LEASE_VARS=(CAS_WORKSPACE CAS_LEASE_HEARTBEAT_S CAS_LEASE_STALE_S)
+LEASE_VARS=(CAS_WORKSPACE CAS_LOCAL CAS_LEASE_HEARTBEAT_S CAS_LEASE_STALE_S)
 TLS_VARS=(SSL_CERT_FILE CAS_CA_CERT)
-OBJ_VARS=(OBJECT_STORAGE_ENDPOINT OBJECT_STORAGE_ACCESS_KEY OBJECT_STORAGE_SECRET_KEY OBJECT_STORAGE_BUCKET
-          OBJECT_STORAGE_REGION OBJECT_STORAGE_USE_SSL OBJECT_STORAGE_AUTO_CREATE_BUCKET)
+OBJ_VARS=(OBJECT_STORAGE_BACKEND OBJECT_STORAGE_FILE_ROOT OBJECT_STORAGE_BUCKET OBJECT_STORAGE_AUTO_CREATE_BUCKET)
+# Storage keeper limits (deploy/runpod/README.md, Storage); defaults in cas_storage.py.
+KEEPER_VARS=(CAS_VOLUME_QUOTA_GB CAS_VOLUME_MIN_FREE_GB CAS_VOLUME_RESUME_MARGIN_GB CAS_WAL_BUDGET_GB CAS_BASE_KEEP
+             CAS_BASEBACKUP_HOURS CAS_BASEBACKUP_WAL_GB CAS_SNAPSHOT_KEEP CAS_VOLUME_SCAN_SECONDS CAS_KEEPER_INTERVAL_SECONDS
+             CAS_QDRANT_VERIFY_SECONDS)
 envfile pg-lease "${LEASE_VARS[@]}"
 envfile postgres "${LEASE_VARS[@]}"
+envfile pg-receivewal "${LEASE_VARS[@]}"
 envfile qdrant "${LEASE_VARS[@]}" QDRANT__SERVICE__HOST QDRANT__STORAGE__STORAGE_PATH QDRANT__STORAGE__SNAPSHOTS_PATH \
   QDRANT__TELEMETRY_DISABLED QDRANT_INIT_FILE_PATH
-envfile minio "${LEASE_VARS[@]}" MINIO_ROOT_USER MINIO_ROOT_PASSWORD MINIO_BROWSER
-envfile bootstrap CAS_WORKSPACE CAS_BOOTSTRAP_TIMEOUT_S DATABASE_URL "${TLS_VARS[@]}" "${OBJ_VARS[@]}" \
+envfile cas-keeper "${LEASE_VARS[@]}" DATABASE_URL "${TLS_VARS[@]}" "${OBJ_VARS[@]}" QDRANT_URL QDRANT_COLLECTION "${KEEPER_VARS[@]}"
+envfile bootstrap CAS_WORKSPACE CAS_LOCAL CAS_BOOTSTRAP_TIMEOUT_S DATABASE_URL "${TLS_VARS[@]}" "${OBJ_VARS[@]}" \
   QDRANT_URL QDRANT_COLLECTION EMBEDDING_PROVIDER EMBEDDING_MODEL_DIR
 envfile ai-service APP_ENV AI_SERVICE_TOKEN DATABASE_URL "${TLS_VARS[@]}" "${OBJ_VARS[@]}" QDRANT_URL QDRANT_COLLECTION \
   LLM_PROVIDER LLM_MODEL LLM_MODEL_EXTRACTION LLM_MODEL_DEFINITION LLM_MAX_OUTPUT_TOKENS LLM_DRAFT_MAX_OUTPUT_TOKENS \
@@ -469,9 +540,15 @@ chmod 0644 /run/cas-nginx.conf
 log "per-service environments written: $(cd /run/cas-env && ls | sed 's/\.env$//' | tr '\n' ' ')"
 
 dir /run/cas cas 0755
-rm -f /run/cas/bootstrap.ok /run/cas/.bootstrap.*
+rm -f /run/cas/bootstrap.ok /run/cas/.bootstrap.* /run/cas/base-backup.ok /run/cas/need-base-backup /run/cas/durable-lsn \
+      /run/cas/storage-status.json /run/cas/storage-blocked /run/cas/keeper-set-read-only
 python3 -c 'import uuid;print(uuid.uuid4())' > /run/cas/boot_id
 chmod 0644 /run/cas/boot_id
+# A fresh or restored cluster gets a verified base backup on the volume before the
+# services open (bootstrap waits for base-backup.ok, written by cas-keeper).
+if [[ $NEED_BASE == 1 ]]; then : > /run/cas/need-base-backup; fi
+# Until the keeper has checked the storage, /readyz answers 503.
+echo "storage not checked yet" > /run/cas/storage-blocked; chmod 0644 /run/cas/storage-blocked
 # Operator tools started with docker exec do not inherit these exports; cas-run
 # sources this root-only file (it contains secrets).
 ( umask 077; export -p > /run/cas-runtime.env )

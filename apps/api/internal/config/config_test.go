@@ -212,6 +212,53 @@ func TestLoadIngestionRequiresStorageWithoutEcho(t *testing.T) {
 	}
 }
 
+func TestLoadFileObjectStorageNeedsNoS3Settings(t *testing.T) {
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("CONFIG_FILE", filepath.Join("..", "..", "configs", "local", "config.yaml"))
+	t.Setenv("ADMIN_INGESTION_ENABLED", "true")
+	t.Setenv("OBJECT_STORAGE_BACKEND", "file")
+	t.Setenv("OBJECT_STORAGE_FILE_ROOT", "/workspace/cas/objects")
+	t.Setenv("OBJECT_STORAGE_BUCKET", "cas-documents")
+	t.Setenv("OBJECT_STORAGE_ENDPOINT", "")
+	t.Setenv("OBJECT_STORAGE_ACCESS_KEY", "")
+	t.Setenv("OBJECT_STORAGE_SECRET_KEY", "")
+	t.Setenv("DOCUMENT_MAX_BYTES", "20971520")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ObjectStorageBackend != "file" || cfg.ObjectStorageFileRoot != "/workspace/cas/objects" {
+		t.Fatalf("backend %+v", cfg)
+	}
+}
+
+func TestLoadFileObjectStorageRejectsBadRoots(t *testing.T) {
+	for _, root := range []string{"", "relative/objects", "/workspace/cas/../objects", "/workspace/cas/objects/"} {
+		t.Run(root, func(t *testing.T) {
+			t.Setenv("APP_ENV", "local")
+			t.Setenv("CONFIG_FILE", filepath.Join("..", "..", "configs", "local", "config.yaml"))
+			t.Setenv("ADMIN_INGESTION_ENABLED", "true")
+			t.Setenv("OBJECT_STORAGE_BACKEND", "file")
+			t.Setenv("OBJECT_STORAGE_FILE_ROOT", root)
+			t.Setenv("OBJECT_STORAGE_BUCKET", "cas-documents")
+			t.Setenv("DOCUMENT_MAX_BYTES", "20971520")
+			if _, err := Load(); err == nil {
+				t.Fatalf("root %q accepted", root)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsUnknownObjectStorageBackend(t *testing.T) {
+	t.Setenv("APP_ENV", "local")
+	t.Setenv("CONFIG_FILE", filepath.Join("..", "..", "configs", "local", "config.yaml"))
+	t.Setenv("ADMIN_INGESTION_ENABLED", "true")
+	t.Setenv("OBJECT_STORAGE_BACKEND", "nfs")
+	if _, err := Load(); err == nil {
+		t.Fatal("unknown backend accepted")
+	}
+}
+
 func TestSpeechDisabledByDefault(t *testing.T) {
 	t.Setenv("APP_ENV", "local")
 	t.Setenv("CONFIG_FILE", filepath.Join("..", "..", "configs", "local", "config.yaml"))

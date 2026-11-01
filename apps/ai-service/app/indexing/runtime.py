@@ -203,6 +203,13 @@ def minio_client():
 
 def _minio(settings) -> bool:
     try:
+        from app.indexing.file_objects import backend, bucket_ready, file_root
+
+        if backend() == "file":
+            if bucket_ready(file_root(), settings.object_bucket):
+                return True
+            log.warning("ready_probe code=object_storage_unreachable backend=file")
+            return False
         from app.indexing.object_storage import ensure_bucket, storage_config
 
         cfg = storage_config()
@@ -265,6 +272,12 @@ def fetch_object(bucket: str, key: str, max_bytes: int | None = None, timeout_s:
     clock = deadline
     if clock is None and timeout_s is not None:
         clock = Deadline(float(timeout_s))
+    from app.indexing.file_objects import backend, file_root, read_object
+
+    if backend() == "file":
+        if clock is not None:
+            clock.check()
+        return read_object(file_root(), bucket, key, max_bytes if max_bytes is not None else 20 * 1024 * 1024, clock)
     if clock is not None:
         clock.check()
         left = clock.remaining()

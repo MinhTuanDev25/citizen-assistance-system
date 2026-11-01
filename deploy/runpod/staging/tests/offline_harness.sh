@@ -10,15 +10,25 @@
 #   - CPU/GPU: the Mac container has neither AVX2 nor a GPU. Tests that need them use
 #     CAS_STAGE_TEST_HW (a fake cpuinfo + nvidia-smi), which the script reports as
 #     SIMULATED and records in READY_TO_SWITCH.
+# A run that failed on the network (pip or the Hub tokenizer download) is INFRA: the
+# assertions of that test are reported as SKIP, not as a result of the code under test,
+# and the harness exits 2 (not green) if any test was skipped.
 set -uo pipefail
-pass=0 failn=0
-t()      { echo; echo "######## $*"; }
-check()  { if [[ $2 == "$3" ]]; then echo "  ok   $1"; pass=$((pass + 1)); else echo "  FAIL $1 (expected '$3', got '$2')"; failn=$((failn + 1)); fi; }
-has()    { if grep -qE -- "$2" "$3"; then echo "  ok   $1"; pass=$((pass + 1)); else echo "  FAIL $1 (no line matching '$2')"; failn=$((failn + 1)); fi; }
-hasnt()  { if grep -qE -- "$2" "$3"; then echo "  FAIL $1 (unexpected line matching '$2')"; failn=$((failn + 1)); else echo "  ok   $1"; pass=$((pass + 1)); fi; }
-exists() { if [[ -e $2 ]]; then echo "  ok   $1"; pass=$((pass + 1)); else echo "  FAIL $1 ($2 missing)"; failn=$((failn + 1)); fi; }
-absent() { if [[ -e $2 || -L $2 ]]; then echo "  FAIL $1 ($2 exists)"; failn=$((failn + 1)); else echo "  ok   $1"; pass=$((pass + 1)); fi; }
-run()    { local out="$1"; shift; "$@" > "$out" 2>&1; echo $?; }
+pass=0 failn=0 skipn=0 INFRA_FLAG=/tmp/harness.infra   # a file: run() executes in $(...)
+INFRA_RE='pod_stage: (pip install into .* failed|tokenizer download failed)'
+t()      { echo; echo "######## $*"; rm -f "$INFRA_FLAG"; }
+skip()   { [[ -s $INFRA_FLAG ]] || return 1; echo "  SKIP $1 (infrastructure: $(cat "$INFRA_FLAG"))"; skipn=$((skipn + 1)); }
+stopped() { grep -hE "STOPPED at step|^pod_stage:" "$@" 2>/dev/null | tail -2 | sed 's/^/       > /'; }
+check()  { skip "$1" && return; if [[ $2 == "$3" ]]; then echo "  ok   $1"; pass=$((pass + 1)); else echo "  FAIL $1 (expected '$3', got '$2')"; failn=$((failn + 1)); fi; }
+has()    { skip "$1" && return; if grep -qE -- "$2" "$3"; then echo "  ok   $1"; pass=$((pass + 1)); else echo "  FAIL $1 (no line matching '$2')"; stopped "$3"; failn=$((failn + 1)); fi; }
+hasnt()  { skip "$1" && return; if grep -qE -- "$2" "$3"; then echo "  FAIL $1 (unexpected line matching '$2')"; failn=$((failn + 1)); else echo "  ok   $1"; pass=$((pass + 1)); fi; }
+exists() { skip "$1" && return; if [[ -e $2 ]]; then echo "  ok   $1"; pass=$((pass + 1)); else echo "  FAIL $1 ($2 missing)"; failn=$((failn + 1)); fi; }
+absent() { skip "$1" && return; if [[ -e $2 || -L $2 ]]; then echo "  FAIL $1 ($2 exists)"; failn=$((failn + 1)); else echo "  ok   $1"; pass=$((pass + 1)); fi; }
+run()    {  # run <log> <command...>: prints the exit code; marks the test INFRA on a network failure
+  local out="$1" rc; shift; "$@" > "$out" 2>&1; rc=$?
+  if grep -qE -- "$INFRA_RE" "$out"; then grep -oE -- "$INFRA_RE" "$out" | head -1 > "$INFRA_FLAG"; echo "  INFRA $(stopped "$out" | tr -s ' ' | head -1)" >&2; fi
+  echo "$rc"
+}
 
 git config --global safe.directory '*'; git config --global user.email test@local; git config --global user.name test
 git clone -q /src /tmp/cas-src && git -C /tmp/cas-src fetch -q /src refs/remotes/origin/main \
@@ -166,5 +176,6 @@ rc=$(run /tmp/t10e env CAS_STAGE_TEST_HW=$HW bash "$S" apply); rm $W/models/evil
 check "unsafe link: apply rc" "$rc" 1; absent "stale READY removed although the path check failed" $W/preflight/READY_TO_SWITCH
 
 echo
-echo "HARNESS: $pass passed, $failn failed"
-exit $(( failn > 0 ))
+echo "HARNESS: $pass passed, $failn failed, $skipn skipped (infrastructure)"
+if (( failn > 0 )); then exit 1; elif (( skipn > 0 )); then exit 2; fi
+exit 0
