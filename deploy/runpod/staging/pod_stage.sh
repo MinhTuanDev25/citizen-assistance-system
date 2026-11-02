@@ -24,9 +24,9 @@ ROOT="$(cd "$HERE/../../.." && pwd)"
 W=/workspace/cas
 VOL=/workspace
 RQ_ROOT=/workspace/bahnar-s2tt-thesis
-# Commit the image ghcr.io/minhtuandev25/citizen-assistance-system/cas-aio@sha256:40deae61...
-# was built from; C0 code, fetch_models.sh and the embedding rules must equal it.
-IMAGE_REVISION=b474debecb6be3e936bd149fc0a3dcbfa415a677
+# Commit the image ghcr.io/minhtuandev25/citizen-assistance-system/cas-aio@sha256:81a41a0f...
+# (storage A-file) was built from; C0 code, fetch_models.sh and the embedding rules must equal it.
+IMAGE_REVISION=7fefeb25ccfc55f29a382dbe4aa316b8c87b0903
 ASR_DIR=$RQ_ROOT/bahnar_s2tt/full_state/contract_b5172ee0cc391e4f/checkpoints/full_train/full_xlsr300m_v1/ckpts/checkpoint-12500
 MT_DIR=$RQ_ROOT/bahnar_s2tt/mt_full_state/contract_c3d7b95698738634/checkpoints/full_train/mt_bartpho_syllable_v1/ckpts/checkpoint-17500
 CONTRACT=$RQ_ROOT/bahnar_s2tt/mt_full_state/contract_c3d7b95698738634/mt_training_contract.json
@@ -235,8 +235,11 @@ check_container_disk() {
   info container-disk "$n files changed since container start (lost at the image switch); largest dirs:"
   awk -F'\t' 'NF == 2 {split($2,p,"/"); d="/"p[2]"/"p[3]"/"p[4]; s[d]+=$1; c[d]++} END {for (d in s) printf "%d %d %s\n", s[d], c[d], d}' <<<"$list" \
     | sort -rn | head -15 | awk '{printf "      %8.1f MB %6d files  %s\n", $1/1048576, $2, $3}'
-  for top in /root/.ssh /root/.jupyter /root/.config /root/.cache/huggingface /root/.netrc /root/.git-credentials; do
-    if [[ -e $top ]]; then info keep-candidate "$top ($(du -sh "$top" 2>/dev/null | cut -f1))"; fi
+  for top in /root/.jupyter /root/.config /root/.cache/huggingface; do
+    if [[ -e $top ]]; then info keep-candidate "$top ($(du -sh "$top" 2>/dev/null | cut -f1)); check it holds no credentials before preserve"; fi
+  done
+  for top in /root/.ssh /root/.netrc /root/.git-credentials; do
+    if [[ -e $top ]]; then info secret "$top: do not preserve on the volume (readable by every user); copy it off RunPod yourself"; fi
   done
 }
 
@@ -326,7 +329,8 @@ cmd_preserve() {
   fi
   ( cd "$dest" && sha256sum -- * > SHA256SUMS ) || die "cannot write $dest/SHA256SUMS"
   echo "preserved in $dest:"; ls -la "$dest"
-  echo "NOTE: secrets in the tar (ssh keys, tokens) are now on the volume: keep $dest at 0700 or move it off RunPod."
+  echo "NOTE: the volume does not keep modes (0777 on RunPod): every user of the next container can read $dest."
+  echo "      Never preserve private keys, tokens or credentials; copy those off RunPod yourself."
 }
 
 # What the image needs from the volume (storage design: engines on the container
@@ -375,7 +379,7 @@ install_same() {  # install_same <src> <dest> <mode>: create, or accept an ident
     if cmp -s "$1" "$2"; then ok install "$2 (already identical)"; return 0; fi
     bad install "$2 exists and differs; not overwritten (diff it, move it aside yourself)"; return 1
   fi
-  install -D -o root -g root -m "$3" "$1" "$2" || die "cannot install $2"
+  install -D -m "$3" "$1" "$2" || die "cannot install $2"   # no -o/-g: the volume refuses chown, root owns it anyway
   ok install "$2"
 }
 
@@ -420,7 +424,7 @@ write_manifest() {
   files+=("$CONTRACT")
   [[ -d $TOK_SNAP ]] || { bad manifest "tokenizer snapshot missing: $TOK_SNAP"; return 1; }
   while IFS= read -r f; do files+=("$f"); done < <(find "$TOK_SNAP" -mindepth 1 \( -type f -o -type l \) | sort)
-  install -d -o root -g root -m 0755 "$W/manifests" || die "cannot create $W/manifests"
+  install -d -m 0755 "$W/manifests" || die "cannot create $W/manifests"
   sha256sum -- "${files[@]}" > "$tmp" || { rm -f "$tmp"; bad manifest "cannot hash the inference files"; return 1; }
   grep -qxF "$ASR_SHA  $ASR_DIR/model.safetensors" "$tmp" || { rm -f "$tmp"; bad manifest "ASR weights do not match the pin"; return 1; }
   grep -qxF "$MT_SHA  $MT_DIR/model.safetensors" "$tmp" || { rm -f "$tmp"; bad manifest "MT weights do not match the pin"; return 1; }
@@ -459,7 +463,7 @@ cmd_apply() {
   gate "volume mount + path safety (nothing written)"
   check_host; check_source; check_volume; check_checkpoints; check_access; check_activity
   gate "pre-checks (nothing written)"
-  install -d -o root -g root -m 0755 "$W" || die "cannot create $W"
+  install -d -m 0755 "$W" || die "cannot create $W"
   fs_probe;                                                                   gate "filesystem probe"
   if CAS_MODEL_VARIANT=fp32 "$ROOT/deploy/runpod/fetch_models.sh" --variant fp32 "$W/models/embedding"; then
     ok embedding "fp32 e5 model verified in $W/models/embedding"
@@ -467,7 +471,7 @@ cmd_apply() {
   tokenizer_cache;                                                            gate "tokenizer cache + parity"
   install_same "$HERE/c0_inference.yaml" "$W/config/c0_inference.yaml" 0644; gate "c0_inference.yaml"
   write_manifest;                                                             gate "checkpoint manifest"
-  install -d -o root -g root -m 0755 "$W/preflight" || die "cannot create $W/preflight"
+  install -d -m 0755 "$W/preflight" || die "cannot create $W/preflight"
   install -m 0755 "$HERE/verify_after_switch.sh" "$HERE/rq_fingerprint.py" "$W/preflight/" || die "cannot copy the verify scripts"
   if python3 "$HERE/rq_fingerprint.py" "$VOL" --exclude "$W" --listing-out "$W/preflight/rq_tree.listing.gz" \
        > "$W/preflight/rq_tree.fingerprint"; then

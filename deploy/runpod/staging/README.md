@@ -15,7 +15,7 @@ Nothing here trains a model or writes to the research tree. Every step that cost
 | Volume | `bahnar-thesis-storage`, ID `buppvu4d48`, 200 GB, US-IL-1, mounted at `/workspace` |
 | CPU | AMD EPYC 7B13: AVX2 yes, AVX-512 VNNI no. E5 therefore runs **fp32** |
 | GPU | NVIDIA RTX 4090, 24 GB |
-| Image | `ghcr.io/minhtuandev25/citizen-assistance-system/cas-aio@sha256:40deae613fcc8f716d1874e41a12c565dfcd0e0e95b2ffb3fc4de396ca8cc566`, revision `b474deb`, amd64, 5.03 GB compressed. Torch 2.8.0 from PyPI, a CUDA 12.8 build; the C0 venv layer alone is 4.1 GB |
+| Image | `ghcr.io/minhtuandev25/citizen-assistance-system/cas-aio@sha256:81a41a0feec160c3d943227b6f9e9a1580c3b197c837d96b4bb949e2985416ca`, revision `7fefeb2` (storage A-file), amd64, 4.97 GB compressed. Torch 2.8.0 from PyPI, a CUDA 12.8 build; the C0 venv layer alone is 4.1 GB |
 | ASR | `checkpoint-12500` (`full_xlsr300m_v1`), 5/5 required files. `model.safetensors` sha256 `dacbe7f82d8ed0a33f7e9798860d0e1808a20b9dc84725355a2db9b4229a6a2a` |
 | MT | `checkpoint-17500` (`mt_bartpho_syllable_v1`), 6/6 required files. `model.safetensors` sha256 `f9bee0d53399f76548eee297fc67ff83bad4e43cd8fda630c9cb6dab93284ead` |
 | MT contract | `.../mt_full_state/contract_c3d7b95698738634/mt_training_contract.json` |
@@ -105,14 +105,14 @@ You need **0 FAIL** and `exit=0`. The pipe into `tee` would hide the script's ex
 |---|---|
 | `WARN workspace-idle` | Something still uses `/workspace` |
 | `WARN gpu-cuda` | The driver supports less than CUDA 12.8 |
-| `INFO container-disk` / `keep-candidate` | Files that are lost at the switch |
+| `INFO container-disk` / `keep-candidate` / `secret` | Files that are lost at the switch; `secret` paths are never preserved on the volume |
 | `volume-free` | The 200 GB quota minus the usage measured with `du`. `df` on a network volume shows the shared backend (hundreds of TB), not the quota, so it is printed as information only. The 200 GB is configured (`VOL_QUOTA_GB`), **not read from RunPod**. Confirming the size and usage in Console > Storage is a required manual step before `apply`. Any `du` error counts as FAIL, never as a partial number |
 
 `apply` refuses to run unless `CAS_STAGE_EXPECT_COMMIT` is set and equals the clone's HEAD (`source-commit`). `check` only warns when it is unset. Together with `source-clean`, this proves that the code that runs is the reviewed commit, byte for byte. `READY_TO_SWITCH` records that commit as `clone=`.
 
 `check` also requires `/workspace` to be a mount point (`volume-mount`). Without the network volume, everything would be prepared on the container disk and lost at the switch.
 
-The clone must be a blob-less clone, not `--depth 1`, because `check` compares the C0 and E5 files with image revision `b474deb`.
+The clone must be a blob-less clone, not `--depth 1`, because `check` compares the C0 and E5 files with image revision `7fefeb2`.
 
 `check` (and `apply`) also refuse two more situations:
 
@@ -124,7 +124,7 @@ The clone must be a blob-less clone, not `--depth 1`, because `check` compares t
 Use the `container-disk` and `keep-candidate` lines from step 2, for example:
 
 ```bash
-bash /tmp/cas-src/deploy/runpod/staging/pod_stage.sh preserve /root/.jupyter /root/.config
+bash /tmp/cas-src/deploy/runpod/staging/pod_stage.sh preserve /root/.jupyter
 ```
 
 `preserve` writes to `/workspace/cas/preserve/<pod>-<ts>/`:
@@ -138,7 +138,9 @@ bash /tmp/cas-src/deploy/runpod/staging/pod_stage.sh preserve /root/.jupyter /ro
 
 It refuses paths that are already on the volume, because those survive the switch. It also refuses to write anything when `/workspace` is not a mount point or a path under `/workspace/cas` is unsafe; a backup on the container disk would be lost at the switch.
 
-Anything not preserved is lost: `pip install`s, `~/.cache/huggingface`, shell history, SSH `authorized_keys`, notebooks saved outside `/workspace`. If the tar contains secrets, move it off RunPod or keep the directory at `0700`.
+Anything not preserved is lost: `pip install`s, `~/.cache/huggingface`, shell history, SSH `authorized_keys`, notebooks saved outside `/workspace`.
+
+**Never preserve secrets.** The volume does not keep modes (it shows `0777`), so every user of the next container can read `preserve/`. Private keys, tokens and credentials (`/root/.ssh`, `.netrc`, `.git-credentials`, cloud CLI logins under `/root/.config`) are copied off RunPod by you, never passed to `preserve`. `check` lists them as `INFO secret`; check every `keep-candidate` for credentials before passing it.
 
 ### 4. Apply (writes under `/workspace/cas` only)
 
