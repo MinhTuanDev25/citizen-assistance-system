@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1.7
 # All-in-one image for one RunPod GPU pod (Phase 8.1): nginx, Go API, index-reaper,
-# Python AI service, Speech C0, PostgreSQL 16 + pgvector, Qdrant, MinIO, under
-# tini -> supervisord. Data lives on the volume at /workspace/cas.
+# Python AI service, Speech C0, PostgreSQL 16 + pgvector, Qdrant, under
+# tini -> supervisord. Engines run on the container disk (/var/lib/cas); the durable
+# copy (synchronous WAL, base backups, Qdrant snapshots, document files) is on the
+# volume at /workspace/cas.
 #
 # Build from the repo root after staging C0 (see deploy/runpod/README.md):
 #   deploy/runpod/stage_c0.sh
@@ -33,7 +35,6 @@ RUN set -e; for cmd in api index-reaper bootstrap-admin; do \
 
 # ---- third-party binaries, pinned images (pulled for the target arch) ----
 FROM migrate/migrate:v4.18.1 AS migrate
-FROM bitnamilegacy/minio:2024.12.18 AS minio
 FROM qdrant/qdrant:v1.13.4 AS qdrant
 
 # ---- runtime ----
@@ -50,7 +51,6 @@ ENV DEBIAN_FRONTEND=noninteractive PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONDONTWRI
 # Fixed UIDs so ownership on the volume is stable across image versions and pods.
 RUN groupadd -g 10001 cas && useradd -u 10001 -g cas -M -d /nonexistent -s /usr/sbin/nologin cas \
  && groupadd -g 10010 postgres && useradd -u 10010 -g postgres -m -d /var/lib/postgresql -s /bin/bash postgres \
- && groupadd -g 10011 minio && useradd -u 10011 -g minio -M -d /nonexistent -s /usr/sbin/nologin minio \
  && groupadd -g 10012 qdrant && useradd -u 10012 -g qdrant -M -d /nonexistent -s /usr/sbin/nologin qdrant \
  && groupadd -g 10013 speech && useradd -u 10013 -g speech -M -d /nonexistent -s /usr/sbin/nologin speech \
  && groupadd -g 10014 web && useradd -u 10014 -g web -M -d /nonexistent -s /usr/sbin/nologin web
@@ -82,8 +82,6 @@ RUN python -m venv /opt/cas/venv-c0 \
  && /opt/cas/venv-ai/bin/pip freeze > /opt/cas/req/ai-freeze.txt
 
 COPY --from=migrate /usr/local/bin/migrate /usr/local/bin/migrate
-COPY --from=minio /opt/bitnami/minio/bin/minio /opt/cas/bin/minio
-COPY --from=minio /opt/bitnami/minio-client/bin/mc /opt/cas/bin/mc
 COPY --from=qdrant /qdrant/qdrant /opt/cas/qdrant/qdrant
 COPY --from=qdrant /qdrant/config /opt/cas/qdrant/config
 COPY --from=go /out/ /opt/cas/api/
@@ -98,7 +96,7 @@ COPY deploy/runpod/rootfs/ /
 RUN set -e; \
     install -d -o cas -g cas -m 0700 /home/cas; usermod -d /home/cas cas; \
     install -d -o speech -g speech -m 0700 /home/speech; usermod -d /home/speech speech; \
-    chmod 0755 /opt/cas/bin/*.sh /opt/cas/bin/cas-run /opt/cas/bin/cas-pg-recover /opt/cas/bin/svc-run; \
+    chmod 0755 /opt/cas/bin/*.sh /opt/cas/bin/cas-run /opt/cas/bin/cas-pg-recover /opt/cas/bin/svc-run /opt/cas/bin/cas-storage; \
     chown -R root:root /opt/cas; \
     chmod -R a+rX,go-w /opt/cas; \
     if [ "${CAS_REVISION}" != unknown ] && [ "$(cat /opt/cas/c0/SOURCE_REVISION)" != "${CAS_REVISION}" ]; then \

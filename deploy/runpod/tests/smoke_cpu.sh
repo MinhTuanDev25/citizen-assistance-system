@@ -23,13 +23,15 @@ printf 'id\tresult\tcheck\tevidence\n' > "$RES"
 exec > >(tee -a "$OUT/smoke.log") 2>&1
 
 rnd() { openssl rand -hex "$1"; }
-JWT="$(rnd 32)"; AIT="$(rnd 16)"; PGPW="$(rnd 16)"; MU="casminio$(rnd 4)"; MP="$(rnd 16)"
+JWT="$(rnd 32)"; AIT="$(rnd 16)"; PGPW="$(rnd 16)"
 ADMIN_EMAIL=admin@chuse.vn; ADMIN_PW="Smoke-$(rnd 8)"
 # Embedding variant under test; models/embedding must hold that variant's model.
 EV="${SMOKE_EMBEDDING_VARIANT:-fp32}"
 ENVS=(-e CAS_SPEECH_MODE=off -e EMBEDDING_VARIANT="$EV" -e JWT_SECRET="$JWT" -e AI_SERVICE_TOKEN="$AIT" -e POSTGRES_PASSWORD="$PGPW"
-      -e MINIO_ROOT_USER="$MU" -e MINIO_ROOT_PASSWORD="$MP" -e LLM_PROVIDER=mock -e CAS_ALLOW_MOCK_LLM=true
-      -e GEMINI_API_KEY="smoke-unused-$(rnd 12)")
+      -e LLM_PROVIDER=mock -e CAS_ALLOW_MOCK_LLM=true -e GEMINI_API_KEY="smoke-unused-$(rnd 12)"
+      -e CAS_KEEPER_INTERVAL_SECONDS=3)
+# Engines run on the container disk; the volume holds the durable copy.
+LCL=/var/lib/cas
 MODELS=(-v "$ROOT/models:/workspace/cas/models:ro")
 
 # Evidence is one TSV cell: tabs, CR and newlines become spaces.
@@ -73,19 +75,19 @@ neg() {  # neg <id> <name> <expected log text> <docker run args...>
   if [[ $rc -eq 64 ]] && grep -q "$want" <<<"$out"; then pass "$id" "$name" "exit=$rc"; else fail "$id" "$name" "exit=$rc; see $id.log"; fi
 }
 neg N1 "missing CAS_SPEECH_MODE is refused" "CAS_SPEECH_MODE must be" \
-  -e JWT_SECRET="$JWT" -e AI_SERVICE_TOKEN="$AIT" -e POSTGRES_PASSWORD="$PGPW" -e MINIO_ROOT_USER="$MU" -e MINIO_ROOT_PASSWORD="$MP"
+  -e JWT_SECRET="$JWT" -e AI_SERVICE_TOKEN="$AIT" -e POSTGRES_PASSWORD="$PGPW"
 neg N2 "mode=off with SPEECH_ENABLED=true is refused" "conflicting configuration" "${ENVS[@]}" -e SPEECH_ENABLED=true
 neg N3 "placeholder JWT secret is refused" "JWT_SECRET looks like a placeholder" "${ENVS[@]}" -e JWT_SECRET=local-dev-jwt-secret-change-me-0123456789
 neg N4 "missing POSTGRES_PASSWORD is refused" "POSTGRES_PASSWORD is required" \
-  -e CAS_SPEECH_MODE=off -e JWT_SECRET="$JWT" -e AI_SERVICE_TOKEN="$AIT" -e MINIO_ROOT_USER="$MU" -e MINIO_ROOT_PASSWORD="$MP"
+  -e CAS_SPEECH_MODE=off -e JWT_SECRET="$JWT" -e AI_SERVICE_TOKEN="$AIT"
 neg N6 "missing LLM_PROVIDER is refused (no silent default under APP_ENV=prod)" "LLM_PROVIDER is required" \
-  -e CAS_SPEECH_MODE=off -e JWT_SECRET="$JWT" -e AI_SERVICE_TOKEN="$AIT" -e POSTGRES_PASSWORD="$PGPW" -e MINIO_ROOT_USER="$MU" -e MINIO_ROOT_PASSWORD="$MP"
+  -e CAS_SPEECH_MODE=off -e JWT_SECRET="$JWT" -e AI_SERVICE_TOKEN="$AIT" -e POSTGRES_PASSWORD="$PGPW"
 neg N7 "LLM_PROVIDER=mock without CAS_ALLOW_MOCK_LLM is refused" "LLM_PROVIDER=mock is for tests only" \
-  -e CAS_SPEECH_MODE=off -e JWT_SECRET="$JWT" -e AI_SERVICE_TOKEN="$AIT" -e POSTGRES_PASSWORD="$PGPW" -e MINIO_ROOT_USER="$MU" -e MINIO_ROOT_PASSWORD="$MP" -e LLM_PROVIDER=mock
+  -e CAS_SPEECH_MODE=off -e JWT_SECRET="$JWT" -e AI_SERVICE_TOKEN="$AIT" -e POSTGRES_PASSWORD="$PGPW" -e LLM_PROVIDER=mock
 docker volume create "$NEGVOL" >/dev/null
 neg N5 "mode=gpu without checkpoints fails closed" "gpu mode: C0_INFERENCE_CONFIG not found" \
   -e CAS_SPEECH_MODE=gpu -e JWT_SECRET="$JWT" -e AI_SERVICE_TOKEN="$AIT" -e POSTGRES_PASSWORD="$PGPW" \
-  -e MINIO_ROOT_USER="$MU" -e MINIO_ROOT_PASSWORD="$MP" -e SPEECH_SERVICE_TOKEN="$(rnd 16)" \
+  -e SPEECH_SERVICE_TOKEN="$(rnd 16)" \
   -e LLM_PROVIDER=mock -e CAS_ALLOW_MOCK_LLM=true -v "$NEGVOL:/workspace" "${MODELS[@]}"
 neg N8 "non-numeric SPEECH_TIMEOUT_MS is refused" "SPEECH_TIMEOUT_MS must be an integer" "${ENVS[@]}" -e SPEECH_TIMEOUT_MS=90s
 # N9: a model that does not match its manifest stops the boot (full SHA-256 check).
@@ -112,10 +114,10 @@ neg N12 "EMBEDDING_CPU_FLAGS (fake CPU flags) is refused outside tests" "EMBEDDI
 # N13 simulates a CPU without AVX-512 VNNI (test-only flag override): int8-vnni is refused.
 neg N13 "EMBEDDING_VARIANT=int8-vnni on a CPU without AVX-512 VNNI is refused (simulated CPU flags)" "cannot run on this CPU (embedding_cpu_unsupported)" \
   "${ENVS[@]}" "${MODELS[@]}" -e EMBEDDING_VARIANT=int8-vnni -e CAS_ALLOW_CPU_FLAGS_OVERRIDE=true -e EMBEDDING_CPU_FLAGS=sse2,avx,avx2
-# Prove N5 stopped before init work (no pgdata/CA written on that volume).
-if docker run --rm -v "$NEGVOL:/w" --entrypoint bash "$IMG" -c '[ ! -e /w/cas/pgdata/PG_VERSION ] && [ ! -e /w/cas/tls/ca.crt ]'; then
-  pass N5b "gpu refusal happened before initdb and CA creation"
-else fail N5b "gpu refusal happened before initdb and CA creation" "pgdata or CA exists"; fi
+# Prove N5 stopped before init work (no cluster identity, WAL or base backup on that volume).
+if docker run --rm -v "$NEGVOL:/w" --entrypoint bash "$IMG" -c '[ ! -e /w/cas/pg/state/system_identifier ] && [ -z "$(ls -A /w/cas/pg/wal 2>/dev/null)" ]'; then
+  pass N5b "gpu refusal happened before initdb (no cluster on the volume)"
+else fail N5b "gpu refusal happened before initdb" "cluster files exist on the volume"; fi
 
 # ---- S: first start on an empty volume -----------------------------------------
 docker volume create "$VOL" >/dev/null
@@ -127,7 +129,7 @@ docker logs "$C" > "$OUT/S1_boot.log" 2>&1
 
 # Startup order from the log: postgres ready -> migrations -> bucket -> marker -> apps.
 order_ok=1; prev=0
-for pat in "\[bootstrap\].*postgres ready" "\[bootstrap\].*minio ready" "migrations applied up to" "bucket cas-documents created" "bootstrap complete" "wait-for\[api\]: ready" "wait-for\[nginx\]: ready"; do
+for pat in "\[bootstrap\].*postgres ready" "WAL receiver streaming, synchronous" "migrations applied up to" "objects verified" "qdrant collection knowledge_chunks ready" "base backup on the volume verified" "bootstrap complete" "wait-for\[api\]: ready" "wait-for\[nginx\]: ready"; do
   n="$(grep -n -m1 -E "$pat" "$OUT/S1_boot.log" | cut -d: -f1)"
   echo "order: '$pat' at line ${n:-MISSING}"
   if [[ -z "$n" || "$n" -le "$prev" ]]; then order_ok=0; fi; prev="${n:-$prev}"
@@ -137,12 +139,12 @@ grep -E "\[bootstrap\]|wait-for\[(api|nginx|ai-service|uvicorn|index-reaper)" "$
 m="$(grep -n -m1 "bootstrap complete" "$OUT/S1_boot.log" | cut -d: -f1)"
 a="$(grep -n -m1 "wait-for\[uvicorn\]: ready" "$OUT/S1_boot.log" | cut -d: -f1)"
 [[ -n "$a" && -n "$m" && "$a" -gt "$m" ]] || order_ok=0
-if [[ $order_ok == 1 ]]; then pass S2 "startup order: data ready -> migrate -> bucket -> marker -> apps" "S2_order.txt"; else fail S2 "startup order" "S2_order.txt"; fi
+if [[ $order_ok == 1 ]]; then pass S2 "startup order: postgres -> synchronous WAL receiver -> migrate -> objects -> qdrant -> verified base backup -> marker -> apps" "S2_order.txt"; else fail S2 "startup order" "S2_order.txt"; fi
 
 
 sup > "$OUT/S3_supervisor.txt"
 s3=1
-for p in pg-lease postgres qdrant minio ai-service api index-reaper nginx; do [[ "$(state "$p")" == RUNNING ]] || s3=0; done
+for p in pg-lease postgres pg-receivewal qdrant cas-keeper ai-service api index-reaper nginx; do [[ "$(state "$p")" == RUNNING ]] || s3=0; done
 # supervisorctl status does not print the exit code; supervisord logs it.
 grep -q "exited: bootstrap (exit status 0; expected)" "$OUT/S1_boot.log" || s3=0
 grep "exited: bootstrap" "$OUT/S1_boot.log" >> "$OUT/S3_supervisor.txt"
@@ -157,23 +159,26 @@ if [[ "$public" == "0.0.0.0:8088 " ]]; then pass S4 "only nginx 8088 listens bey
 dx ps -eo user:10,comm --no-headers | sort | uniq -c > "$OUT/S5_process_users.txt"
 dx ps -eo user:10,pid,ppid,args --no-headers > "$OUT/S5_process_args.txt"
 s5=1
-for pair in "postgres postgres" "qdrant qdrant" "minio minio" "cas api" "cas index-reaper" "cas uvicorn" "web nginx"; do
+for pair in "postgres postgres" "postgres pg_receivewal" "qdrant qdrant" "cas api" "cas index-reaper" "cas uvicorn" "web nginx"; do
   grep -qE "^ *[0-9]+ ${pair% *} +${pair#* }" "$OUT/S5_process_users.txt" || { echo "missing: $pair"; s5=0; }
 done
 roots="$(awk '$2=="root"{print $3}' "$OUT/S5_process_users.txt" | sort -u | tr '\n' ' ')"
 echo "root processes: $roots"
-# Root by design: tini, supervisord, and pg-lease (bash pg-lease.sh and its sleep child).
+# Root by design: tini, supervisord, pg-lease (bash pg-lease.sh and its sleep child)
+# and cas-keeper (it drops to postgres for pg_basebackup and to psql as postgres).
 lease_pid="$(awk '$1=="root" && $0 ~ /pg-lease\.sh/ {print $2}' "$OUT/S5_process_args.txt")"
 while read -r u pid ppid args; do
   [[ "$u" == root ]] || continue
   case "$args" in
     /usr/bin/tini*|*supervisord*|"ps -eo"*) ;;
     *pg-lease.sh*) ;;
+    *cas_storage.py\ keeper*|*cas-storage\ keeper*) ;;
+    du\ -sxk*|pg_basebackup*|pg_verifybackup*|pg_archivecleanup*|psql*|gosu*) ;;
     sleep*) [[ -n "$lease_pid" && "$ppid" == "$lease_pid" ]] || { s5=0; echo "unexpected root sleep: $pid $args"; } ;;
     *) s5=0; echo "unexpected root process: $pid $args" ;;
   esac
 done < "$OUT/S5_process_args.txt"
-if [[ $s5 == 1 ]]; then pass S5 "each service runs as its own user; root only for tini, supervisord, pg-lease" "$roots"; else fail S5 "process users" "S5_process_args.txt"; fi
+if [[ $s5 == 1 ]]; then pass S5 "each service runs as its own user; root only for tini, supervisord, pg-lease, cas-keeper" "$roots"; else fail S5 "process users" "S5_process_args.txt"; fi
 
 # ---- E: per-service environment (svc-run: env -i + allowlist) ----------------------
 # Read /proc/<pid>/environ as the process owner (root in docker exec lacks CAP_SYS_PTRACE).
@@ -197,10 +202,10 @@ check_env() {  # check_env <label> <user> <comm> <allowed secrets...>
 check_env nginx web nginx
 check_env postgres postgres postgres
 check_env qdrant qdrant qdrant
-check_env minio minio minio MINIO_ROOT_PASSWORD
+check_env pg-receivewal postgres pg_receivewal
 check_env index-reaper cas index-reaper DATABASE_URL
-check_env api cas api DATABASE_URL JWT_SECRET OBJECT_STORAGE_SECRET_KEY AI_SERVICE_TOKEN
-check_env ai-service cas uvicorn DATABASE_URL OBJECT_STORAGE_SECRET_KEY AI_SERVICE_TOKEN GEMINI_API_KEY
+check_env api cas api DATABASE_URL JWT_SECRET AI_SERVICE_TOKEN
+check_env ai-service cas uvicorn DATABASE_URL AI_SERVICE_TOKEN GEMINI_API_KEY
 lease_pid="$(dx pgrep -o -f pg-lease.sh)"; ln="$(dx cat "/proc/$lease_pid/environ" | tr '\0' '\n' | cut -d= -f1 | sort | tr '\n' ' ')"
 echo "pg-lease (root): $ln" >> "$OUT/E1_env.txt"
 for sname in $SECRETS; do [[ " $ln " != *" $sname "* ]] || { e1=0; echo "  -> LEAK in pg-lease: $sname" >> "$OUT/E1_env.txt"; }; done
@@ -208,7 +213,11 @@ for sname in $SECRETS; do [[ " $ln " != *" $sname "* ]] || { e1=0; echo "  -> LE
 # title, so for it the file is the reliable evidence).
 dx bash -c 'for f in /run/cas-env/*.env; do echo "$(basename "$f" .env): $(cut -d= -f1 "$f" | tr "\n" " ")"; done' > "$OUT/E1_envfiles.txt"
 dx stat -c '%U %a %n' /run/cas-env /run/cas-env/api.env >> "$OUT/E1_envfiles.txt"
-for svc in nginx postgres qdrant pg-lease; do
+grep -q "^cas-keeper:.*DATABASE_URL" "$OUT/E1_envfiles.txt" || { e1=0; echo "  -> cas-keeper.env lacks DATABASE_URL" >> "$OUT/E1_env.txt"; }
+for sname in JWT_SECRET POSTGRES_PASSWORD AI_SERVICE_TOKEN GEMINI_API_KEY SPEECH_SERVICE_TOKEN; do
+  grep -q "^cas-keeper:.* $sname " "$OUT/E1_envfiles.txt" && { e1=0; echo "  -> LEAK in cas-keeper.env: $sname" >> "$OUT/E1_env.txt"; }
+done
+for svc in nginx postgres qdrant pg-lease pg-receivewal; do
   line="$(grep "^$svc:" "$OUT/E1_envfiles.txt")"
   for sname in $SECRETS; do [[ " $line " != *" $sname "* ]] || { e1=0; echo "  -> LEAK in $svc.env: $sname" >> "$OUT/E1_env.txt"; }; done
 done
@@ -216,7 +225,7 @@ grep -q "^root 700 /run/cas-env$" "$OUT/E1_envfiles.txt" && grep -q "^root 600 /
 [[ $e1 == 1 ]] && pass E1 "each program sees only its own variables (no secret of another service); env files root-only" "E1_env.txt, E1_envfiles.txt" || fail E1 "per-service environment" "E1_env.txt"
 
 # ---- T: TLS ---------------------------------------------------------------------
-CA=/workspace/cas/tls/ca.crt
+CA=$LCL/tls/ca.crt
 DSN_V="postgresql://cas:$PGPW@127.0.0.1:5432/citizen_assistance?sslmode=verify-full&sslrootcert=$CA"
 o="$(dx gosu cas psql "$DSN_V" -tAc "select ssl, version from pg_stat_ssl where pid = pg_backend_pid()" 2>&1)"; echo "$o" > "$OUT/T1.txt"
 [[ "$o" == t\|TLS* ]] && pass T1 "Postgres verify-full against internal CA" "$o" || fail T1 "Postgres verify-full" "$o"
@@ -225,20 +234,20 @@ grep -q "no encryption" <<<"$o" && pass T2 "Postgres rejects non-TLS TCP connect
 o="$(dx gosu cas psql "$DSN_V" -tAc "select count(*) filter (where s.ssl), count(*) from pg_stat_activity a join pg_stat_ssl s using (pid) where a.usename = 'cas' and a.pid <> pg_backend_pid()" 2>&1)"; echo "$o" > "$OUT/T3.txt"
 if [[ "$o" =~ ^([0-9]+)\|([0-9]+)$ && "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" && "${BASH_REMATCH[2]}" -gt 0 ]]; then
   pass T3 "all app connections to Postgres use TLS" "ssl|total=$o"; else fail T3 "app connections use TLS" "$o"; fi
-o1="$(dx curl -fsS --cacert "$CA" https://127.0.0.1:9000/minio/health/ready -o /dev/null -w '%{http_code}' 2>&1)"
 CERTIFI="$(dx /opt/cas/venv-ai/bin/python -c 'import certifi;print(certifi.where())')"
-# --capath /nonexistent: otherwise curl also searches /etc/ssl/certs, where the internal CA is installed.
-o2="$(dx curl -sS --cacert "$CERTIFI" --capath /nonexistent https://127.0.0.1:9000/minio/health/ready -o /dev/null 2>&1)"
-echo "with CA: $o1 | with public bundle only: $o2" > "$OUT/T4.txt"
-[[ "$o1" == 200 ]] && grep -qi "certificate" <<<"$o2" && pass T4 "MinIO HTTPS verifies with internal CA, fails with public bundle" "$o1 / ${o2:0:80}" || fail T4 "MinIO TLS verification" "$(cat "$OUT/T4.txt")"
-PYCHK='import os
-from minio import Minio
-c=Minio("127.0.0.1:9000",access_key=os.environ["OBJECT_STORAGE_ACCESS_KEY"],secret_key=os.environ["OBJECT_STORAGE_SECRET_KEY"],secure=True,region="us-east-1")
-print("bucket_exists", c.bucket_exists("cas-documents"))'
-o_env="$(dx cas-run cas /opt/cas/venv-ai/bin/python -c "$PYCHK" 2>&1 | tail -1)"
-o_noenv="$(dx cas-run cas env -u SSL_CERT_FILE /opt/cas/venv-ai/bin/python -c "$PYCHK" 2>&1 | tail -1)"
-printf 'SSL_CERT_FILE set: %s\nSSL_CERT_FILE unset: %s\n' "$o_env" "$o_noenv" > "$OUT/T5_minio_py_trust.txt"
-if [[ "$o_env" == "bucket_exists True" && "$o_noenv" == *CERTIFICATE_VERIFY_FAILED* ]]; then pass T5 "minio-py trusts the internal CA only through SSL_CERT_FILE (unset -> certifi -> verify failed)" "$(tr '\n' ';' < "$OUT/T5_minio_py_trust.txt")"; else fail T5 "minio-py TLS" "$(tr '\n' ';' < "$OUT/T5_minio_py_trust.txt")"; fi
+# F1: nothing secret or private on the volume (FUSE volumes report 0777 to everyone).
+leaks="$(dx bash -c 'find /workspace/cas \( -path /workspace/cas/models -o -path /workspace/cas/hf-cache \) -prune -o -type f \( -name "*.key" -o -name "*.pem" -o -name "*.env" -o -name "ca.srl" \) -print' 2>&1)"
+envhits="$(dx bash -c "grep -rlF -e '$PGPW' -e '$JWT' -e '$AIT' /workspace/cas --exclude-dir=pg --exclude-dir=objects 2>/dev/null" | head -5)"
+echo "key-like files: ${leaks:-none} | secret values found in: ${envhits:-none}" > "$OUT/F1_no_secrets_on_volume.txt"
+[[ -z "$leaks" && -z "$envhits" ]] && pass F1 "no private key, env file or secret value on the volume (TLS and secrets stay on the container disk / in memory)" "F1_no_secrets_on_volume.txt" || fail F1 "secrets on the volume" "F1_no_secrets_on_volume.txt"
+# F2: the volume layout of the new storage design.
+lay="$(dx bash -c 'for d in pg/wal pg/base pg/state backups/pg qdrant/snapshots objects/cas-documents; do [ -d /workspace/cas/$d ] && echo "$d ok" || echo "$d MISSING"; done; ls /workspace/cas/pg/base | grep -c "^[0-9]"; ls /workspace/cas/pg/wal | grep -cE "^[0-9A-F]{24}"' 2>&1)"
+echo "$lay" > "$OUT/F2_layout.txt"
+! grep -q MISSING "$OUT/F2_layout.txt" && [[ "$(tail -2 "$OUT/F2_layout.txt" | head -1)" -ge 1 && "$(tail -1 "$OUT/F2_layout.txt")" -ge 1 ]] \
+  && pass F2 "volume holds pg/wal (receiver), a verified base backup, pg/state, backups, snapshots, objects" "$(tr '\n' ' ' < "$OUT/F2_layout.txt")" || fail F2 "volume layout" "$(tr '\n' ' ' < "$OUT/F2_layout.txt")"
+o="$(dx gosu postgres psql -h /run/postgresql -d postgres -XAtc "select application_name, state, sync_state from pg_stat_replication; show synchronous_commit; show synchronous_standby_names" 2>&1 | tr '\n' ' ')"
+echo "$o" > "$OUT/F3_sync.txt"
+[[ "$o" == "cas_vol|streaming|sync on cas_vol "* ]] && pass F3 "WAL receiver cas_vol streams synchronously; synchronous_commit=on" "$o" || fail F3 "synchronous WAL" "$o"
 
 # T6: apps use verify-full, and verify-full really checks the chain (wrong CA -> refused).
 api_pid="$(dx pgrep -u cas -x api)"; ai_pid="$(dx pgrep -u cas -f 'uvicorn app.main' | head -1)"
@@ -254,14 +263,12 @@ else fail T6 "verify-full" "T6_verify_full.txt"; fi
 # ---- K: key and directory permissions (read as the real service users) ----------
 k() { dx gosu "$1" cat "$2" >/dev/null 2>&1; }
 kp=1
-k postgres /workspace/cas/tls/postgres/server.key || { kp=0; echo "postgres cannot read its key"; }
-k minio /workspace/cas/tls/minio/private.key || { kp=0; echo "minio cannot read its key"; }
-for u in cas postgres minio qdrant speech web; do k "$u" /workspace/cas/tls/ca/ca.key && { kp=0; echo "$u CAN read ca.key"; }; done
-k cas /workspace/cas/tls/postgres/server.key && { kp=0; echo "cas can read postgres key"; }
-k postgres /workspace/cas/tls/minio/private.key && { kp=0; echo "postgres can read minio key"; }
-k cas /workspace/cas/tls/ca.crt || { kp=0; echo "cas cannot read ca.crt"; }
-dx bash -c 'ls -ld /workspace/cas /workspace/cas/tls /workspace/cas/tls/* /workspace/cas/tls/*/* /run/cas /run/cas/*' > "$OUT/K1_perms.txt" 2>&1
-if [[ $kp == 1 ]]; then pass K1 "TLS keys readable only by their service user; ca.key root-only" "K1_perms.txt"; else fail K1 "TLS key permissions" "K1_perms.txt"; fi
+k postgres $LCL/tls/postgres/server.key || { kp=0; echo "postgres cannot read its key"; }
+for u in cas postgres qdrant speech web; do k "$u" $LCL/tls/ca/ca.key && { kp=0; echo "$u CAN read ca.key"; }; done
+k cas $LCL/tls/postgres/server.key && { kp=0; echo "cas can read postgres key"; }
+k cas $LCL/tls/ca.crt || { kp=0; echo "cas cannot read ca.crt"; }
+dx bash -c "ls -ld $LCL $LCL/tls $LCL/tls/* $LCL/tls/*/* $LCL/pgdata $LCL/qdrant /run/cas /run/cas/*" > "$OUT/K1_perms.txt" 2>&1
+if [[ $kp == 1 ]]; then pass K1 "TLS keys (container disk) readable only by their service user; ca.key root-only" "K1_perms.txt"; else fail K1 "TLS key permissions" "K1_perms.txt"; fi
 o="$(dx stat -c '%U %a' /run/cas /run/cas/bootstrap.ok | tr '\n' ' ')"
 [[ "$o" == "cas 755 cas 644 " ]] && pass K2 "/run/cas owned by cas; bootstrap.ok written by cas" "$o" || fail K2 "/run/cas ownership" "$o"
 
@@ -298,17 +305,18 @@ up="$(curl -s "$BASE/api/v1/admin/documents" -H "Authorization: Bearer $TOKEN" -
 DOC="$(python3 -c 'import json,sys;print((json.load(sys.stdin).get("data") or {}).get("id",""))' <<<"$up" 2>/dev/null)"
 if [[ -n "$DOC" ]]; then
   curl -s "$BASE/api/v1/admin/documents/$DOC/content" -H "Authorization: Bearer $TOKEN" -o "$OUT/A3_download.pdf"
-  if cmp -s "$OUT/smoke.pdf" "$OUT/A3_download.pdf"; then pass A3 "Go upload to MinIO over TLS and download, bytes identical" "doc=$DOC"; else fail A3 "Go download bytes" "doc=$DOC"; fi
+  if cmp -s "$OUT/smoke.pdf" "$OUT/A3_download.pdf"; then pass A3 "Go upload to the file store on the volume and download, bytes identical" "doc=$DOC"; else fail A3 "Go download bytes" "doc=$DOC"; fi
 else fail A3 "Go upload" "A3_upload.json"; fi
 URI="$(dx gosu cas psql "$DSN_V" -tAc "select storage_uri from documents where id = '$DOC'" 2>/dev/null | tr -d '[:space:]')"
 KEY="${URI#s3://cas-documents/}"; KEY="${KEY#cas-documents/}"
 o="$(dx cas-run cas /opt/cas/venv-ai/bin/python -c "
-import os,hashlib
-from minio import Minio
-c=Minio('127.0.0.1:9000',access_key=os.environ['OBJECT_STORAGE_ACCESS_KEY'],secret_key=os.environ['OBJECT_STORAGE_SECRET_KEY'],secure=True,region='us-east-1')
-print(hashlib.sha256(c.get_object('cas-documents','$KEY').read()).hexdigest())" 2>&1 | tail -1)"
+import hashlib,sys
+sys.path.insert(0,'/opt/cas/ai')
+from app.indexing.runtime import fetch_object
+print(hashlib.sha256(fetch_object('cas-documents','$KEY',64*1024*1024,timeout_s=10)).hexdigest())" 2>&1 | tail -1)"
 want="$(shasum -a 256 "$OUT/smoke.pdf" | cut -d' ' -f1)"
-[[ -n "$KEY" && "$o" == "$want" ]] && pass A4 "Python (minio-py, TLS) reads the object Go wrote" "uri=$URI" || fail A4 "Python read object" "key=$KEY got=$o want=$want"
+ondisk="$(dx sha256sum "/workspace/cas/objects/cas-documents/$KEY" 2>&1 | cut -d' ' -f1)"
+[[ -n "$KEY" && "$o" == "$want" && "$ondisk" == "$want" ]] && pass A4 "the ai-service (file backend) reads the object Go wrote; it is a plain file on the volume" "uri=$URI" || fail A4 "Python read object" "key=$KEY got=$o disk=$ondisk want=$want"
 
 sess="$(curl -s "$BASE/api/v1/sessions" -H 'Content-Type: application/json' -d '{"xa_id":"xa_chu_se"}')"; echo "$sess" > "$OUT/A5_session.json"
 SID="$(python3 -c 'import json,sys;print((json.load(sys.stdin).get("data") or {}).get("id",""))' <<<"$sess" 2>/dev/null)"
@@ -408,11 +416,11 @@ db_count() { dx gosu cas psql "$DSN_V" -tAc "select count(*) from conversation_s
 new_session() { code "$BASE/api/v1/sessions" -H 'Content-Type: application/json' -d '{"xa_id":"xa_chu_se"}'; }
 before="$(db_count)"
 # R1: crash (kill -9 postmaster) -> supervisord restarts it by itself.
-pid1="$(dx cat /workspace/cas/pgdata/postmaster.pid | head -1)"
+pid1="$(dx cat $LCL/pgdata/postmaster.pid | head -1)"
 dx kill -9 "$pid1"
 codes=""; for i in $(seq 1 40); do codes+="$(code "$BASE/readyz") "; sleep 0.5; done
 sleep 5
-pid2="$(dx cat /workspace/cas/pgdata/postmaster.pid 2>/dev/null | head -1)"
+pid2="$(dx cat $LCL/pgdata/postmaster.pid 2>/dev/null | head -1)"
 st="$(state postgres)"
 rc="$(new_session)"; after="$(db_count)"
 printf 'old_pid=%s new_pid=%s state=%s\nreadyz during crash: %s\ncreate session after recovery: %s\nsessions before=%s after=%s\nbootstrap: %s\n' \
@@ -437,76 +445,78 @@ if [[ "$st_down" == STOPPED && "$r_ready" == 503 && "$r_health" == 200 && "$r_wr
   pass R2 "Postgres manual stop: stays STOPPED, readyz 503, write 5xx, no partial row, recovers on start without API restart" "R2_manual_stop.txt"
 else fail R2 "Postgres manual stop" "R2_manual_stop.txt"; fi
 
-# R3: MinIO crash and manual stop.
-mpid="$(dx pgrep -u minio -x minio)"; dx kill -9 "$mpid"; sleep 8
-st_m="$(state minio)"; mpid2="$(dx pgrep -u minio -x minio)"
-up2="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/admin/documents" -H "Authorization: Bearer $TOKEN" -F "file=@$OUT/smoke2.pdf;type=application/pdf" -F title="after minio crash" -F domain_id=ho_tich_chung_thuc)"
-dx supervisorctl -c /etc/cas/supervisord.conf stop minio >/dev/null; sleep 3
-up3="$(curl -s -o "$OUT/R3_upload_down.json" -w '%{http_code}' "$BASE/api/v1/admin/documents" -H "Authorization: Bearer $TOKEN" -F "file=@$OUT/smoke3.pdf;type=application/pdf" -F title="minio down" -F domain_id=ho_tich_chung_thuc)"
-dx supervisorctl -c /etc/cas/supervisord.conf start minio >/dev/null; sleep 5
-up4="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/admin/documents" -H "Authorization: Bearer $TOKEN" -F "file=@$OUT/smoke4.pdf;type=application/pdf" -F title="minio back" -F domain_id=ho_tich_chung_thuc)"
-orphans="$(dx gosu cas psql "$DSN_V" -tAc "select count(*) from documents where title = 'minio down'" | tr -d '[:space:]')"
-printf 'crash: pid %s -> %s state=%s upload_after=%s\nmanual stop upload=%s (rows titled minio down: %s)\nafter start upload=%s\n' \
-  "$mpid" "$mpid2" "$st_m" "$up2" "$up3" "$orphans" "$up4" > "$OUT/R3_minio.txt"
-[[ "$st_m" == RUNNING && "$mpid2" != "$mpid" && "$up2" == 201 && "$up3" =~ ^5 && "$up4" == 201 ]] \
-  && pass R3 "MinIO crash auto-restart; manual stop gives 5xx upload; recovers" "R3_minio.txt" || fail R3 "MinIO loss" "R3_minio.txt"
-[[ "$orphans" == 0 ]] && pass R3b "failed upload while MinIO down left no document row" || fail R3b "failed upload left a document row" "rows=$orphans"
+# R3: WAL receiver down -> commits wait (fail-closed), /readyz 503; back -> they complete.
+dx supervisorctl -c /etc/cas/supervisord.conf stop pg-receivewal >/dev/null
+sleep 8
+rr="$(code "$BASE/readyz")"
+curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$BASE/api/v1/sessions" -H 'Content-Type: application/json' -d '{"xa_id":"xa_chu_se"}' > "$OUT/R3_write_code.txt" &
+wpid=$!; sleep 5
+# Measured while the request is still in flight: its COMMIT waits for the receiver.
+waiting="$(dx gosu postgres psql -h /run/postgresql -d postgres -XAtc "select count(*) from pg_stat_activity where wait_event = 'SyncRep'" 2>&1)"
+wait "$wpid"; w_down="$(cat "$OUT/R3_write_code.txt")"
+dx supervisorctl -c /etc/cas/supervisord.conf start pg-receivewal >/dev/null
+ok=""; for i in $(seq 1 60); do [[ "$(code "$BASE/readyz")" == 200 ]] && { ok=$i; break; }; sleep 1; done
+w_up="$(new_session)"
+printf 'receiver stopped: readyz=%s write=%s (curl max 15 s) backends waiting on SyncRep=%s\nreceiver started: ready after %ss, write=%s\n' \
+  "$rr" "$w_down" "$waiting" "$ok" "$w_up" > "$OUT/R3_receiver.txt"
+[[ "$rr" == 503 && "$w_down" != 201 && "$waiting" -ge 1 && -n "$ok" && "$w_up" == 201 ]] \
+  && pass R3 "WAL receiver down: commits wait on SyncRep (no 201), /readyz 503; receiver back: ready and writes succeed" "R3_receiver.txt" || fail R3 "receiver loss" "R3_receiver.txt"
 
-# ---- B: backup ---------------------------------------------------------------------
-dx backup.sh > "$OUT/B1_backup.txt" 2>&1 && dx bash -c 'ls -l /workspace/cas/backups/pg' >> "$OUT/B1_backup.txt" 2>&1
-grep -q "postgres -> " "$OUT/B1_backup.txt" && pass B1 "backup.sh: pg_dump archive written and listable" "B1_backup.txt" || fail B1 "backup.sh" "B1_backup.txt"
+# ---- B: backup and restore drill ---------------------------------------------------------
+dx backup.sh > "$OUT/B1_backup.txt" 2>&1; rcb=$?
+dx bash -c 'ls -l /workspace/cas/backups/pg /workspace/cas/pg/base /workspace/cas/qdrant/snapshots/knowledge_chunks' >> "$OUT/B1_backup.txt" 2>&1
+[[ $rcb -eq 0 ]] && grep -q "postgres -> " "$OUT/B1_backup.txt" && grep -q "base backup -> " "$OUT/B1_backup.txt" && grep -q "qdrant -> " "$OUT/B1_backup.txt" \
+  && pass B1 "backup.sh: pg_dump, verified base backup and Qdrant snapshot + fingerprint on the volume" "B1_backup.txt" || fail B1 "backup.sh" "B1_backup.txt"
 dx restore_drill.sh > "$OUT/B2_restore_drill.txt" 2>&1; rc=$?
 r="$(grep '^RESULT' "$OUT/B2_restore_drill.txt")"
-[[ $rc -eq 0 && "$r" == "RESULT FULL postgres=OK"*"qdrant=OK"* ]] && pass B2 "restore drill: pg_dump restored into a scratch DB with identical row counts; Qdrant snapshot restored with identical point count; scratch data removed" "$r" || fail B2 "restore drill" "rc=$rc $r"
-# B2b: the exact scratch DB/collection of THIS run (SCRATCH line) are gone, and no
-# cas_drill_* database or collection exists at all.
+[[ $rc -eq 0 && "$r" == "RESULT FULL postgres=OK"*"qdrant=OK"*"objects=OK"* ]] \
+  && pass B2 "restore drill: base backup + WAL recovered into a scratch cluster with identical row counts and content; snapshot fingerprint identical; objects verified; scratch removed" "$r" || fail B2 "restore drill" "rc=$rc $r"
 scr="$(grep '^SCRATCH ' "$OUT/B2_restore_drill.txt")"
-sdb="$(sed -n 's/.* db=\([^ ]*\).*/\1/p' <<<"$scr")"; scoll="$(sed -n 's/.* collection=\([^ ]*\).*/\1/p' <<<"$scr")"
-db_left="$(dx gosu postgres psql -h /run/postgresql -tAc "select count(*) from pg_database where datname = '$sdb'" 2>&1 | tr -d '[:space:]')"
-db_any="$(dx gosu postgres psql -h /run/postgresql -tAc "select count(*) from pg_database where datname like 'cas\\_drill\\_%'" 2>&1 | tr -d '[:space:]')"
+sdir="$(sed -n 's/.* dir=\([^ ]*\).*/\1/p' <<<"$scr")"; scoll="$(sed -n 's/.* collection=\([^ ]*\).*/\1/p' <<<"$scr")"
+dir_left="$(dx bash -c "[ -e '$sdir' ] && echo yes || echo no")"
 coll_code="$(dx curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:6333/collections/$scoll")"
 coll_any="$(dx curl -fsS http://127.0.0.1:6333/collections | python3 -c 'import json,sys;print(sum(c["name"].startswith("cas_drill_") for c in json.load(sys.stdin)["result"]["collections"]))')"
-echo "$scr | db_left=$db_left any_drill_db=$db_any collection_http=$coll_code any_drill_collection=$coll_any" > "$OUT/B2b_cleanup.txt"
-if [[ "$sdb" == cas_drill_* && "$scoll" == cas_drill_* && "$db_left" == 0 && "$db_any" == 0 && "$coll_code" == 404 && "$coll_any" == 0 ]]; then
-  pass B2b "the run's own scratch DB and collection are gone (checked by their exact names), no cas_drill_* left" "B2b_cleanup.txt"
+drill_pg="$(dx pgrep -f -- "-D $sdir" | wc -l | tr -d ' ')"
+echo "$scr | dir_left=$dir_left scratch_postgres=$drill_pg collection_http=$coll_code any_drill_collection=$coll_any" > "$OUT/B2b_cleanup.txt"
+if [[ "$sdir" == */cas_drill_* && "$scoll" == cas_drill_* && "$dir_left" == no && "$drill_pg" == 0 && "$coll_code" == 404 && "$coll_any" == 0 ]]; then
+  pass B2b "the run's own scratch cluster and collection are gone (checked by their exact names), no cas_drill_* left" "B2b_cleanup.txt"
 else fail B2b "scratch cleanup" "$(cat "$OUT/B2b_cleanup.txt")"; fi
-# B4: a cleanup that cannot drop the scratch DB makes the drill FAIL and names it.
-# Injected with a psql shim that refuses DROP DATABASE (only for this exec).
-dx bash -c 'mkdir -p /tmp/b4shim && printf "%s\n" "#!/bin/bash" "case \"\$*\" in *\"DROP DATABASE\"*) echo injected-drop-failure >&2; exit 1 ;; esac" "exec /usr/bin/psql \"\$@\"" > /tmp/b4shim/psql && chmod 755 /tmp/b4shim /tmp/b4shim/psql'
+# B4: a cleanup that cannot delete the scratch collection makes the drill FAIL and names it
+# (curl shim refusing DELETE, only for this exec).
+dx bash -c 'mkdir -p /tmp/b4shim && printf "%s\n" "#!/bin/bash" "case \"\$*\" in *\"-X DELETE\"*) echo injected-delete-failure >&2; exit 1 ;; esac" "exec /usr/bin/curl \"\$@\"" > /tmp/b4shim/curl && chmod 755 /tmp/b4shim /tmp/b4shim/curl'
 docker exec -e PATH=/tmp/b4shim:/opt/cas/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "$C" restore_drill.sh > "$OUT/B4_cleanup_failure.txt" 2>&1; rc4=$?
-ldb="$(sed -n 's/^RESULT FAIL cleanup_left: database=\([^ ]*\).*/\1/p' "$OUT/B4_cleanup_failure.txt")"
-still="$(dx gosu postgres psql -h /run/postgresql -tAc "select count(*) from pg_database where datname = '$ldb'" 2>&1 | tr -d '[:space:]')"
-dx gosu postgres psql -h /run/postgresql -qc "DROP DATABASE \"$ldb\"" >/dev/null 2>&1; dx rm -rf /tmp/b4shim
-after="$(dx gosu postgres psql -h /run/postgresql -tAc "select count(*) from pg_database where datname like 'cas\\_drill\\_%'" 2>&1 | tr -d '[:space:]')"
-echo "rc=$rc4 reported=$ldb existed_before_manual_drop=$still drill_dbs_after_manual_drop=$after" >> "$OUT/B4_cleanup_failure.txt"
-if [[ $rc4 -ne 0 && "$ldb" == cas_drill_* && "$still" == 1 && "$after" == 0 ]] && grep -q "scratch resources left behind" "$OUT/B4_cleanup_failure.txt"; then
-  pass B4 "cleanup failure (injected) makes the drill FAIL (exit $rc4) and names the leftover DB; removed by hand afterwards" "B4_cleanup_failure.txt"
+lcoll="$(sed -n 's/^RESULT FAIL cleanup_left: collection=\([^ ]*\).*/\1/p' "$OUT/B4_cleanup_failure.txt")"
+still="$(dx curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:6333/collections/$lcoll")"
+dx curl -fsS -X DELETE "http://127.0.0.1:6333/collections/$lcoll" >/dev/null 2>&1; dx rm -rf /tmp/b4shim
+after="$(dx curl -fsS http://127.0.0.1:6333/collections | python3 -c 'import json,sys;print(sum(c["name"].startswith("cas_drill_") for c in json.load(sys.stdin)["result"]["collections"]))')"
+echo "rc=$rc4 reported=$lcoll existed_before_manual_delete=$still drill_collections_after=$after" >> "$OUT/B4_cleanup_failure.txt"
+if [[ $rc4 -ne 0 && "$lcoll" == cas_drill_* && "$still" == 200 && "$after" == 0 ]] && grep -q "scratch resources left behind" "$OUT/B4_cleanup_failure.txt"; then
+  pass B4 "cleanup failure (injected) makes the drill FAIL (exit $rc4) and names the leftover collection; removed by hand afterwards" "B4_cleanup_failure.txt"
 else fail B4 "cleanup failure must fail the drill" "$(tail -1 "$OUT/B4_cleanup_failure.txt")"; fi
-# B3: without a Qdrant snapshot the full drill must FAIL; --postgres-only is an explicit
-# operator choice and reports PARTIAL. The snapshots are moved aside and put back.
-dx bash -c 'mv /workspace/cas/backups/qdrant /workspace/cas/backups/qdrant.b3-aside && install -d -o cas -g cas -m 0700 /workspace/cas/backups/qdrant'
+# B3: without a Qdrant snapshot the full drill FAILS; --postgres-only reports PARTIAL.
+dx bash -c 'mv /workspace/cas/qdrant/snapshots/knowledge_chunks /workspace/cas/qdrant/snapshots.b3-aside'
 dx restore_drill.sh > "$OUT/B3_no_snapshot.txt" 2>&1; rc_full=$?
 dx restore_drill.sh --postgres-only > "$OUT/B3_postgres_only.txt" 2>&1; rc_pg=$?
-dx bash -c 'rm -rf /workspace/cas/backups/qdrant && mv /workspace/cas/backups/qdrant.b3-aside /workspace/cas/backups/qdrant'
+dx bash -c 'mv /workspace/cas/qdrant/snapshots.b3-aside /workspace/cas/qdrant/snapshots/knowledge_chunks'
 if [[ $rc_full -ne 0 ]] && grep -q "no Qdrant snapshot" "$OUT/B3_no_snapshot.txt" && [[ $rc_pg -eq 0 ]] && grep -q "^RESULT PARTIAL postgres=OK.*qdrant=NOT_TESTED" "$OUT/B3_postgres_only.txt"; then
   pass B3 "no Qdrant snapshot: full drill FAILS (exit $rc_full); --postgres-only reports PARTIAL, never a full pass"
 else fail B3 "missing Qdrant snapshot handling" "full_rc=$rc_full pg_only_rc=$rc_pg"; fi
 
 # ---- P: persistence and stale marker -------------------------------------------------
-fp1="$(dx openssl x509 -in /workspace/cas/tls/ca.crt -noout -fingerprint -sha256)"
-kh1="$(dx sha256sum /workspace/cas/tls/postgres/server.key /workspace/cas/tls/minio/private.key | awk '{print $1}' | tr '\n' ' ')"
+fp1="$(dx openssl x509 -in $LCL/tls/ca.crt -noout -fingerprint -sha256)"
+kh1="$(dx sha256sum $LCL/tls/postgres/server.key | awk '{print $1}')"
 boot1="$(dx cat /run/cas/boot_id)"; sess1="$(db_count)"
 docker restart -t 120 "$C" >/dev/null
 h="$(wait_healthy 600)"
-fp2="$(dx openssl x509 -in /workspace/cas/tls/ca.crt -noout -fingerprint -sha256)"
-kh2="$(dx sha256sum /workspace/cas/tls/postgres/server.key /workspace/cas/tls/minio/private.key | awk '{print $1}' | tr '\n' ' ')"
+fp2="$(dx openssl x509 -in $LCL/tls/ca.crt -noout -fingerprint -sha256)"
+kh2="$(dx sha256sum $LCL/tls/postgres/server.key | awk '{print $1}')"
 boot2="$(dx cat /run/cas/boot_id)"; mark2="$(dx cat /run/cas/bootstrap.ok)"; sess2="$(db_count)"
 curl -s "$BASE/api/v1/admin/documents/$DOC/content" -H "Authorization: Bearer $TOKEN" -o "$OUT/P1_download.pdf"
-docker logs --since 10m "$C" 2>&1 | grep -E "internal CA reused|certificate reused|migrations: current" > "$OUT/P1_reuse.txt"
+docker logs --since 10m "$C" 2>&1 | grep -E "internal CA reused|certificate reused|migrations: current|reusing this container's pgdata" > "$OUT/P1_reuse.txt"
 printf '%s\nca %s -> %s\nkeys %s -> %s\nboot %s -> %s marker=%s\nsessions %s -> %s\n' "$h" "$fp1" "$fp2" "$kh1" "$kh2" "$boot1" "$boot2" "$mark2" "$sess1" "$sess2" >> "$OUT/P1_reuse.txt"
 if [[ "$h" == healthy* && "$fp1" == "$fp2" && "$kh1" == "$kh2" && "$sess1" == "$sess2" ]] && cmp -s "$OUT/smoke.pdf" "$OUT/P1_download.pdf" \
    && grep -q "migrations: current=25 latest=25" "$OUT/P1_reuse.txt"; then
-  pass P1 "docker restart: data, PDF, CA and keys unchanged; no migration rerun" "P1_reuse.txt"; else fail P1 "restart persistence" "P1_reuse.txt"; fi
+  pass P1 "docker restart (same container disk): pgdata reused, data, PDF, CA and keys unchanged; no migration rerun" "P1_reuse.txt"; else fail P1 "restart persistence" "P1_reuse.txt"; fi
 [[ "$boot1" != "$boot2" && "$mark2" == "$boot2" ]] && pass P2 "stale bootstrap.ok of the previous boot not reused; new marker matches new boot id" "$boot1 -> $boot2" || fail P2 "stale marker" "$boot1 $boot2 $mark2"
 
 # M1: a dirty migration state is refused by bootstrap (never forced); the app stays
@@ -525,21 +535,24 @@ if grep -q "migration state is dirty" "$OUT/M1_dirty.txt" && [[ "$api_up" == no 
   pass M1 "dirty migration state refused (no force), app gated, recovers after the operator fix" "M1_dirty.txt"
 else fail M1 "dirty migration handling" "M1_dirty.txt"; fi
 
-# P3: clean stop, then a NEW container (other owner id) on the same volume, with ownership
-# scrambled (volume from another pod). The clean stop released the lease, so it may start.
+# P3: clean stop, then a NEW container (empty container disk, other owner id) on the same
+# volume: Postgres is restored from base backup + WAL, Qdrant from its snapshot (fingerprint
+# verified), objects verified; a new CA is generated on the new container disk.
 docker stop -t 120 "$C" >/dev/null
 docker logs --tail 50 "$C" 2>&1 | grep -E "lease released" > "$OUT/P3_release.txt"
 docker rm "$C" >/dev/null
-docker run --rm -v "$VOL:/w" --entrypoint bash "$IMG" -c 'chown -R 4242:4242 /w/cas/minio /w/cas/qdrant && chown 4242 /w/cas/tls/postgres/server.key'
 docker run -d --name "$C" -p "127.0.0.1:$PORT:8088" -v "$VOL:/workspace" "${MODELS[@]}" "${ENVS[@]}" "$IMG" >/dev/null
-h="$(wait_healthy 600)"
-fp3="$(dx openssl x509 -in /workspace/cas/tls/ca.crt -noout -fingerprint -sha256)"; sess3="$(db_count)"
+h="$(wait_healthy 900)"
+fp3="$(dx openssl x509 -in $LCL/tls/ca.crt -noout -fingerprint -sha256)"; sess3="$(db_count)"
 curl -s "$BASE/api/v1/admin/documents/$DOC/content" -H "Authorization: Bearer $TOKEN" -o "$OUT/P3_download.pdf"
-docker logs "$C" 2>&1 | grep -E "fixing ownership|internal CA reused|certificate reused|workspace lease" > "$OUT/P3_reattach.txt"
-echo "$h ca=$fp3 sessions=$sess3" >> "$OUT/P3_reattach.txt"
-if [[ "$h" == healthy* && "$fp3" == "$fp1" && "$sess3" == "$sess2" ]] && cmp -s "$OUT/smoke.pdf" "$OUT/P3_download.pdf" \
-   && grep -q "fixing ownership" "$OUT/P3_reattach.txt" && grep -q "lease released" "$OUT/P3_release.txt" && grep -q "workspace lease new" "$OUT/P3_reattach.txt"; then
-  pass P3 "clean stop releases the lease; new container on the volume takes it, repairs ownership, reuses CA, data intact" "P3_reattach.txt"; else fail P3 "volume re-attach" "P3_reattach.txt"; fi
+pts3="$(dx curl -fsS -X POST http://127.0.0.1:6333/collections/knowledge_chunks/points/count -H 'Content-Type: application/json' -d '{"exact":true}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["result"]["count"])' 2>/dev/null)"
+docker logs "$C" 2>&1 | grep -E "restoring from the volume|WAL continuity|recovery ended|restore complete|qdrant restored|qdrant verified|objects verified|internal CA created|workspace lease" > "$OUT/P3_restore.txt"
+echo "$h ca_changed=$([[ "$fp3" != "$fp1" ]] && echo yes || echo no) sessions=$sess3 (before $sess2) qdrant_points=$pts3 (before ${pts:-?})" >> "$OUT/P3_restore.txt"
+if [[ "$h" == healthy* && "$fp3" != "$fp1" && "$sess3" == "$sess2" && "$pts3" == "${pts:-x}" ]] && cmp -s "$OUT/smoke.pdf" "$OUT/P3_download.pdf" \
+   && grep -q "lease released" "$OUT/P3_release.txt" && grep -q "recovery ended at" "$OUT/P3_restore.txt" && grep -q "qdrant restored from" "$OUT/P3_restore.txt" \
+   && grep -q "workspace lease new" "$OUT/P3_restore.txt"; then
+  pass P3 "new container (empty container disk): Postgres restored from base backup + WAL, Qdrant from snapshot (fingerprint), objects verified; data, points and PDF identical; new CA" "P3_restore.txt"
+else fail P3 "restore on a new container" "P3_restore.txt"; fi
 
 # ---- L: single writer --------------------------------------------------------------------
 OWNER1="$(dx cat /run/cas-lease.owner)"
@@ -564,8 +577,8 @@ docker kill "$C" >/dev/null; docker rm "$C" >/dev/null
 docker exec "$C2" cas-pg-recover not-the-owner > "$OUT/L3_recover_wrong.txt" 2>&1; rcw=$?
 docker exec "$C2" cas-pg-recover "$OWNER1" > "$OUT/L3_recover.txt" 2>&1; rcr=$?
 docker exec "$C2" cat /workspace/cas/locks/recovery.log >> "$OUT/L3_recover.txt" 2>&1
-if [[ $rcw -ne 0 && $rcr -eq 0 ]] && grep -q "lease owner is" "$OUT/L3_recover_wrong.txt" && grep -q "recovered=$OWNER1" "$OUT/L3_recover.txt" && grep -q "postmaster.pid ->" "$OUT/L3_recover.txt"; then
-  pass L3 "after SIGKILL of the owner: wrong id refused; verified recovery renames lease + stale postmaster.pid and audits it" "L3_recover.txt"
+if [[ $rcw -ne 0 && $rcr -eq 0 ]] && grep -q "lease owner is" "$OUT/L3_recover_wrong.txt" && grep -q "recovered=$OWNER1" "$OUT/L3_recover.txt"; then
+  pass L3 "after SIGKILL of the owner: wrong id refused; verified recovery renames the lease and audits it" "L3_recover.txt"
 else fail L3 "verified recovery" "wrong_rc=$rcw recover_rc=$rcr"; fi
 # L4: restart the maintenance container: it takes a new lease and serves the same data.
 docker restart -t 60 "$C2" >/dev/null
@@ -576,20 +589,20 @@ echo "$h sessions=$sess4 (before L1: $sess3, +1 written in L1)" >> "$OUT/L4_afte
 [[ "$h" == healthy* && "$sess4" == $((sess3 + 1)) ]] && grep -q "workspace lease new" "$OUT/L4_after_recovery.txt" \
   && pass L4 "after recovery the new container takes the lease and serves the same data" "L4_after_recovery.txt" || fail L4 "post-recovery start" "L4_after_recovery.txt"
 
-# P4: an interrupted first initialisation (no .cas-init-complete) is refused, then the
-# volume works again once the marker is back (simulated on the test volume only).
+# P4: this container's pgdata belongs to another cluster than the volume's (simulated by
+# changing pg/state/system_identifier on the volume): refused (exit 64), never mixed.
 docker stop -t 120 "$C" >/dev/null
-docker run --rm -v "$VOL:/w" --entrypoint bash "$IMG" -c 'mv /w/cas/pgdata/.cas-init-complete /w/cas/pgdata/.cas-init-complete.moved'
+docker run --rm -v "$VOL:/w" --entrypoint bash "$IMG" -c 'cp /w/cas/pg/state/system_identifier /w/cas/pg/state/system_identifier.p4 && echo 1234567890 > /w/cas/pg/state/system_identifier'
 docker start "$C" >/dev/null
 for _ in $(seq 1 60); do [[ "$(docker inspect -f '{{.State.Running}}' "$C")" == false ]] && break; sleep 2; done
 st4="$(docker inspect -f '{{.State.Running}} {{.State.ExitCode}}' "$C")"
-docker logs --tail 30 "$C" 2>&1 | grep -E "FATAL|init" > "$OUT/P4_init_marker.txt"
-docker run --rm -v "$VOL:/w" --entrypoint bash "$IMG" -c 'mv /w/cas/pgdata/.cas-init-complete.moved /w/cas/pgdata/.cas-init-complete'
+docker logs --tail 30 "$C" 2>&1 | grep -E "FATAL" > "$OUT/P4_cluster_identity.txt"
+docker run --rm -v "$VOL:/w" --entrypoint bash "$IMG" -c 'mv /w/cas/pg/state/system_identifier.p4 /w/cas/pg/state/system_identifier'
 docker start "$C" >/dev/null; h="$(wait_healthy 300)"
-echo "refused run: running/exit=$st4; after restoring the marker: $h" >> "$OUT/P4_init_marker.txt"
-if [[ "$st4" == "false 64" && "$h" == healthy* ]] && grep -q "first initialisation did not complete" "$OUT/P4_init_marker.txt"; then
-  pass P4 "pgdata without .cas-init-complete is refused (exit 64), not silently used" "P4_init_marker.txt"
-else fail P4 "init marker" "P4_init_marker.txt"; fi
+echo "refused run: running/exit=$st4; after restoring the identity: $h" >> "$OUT/P4_cluster_identity.txt"
+if [[ "$st4" == "false 64" && "$h" == healthy* ]] && grep -q "refusing to mix them" "$OUT/P4_cluster_identity.txt"; then
+  pass P4 "pgdata of another cluster than the volume's is refused (exit 64), not mixed" "P4_cluster_identity.txt"
+else fail P4 "cluster identity" "P4_cluster_identity.txt"; fi
 
 # ---- G: graceful stop ------------------------------------------------------------------
 t0=$SECONDS; docker stop -t 120 "$C" >/dev/null; dt=$((SECONDS - t0))

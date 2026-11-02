@@ -24,9 +24,9 @@ ROOT="$(cd "$HERE/../../.." && pwd)"
 W=/workspace/cas
 VOL=/workspace
 RQ_ROOT=/workspace/bahnar-s2tt-thesis
-# Commit the image ghcr.io/minhtuandev25/citizen-assistance-system/cas-aio@sha256:40deae61...
-# was built from; C0 code, fetch_models.sh and the embedding rules must equal it.
-IMAGE_REVISION=b474debecb6be3e936bd149fc0a3dcbfa415a677
+# Commit the image ghcr.io/minhtuandev25/citizen-assistance-system/cas-aio@sha256:81a41a0f...
+# (storage A-file) was built from; C0 code, fetch_models.sh and the embedding rules must equal it.
+IMAGE_REVISION=7fefeb25ccfc55f29a382dbe4aa316b8c87b0903
 ASR_DIR=$RQ_ROOT/bahnar_s2tt/full_state/contract_b5172ee0cc391e4f/checkpoints/full_train/full_xlsr300m_v1/ckpts/checkpoint-12500
 MT_DIR=$RQ_ROOT/bahnar_s2tt/mt_full_state/contract_c3d7b95698738634/checkpoints/full_train/mt_bartpho_syllable_v1/ckpts/checkpoint-17500
 CONTRACT=$RQ_ROOT/bahnar_s2tt/mt_full_state/contract_c3d7b95698738634/mt_training_contract.json
@@ -41,8 +41,8 @@ ASR_OPTIONAL=(special_tokens_map.json added_tokens.json)
 MT_FILES=(model.safetensors config.json tokenizer_config.json sentencepiece.bpe.model dict.txt generation_config.json)
 # UIDs fixed in deploy/runpod/Dockerfile
 SPEECH_UID=10013 PG_UID=10010
-# Network volume bahnar-thesis-storage: 200 GB quota. Room for e5 (0.5 GB), Postgres,
-# Qdrant, MinIO and backups/ (pg_dump + Qdrant snapshots, CAS_BACKUP_KEEP=7).
+# Network volume bahnar-thesis-storage: 200 GB quota. Room for e5 (0.5 GB), the WAL,
+# base backups, dumps, Qdrant snapshots and the document files.
 VOL_QUOTA_GB="${VOL_QUOTA_GB:-200}" VOL_MIN_FREE_GB=20
 READY="$W/preflight/READY_TO_SWITCH"
 # Tests only: CAS_STAGE_TEST_HW=<dir> with a fake `cpuinfo` and `nvidia-smi` stands in
@@ -235,8 +235,11 @@ check_container_disk() {
   info container-disk "$n files changed since container start (lost at the image switch); largest dirs:"
   awk -F'\t' 'NF == 2 {split($2,p,"/"); d="/"p[2]"/"p[3]"/"p[4]; s[d]+=$1; c[d]++} END {for (d in s) printf "%d %d %s\n", s[d], c[d], d}' <<<"$list" \
     | sort -rn | head -15 | awk '{printf "      %8.1f MB %6d files  %s\n", $1/1048576, $2, $3}'
-  for top in /root/.ssh /root/.jupyter /root/.config /root/.cache/huggingface /root/.netrc /root/.git-credentials; do
-    if [[ -e $top ]]; then info keep-candidate "$top ($(du -sh "$top" 2>/dev/null | cut -f1))"; fi
+  for top in /root/.jupyter /root/.config /root/.cache/huggingface; do
+    if [[ -e $top ]]; then info keep-candidate "$top ($(du -sh "$top" 2>/dev/null | cut -f1)); check it holds no credentials before preserve"; fi
+  done
+  for top in /root/.ssh /root/.netrc /root/.git-credentials; do
+    if [[ -e $top ]]; then info secret "$top: do not preserve on the volume (readable by every user); copy it off RunPod yourself"; fi
   done
 }
 
@@ -326,33 +329,48 @@ cmd_preserve() {
   fi
   ( cd "$dest" && sha256sum -- * > SHA256SUMS ) || die "cannot write $dest/SHA256SUMS"
   echo "preserved in $dest:"; ls -la "$dest"
-  echo "NOTE: secrets in the tar (ssh keys, tokens) are now on the volume: keep $dest at 0700 or move it off RunPod."
+  echo "NOTE: the volume does not keep modes (0777 on RunPod): every user of the next container can read $dest."
+  echo "      Never preserve private keys, tokens or credentials; copy those off RunPod yourself."
 }
 
-fs_probe() {  # what the image does on first boot: chown to service uids, 0700, fsync, rename, flock, mkdir
-  local d="$W/.fs-probe.$$"
+# What the image needs from the volume (storage design: engines on the container
+# disk, plain files on the volume): every writer (postgres 10010 for WAL and base
+# backups, cas 10001 for objects and dumps, root for snapshots) can mkdir, write,
+# fsync, rename and fsync the directory there; flock and atomic mkdir for the lease.
+# chown and modes are reported, not required (a FUSE volume refuses them).
+fs_probe() {
+  local d="$W/.fs-probe.$$" u owner_mode
   install -d -m 0755 "$d" || die "cannot create $d"
-  if chown "$PG_UID:$PG_UID" "$d" && chmod 0700 "$d" && python3 - "$PG_UID" "$d" <<'PY'
+  if chown "$PG_UID:$PG_UID" "$d" 2>/dev/null && chmod 0700 "$d" 2>/dev/null && [[ "$(stat -c '%u %a' "$d")" == "$PG_UID 700" ]]; then
+    owner_mode="POSIX owners and modes work"
+  else
+    owner_mode="owners/modes not kept ($(stat -c '%u %a' "$d")): fine for this design, no engine data or secret on the volume"
+  fi
+  info fs-owner-mode "$owner_mode"
+  chown 0:0 "$d" 2>/dev/null; chmod 0755 "$d" 2>/dev/null   # every writer must be able to enter it
+  for u in 0 "$PG_UID" 10001; do
+    rm -rf "$d/u$u"; mkdir -m 0777 "$d/u$u"; chown "$u:$u" "$d/u$u" 2>/dev/null; chmod 0777 "$d/u$u" 2>/dev/null
+    if python3 - "$u" "$d/u$u" <<'PY'
 import fcntl, os, sys
 uid, d = int(sys.argv[1]), sys.argv[2]
-os.setgroups([]); os.setgid(uid); os.setuid(uid)
+if uid:
+    os.setgroups([]); os.setgid(uid); os.setuid(uid)
 p = os.path.join(d, "f")
 with open(p + ".tmp", "wb") as f:
     f.write(b"x" * 8192); f.flush(); os.fsync(f.fileno())
 os.replace(p + ".tmp", p)
+fd = os.open(d, os.O_RDONLY | os.O_DIRECTORY); os.fsync(fd); os.close(fd)
 with open(p, "rb") as f:
     fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
 os.mkdir(os.path.join(d, "lease"))
+try:
+    os.mkdir(os.path.join(d, "lease")); sys.exit(3)
+except FileExistsError:
+    pass
 PY
-  then
-    if [[ "$(stat -c '%u %a' "$d")" == "$PG_UID 700" ]]; then ok fs-probe "chown/0700/fsync/rename/flock/mkdir work on the volume"
-    else bad fs-probe "ownership/mode not kept: $(stat -c '%u %a' "$d")"; fi
-  else
-    bad fs-probe "the volume refused chown/chmod/fsync/flock (Postgres/MinIO/Qdrant setup would fail)"
-  fi
-  if python3 -c "import os,sys; fd=os.open(sys.argv[1], os.O_CREAT|os.O_WRONLY|os.O_DIRECT, 0o600); os.close(fd)" "$d/odirect" 2>/dev/null
-  then ok fs-odirect "O_DIRECT supported (MinIO)"
-  else warn fs-odirect "O_DIRECT refused: MinIO may refuse the drive; check its log after the switch"; fi
+    then ok fs-probe-uid$u "uid $u: write, fsync, rename, directory fsync, flock, atomic mkdir"
+    else bad fs-probe-uid$u "uid $u cannot write/fsync/rename/flock/mkdir on the volume"; fi
+  done
   rm -rf "$d"
 }
 
@@ -361,7 +379,7 @@ install_same() {  # install_same <src> <dest> <mode>: create, or accept an ident
     if cmp -s "$1" "$2"; then ok install "$2 (already identical)"; return 0; fi
     bad install "$2 exists and differs; not overwritten (diff it, move it aside yourself)"; return 1
   fi
-  install -D -o root -g root -m "$3" "$1" "$2" || die "cannot install $2"
+  install -D -m "$3" "$1" "$2" || die "cannot install $2"   # no -o/-g: the volume refuses chown, root owns it anyway
   ok install "$2"
 }
 
@@ -406,7 +424,7 @@ write_manifest() {
   files+=("$CONTRACT")
   [[ -d $TOK_SNAP ]] || { bad manifest "tokenizer snapshot missing: $TOK_SNAP"; return 1; }
   while IFS= read -r f; do files+=("$f"); done < <(find "$TOK_SNAP" -mindepth 1 \( -type f -o -type l \) | sort)
-  install -d -o root -g root -m 0755 "$W/manifests" || die "cannot create $W/manifests"
+  install -d -m 0755 "$W/manifests" || die "cannot create $W/manifests"
   sha256sum -- "${files[@]}" > "$tmp" || { rm -f "$tmp"; bad manifest "cannot hash the inference files"; return 1; }
   grep -qxF "$ASR_SHA  $ASR_DIR/model.safetensors" "$tmp" || { rm -f "$tmp"; bad manifest "ASR weights do not match the pin"; return 1; }
   grep -qxF "$MT_SHA  $MT_DIR/model.safetensors" "$tmp" || { rm -f "$tmp"; bad manifest "MT weights do not match the pin"; return 1; }
@@ -445,7 +463,7 @@ cmd_apply() {
   gate "volume mount + path safety (nothing written)"
   check_host; check_source; check_volume; check_checkpoints; check_access; check_activity
   gate "pre-checks (nothing written)"
-  install -d -o root -g root -m 0755 "$W" || die "cannot create $W"
+  install -d -m 0755 "$W" || die "cannot create $W"
   fs_probe;                                                                   gate "filesystem probe"
   if CAS_MODEL_VARIANT=fp32 "$ROOT/deploy/runpod/fetch_models.sh" --variant fp32 "$W/models/embedding"; then
     ok embedding "fp32 e5 model verified in $W/models/embedding"
@@ -453,7 +471,7 @@ cmd_apply() {
   tokenizer_cache;                                                            gate "tokenizer cache + parity"
   install_same "$HERE/c0_inference.yaml" "$W/config/c0_inference.yaml" 0644; gate "c0_inference.yaml"
   write_manifest;                                                             gate "checkpoint manifest"
-  install -d -o root -g root -m 0755 "$W/preflight" || die "cannot create $W/preflight"
+  install -d -m 0755 "$W/preflight" || die "cannot create $W/preflight"
   install -m 0755 "$HERE/verify_after_switch.sh" "$HERE/rq_fingerprint.py" "$W/preflight/" || die "cannot copy the verify scripts"
   if python3 "$HERE/rq_fingerprint.py" "$VOL" --exclude "$W" --listing-out "$W/preflight/rq_tree.listing.gz" \
        > "$W/preflight/rq_tree.fingerprint"; then

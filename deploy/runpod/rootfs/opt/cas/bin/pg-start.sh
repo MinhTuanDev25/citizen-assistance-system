@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Wrapper for the postgres / qdrant / minio programs: exec the data service only
-# while this container holds the workspace lease with a fresh heartbeat.
+# Wrapper for the programs that write to the volume or own engine data (postgres,
+# qdrant, pg-receivewal, cas-keeper): exec only while this container holds the
+# workspace lease with a fresh heartbeat.
 #   pg-start.sh <command> [args...]
 set -euo pipefail
 W="${CAS_WORKSPACE:-/workspace/cas}"

@@ -7,12 +7,13 @@ Phase 8.1-A. One image runs the whole Citizen Assistance System:
 - Python AI service;
 - Speech C0;
 - PostgreSQL 16 with pgvector;
-- Qdrant 1.13.4;
-- MinIO.
+- Qdrant 1.13.4.
+
+Documents are plain files on the volume (no MinIO).
 
 `tini` starts `entrypoint.sh`, which then hands over to `supervisord`. Docker/Compose is not used inside the pod, because RunPod GPU pods cannot run nested containers.
 
-Data persists only on the volume at `/workspace/cas`. Only port **8088** listens beyond loopback; every other service binds `127.0.0.1`.
+PostgreSQL and Qdrant run on the container disk (`/var/lib/cas`), where POSIX owners and modes work. Their durable copy is on the volume at `/workspace/cas`: synchronous WAL, verified base backups, Qdrant snapshots with fingerprints, and the document files. A new container restores from the volume before it opens anything. See "Storage". Only port **8088** listens beyond loopback; every other service binds `127.0.0.1`.
 
 ## Layout
 
@@ -21,12 +22,15 @@ Data persists only on the volume at `/workspace/cas`. Only port **8088** listens
 | `Dockerfile` | Multi-stage build. Web and Go build on `$BUILDPLATFORM` (no QEMU for esbuild/Go); the runtime is `python:3.11-slim-bookworm` |
 | `Dockerfile.dockerignore` | Build-context allowlist for this Dockerfile only |
 | `stage_c0.sh`, `c0_files.txt` | Copies the Speech C0 runtime from **committed Git blobs** into `build/c0/` and writes `SOURCE_REVISION`, `SOURCE_FILES` and `c0_code.sha256` |
-| `rootfs/opt/cas/bin/entrypoint.sh` | Root pre-start: mode and secret checks, ownership, internal CA, Postgres first init, Speech checks, boot id |
-| `rootfs/opt/cas/bin/bootstrap.sh` | One-shot as `cas`: waits for the data services, runs migrations (with a `pg_dump` first when migrations are pending), creates the bucket, writes `bootstrap.ok` |
+| `rootfs/opt/cas/bin/entrypoint.sh` | Root pre-start: mode and secret checks, directories, internal CA, Postgres reuse / restore-from-volume / first init, Speech checks, boot id |
+| `rootfs/opt/cas/bin/bootstrap.sh` | One-shot as `cas`: waits for Postgres, Qdrant and the synchronous WAL receiver, runs migrations (with a `pg_dump` first when migrations are pending), verifies the document files, restores/verifies Qdrant, waits for a verified base backup, writes `bootstrap.ok` |
+| `rootfs/opt/cas/bin/cas-pg-restore.sh`, `pg-restore-wal.sh` | Restore-on-boot of Postgres from the volume (base backup + WAL), fail-closed; also used by the restore drill |
+| `rootfs/opt/cas/bin/pg-receivewal.sh` | `pg_receivewal --synchronous` to the volume (program `pg-receivewal`) |
+| `rootfs/opt/cas/lib/cas_storage.py`, `bin/cas-storage` | Program `cas-keeper` (base backups, Qdrant snapshots, storage and receiver guard) and the checks bootstrap and the drill share |
 | `rootfs/opt/cas/bin/wait-for.sh` | Startup gate for app programs: waits for this boot's `bootstrap.ok` and/or an HTTP 2xx, then `exec`s the program |
 | `rootfs/opt/cas/bin/healthcheck.sh` | Operator report and image `HEALTHCHECK` (`--quiet`) |
-| `rootfs/opt/cas/bin/backup.sh` | `pg_dump` and a Qdrant snapshot to `/workspace/cas/backups` with rotation |
-| `rootfs/opt/cas/bin/restore_drill.sh` | Restores the newest backups into a scratch DB and a scratch collection, compares row and point counts with live data, then removes the scratch copies |
+| `rootfs/opt/cas/bin/backup.sh` | `pg_dump`, a verified base backup and a Qdrant snapshot now, on the volume |
+| `rootfs/opt/cas/bin/restore_drill.sh` | Recovers base backup + WAL into a scratch cluster and compares every table (rows and content) with live; restores the newest snapshot into a scratch collection and compares its fingerprint; verifies the document files; removes the scratch copies |
 | `rootfs/opt/cas/bin/pg-lease.sh`, `pg-start.sh`, `cas-pg-recover` | Single-writer workspace lease: heartbeat and fencing; data services refuse to start without a fresh lease; verified recovery |
 | `fetch_models.sh`, `models/embedding.manifest.{int8-vnni,fp32}.json` | Downloads the pinned e5 ONNX model (repository, revision, SHA-256 per file) in the **variant the target CPU needs** (see "Embedding model and CPU"). All-or-nothing: every file is verified in a staging directory before it replaces the destination; a model that is already complete is left untouched |
 | `rootfs/opt/cas/bin/cas-run` | Runs operator tools (e.g. `bootstrap-admin`) with this boot's environment, as a given user |
@@ -46,7 +50,7 @@ docker buildx build --platform linux/amd64 -f deploy/runpod/Dockerfile \
 
 The build fails if `CAS_REVISION` is not the commit C0 was staged from.
 
-RunPod needs `linux/amd64`. On Apple Silicon the amd64 runtime stage runs under QEMU emulation: the image builds there, and the C0 checks pass, but Qdrant and MinIO crash with SIGSEGV under QEMU (their official amd64 images do too), so the CPU smoke must run on native amd64.
+RunPod needs `linux/amd64`. On Apple Silicon the amd64 runtime stage runs under QEMU emulation: the image builds there, and the C0 checks pass, but Qdrant crashes with SIGSEGV under QEMU (its official amd64 image does too), so the CPU smoke must run on native amd64 (or on a native arm64 build for development).
 
 ## Run (CPU smoke, no GPU)
 
@@ -66,22 +70,55 @@ Full automated run on throwaway containers and volumes: `deploy/runpod/tests/smo
 
 1. **`entrypoint.sh`** (root, no server is started):
    - checks the mode and secrets;
-   - creates directories and sets ownership;
    - checks models and C0 (in `gpu` mode: checkpoints, tokenizer cache and GPU, fail-closed);
-   - sets up the CA and leaf certificates;
-   - on the first start only, runs `initdb` plus a temporary unix-socket-only server that creates role `cas`, database `citizen_assistance` and the `pgcrypto`/`vector` extensions (both need superuser);
+   - takes the workspace lease, creates the directories (container disk: owners and modes; volume: plain `mkdir`, writer must be able to write);
+   - sets up the CA and leaf certificates on the container disk;
+   - Postgres: reuses this container's `pgdata` if it belongs to the volume's cluster; otherwise restores it from the volume (`cas-pg-restore.sh`); or, only when the volume holds no cluster at all, runs `initdb` (with data checksums) plus a temporary unix-socket-only server that creates role `cas` (`pg_monitor`), database `citizen_assistance` and the `pgcrypto`/`vector` extensions;
    - writes a new boot id and removes any stale `bootstrap.ok`;
    - `exec supervisord`.
-2. **supervisord** starts `postgres`, `qdrant` and `minio` (priority 10).
+2. **supervisord** starts `pg-receivewal` (priority 8), `postgres` and `qdrant` (priority 10), and `cas-keeper` (25).
 3. **`bootstrap`** (priority 20, user `cas`):
-   - waits until a TLS query succeeds against Postgres, Qdrant answers `/readyz`, and MinIO answers HTTPS with the internal CA;
+   - waits until a TLS query succeeds against Postgres and Qdrant answers `/readyz`, then until the WAL receiver streams **synchronously** (no write before WAL can reach the volume);
    - refuses a dirty migration state or a DB that is newer than the image;
    - if migrations are pending, writes a `pg_dump` to `backups/pre-migrate/`, then runs `migrate up`;
-   - creates the bucket;
+   - verifies every document file (size and SHA-256 against the `documents` row);
+   - restores an empty Qdrant collection from the newest snapshot and verifies it, or verifies the existing one (see "Storage");
+   - waits until `cas-keeper` has a verified base backup of this cluster and timeline;
    - writes `bootstrap.ok` and exits 0. Its expected state is `EXITED`.
 4. **`ai-service`** and **`speech`** (gpu mode only) start once `bootstrap.ok` exists. **`api`** additionally waits for ai-service `/ready`, and **`nginx`** waits for api `/ready`.
 
-`wait-for.sh` only gates startup. If Postgres or MinIO dies later, supervisord restarts it after a crash. A manual `supervisorctl stop` keeps it down. The apps keep running, report `/ready` 503 and fail requests until the dependency is back, then reconnect without a restart.
+`wait-for.sh` only gates startup. If Postgres or the WAL receiver dies later, supervisord restarts it after a crash. A manual `supervisorctl stop` keeps it down. The apps keep running, report `/ready` 503 and fail requests until the dependency is back, then reconnect without a restart.
+
+## Storage
+
+| Where | What | Survives a new container |
+|---|---|---|
+| container disk `/var/lib/cas` | `pgdata`, Qdrant storage, TLS keys and CA | no: rebuilt from the volume |
+| volume `pg/state/system_identifier` | identity of the cluster this volume belongs to | yes |
+| volume `pg/state/flushed_lsn.json` | the WAL position the receiver had flushed on the volume, recorded about every second by `cas-keeper` | yes |
+| volume `pg/wal` | every WAL record, written by `pg_receivewal --synchronous` | yes |
+| volume `pg/base/<ts>` | base backups (`pg_basebackup -Fp -X stream`, checked by `pg_verifybackup`); newest `CAS_BASE_KEEP` (2) kept | yes |
+| volume `backups/` | `pg_dump` archives (`backup.sh`, before migrations) | yes |
+| volume `qdrant/snapshots/<collection>` | snapshots + `.json`: SHA-256 and fingerprint (per generation: point count, SHA-256 of ids, payloads, float32 vectors), Postgres READY set | yes |
+| volume `qdrant/baselines/<collection>` | `<generation>.json`: the fingerprint of each READY generation when first snapshotted; written once, never replaced, not pruned with the snapshots | yes |
+| volume `objects/<bucket>/<key>` | document files written by the API's file store, read by the ai-service | yes |
+
+**Synchronous WAL.** `synchronous_standby_names = 'cas_vol'` with `synchronous_commit = on`: a COMMIT is acknowledged only after `pg_receivewal --synchronous` has written and fsynced its WAL on the volume. While the receiver is down, commits wait (`SyncRep`); they are never silently asynchronous. A client that gives up while waiting gets an error, but its transaction stays committed locally and reaches the volume when the receiver is back. `max_slot_wal_keep_size = 4GB` bounds the WAL kept on the container disk; a lost slot is reported by the keeper and needs a new base backup.
+
+**What this claims, and what it does not.** Acknowledged commits are designed to survive the loss of the container disk (tests: `tests/persist_test.sh` PT1–PT3, PT9). Whether an `fsync` that the RunPod network volume acknowledged survives a host or power failure of RunPod's storage is not something these tests can show.
+
+**Restore on boot (`cas-pg-restore.sh`).** Fail-closed, in order: newest complete base backup, `pg_verifybackup`; its system identifier equals the volume's; WAL continuity (every segment from the base backup's start to the newest file present; tests PT4); recovery on the container disk with `restore_command` reading the volume, promotion at the end. Where recovery ended (an exact LSN) is then checked three ways, any failure refusing the restore:
+- it is at or after the durable LSN recorded in `pg/state/flushed_lsn.json` (read before recovery starts): every commit acknowledged before that record is replayed (PT5c, PT5e: damage or lost writes inside the newest segment);
+- it is in or after the newest WAL segment on the volume (PT5: a corrupt older segment);
+- in the copy of the last segment that recovery read, nothing replayable follows it: only zeros, or one record cut at a page boundary with consistent continuation headers (`cas-storage wal-end-check`; PT5d: damage hidden behind a lagging durable-LSN record). A truncated WAL file is refused by Postgres itself (PT5f).
+
+Not provable from the volume: a commit acknowledged after the newest durable-LSN record (at most about one second) whose WAL bytes the volume then lost. No RPO 0 is claimed. A missing `flushed_lsn.json` refuses the restore; an operator who knows the WAL is complete can set `CAS_RESTORE_WITHOUT_DURABLE_LSN=1` for that one boot. The keeper then takes a fresh base backup before `bootstrap.ok`, and bootstrap also waits for this boot's first durable-LSN record.
+
+**Qdrant.** Engine data on the container disk; `cas-keeper` takes a snapshot whenever the set of READY generations in Postgres changes, re-reading the fingerprint after the snapshot (a collection that changed meanwhile is retried). On a new container, bootstrap uploads the newest snapshot, checks its SHA-256 and that the restored collection's fingerprint equals the recorded one (PT6), then that every READY generation has exactly `vector_count` points (PT7). On every boot, also with the collection still on the container disk, each READY generation's ids, payloads and vectors must equal its **baseline** (PT7c: one vector changed, same count). A READY generation never changes (re-indexing writes a new generation), so its baseline is the fingerprint the keeper recorded with its first snapshot, written once and kept after that snapshot is pruned. Before every snapshot (keeper or `backup.sh`), the live collection is checked: a READY generation with a point count other than Postgres `vector_count`, or points other than its baseline, refuses the snapshot, so the change can never become the baseline or the copy that a new container restores (PT7e). The running keeper also re-checks the live collection every `CAS_QDRANT_VERIFY_SECONDS` (300) without any READY change (PT7r: point deleted, PT7s: vector changed, both without a reboot). Either finding is a problem (`/readyz` 503) that is cleared only by a later check that passes (re-checked every 60 s), never because the READY set went back to an earlier one. A snapshot that fails for other reasons (Qdrant API, disk) is a warning, retried every tick, and a problem after 10 minutes without a snapshot of the current READY set. Baselines are written after their snapshot is published; if that write fails, the keeper retries, and bootstrap completes a missing baseline from the newest snapshot holding the generation as READY, only when the live points equal that snapshot's fingerprint. Between an index publish and the keeper's first snapshot of it (normally one keeper interval, 10 s) a generation has no baseline yet: a change in that window is recorded as its baseline. A READY generation without any recorded fingerprint (indexed, then the container stopped before the keeper's snapshot) makes bootstrap fail: reindex that document, or, after checking the collection yourself, record the current state with `cas-storage qdrant-snapshot` (as root).
+
+**Objects.** `OBJECT_STORAGE_BACKEND=file`: `apps/api/internal/storage/file.go` writes, `apps/ai-service/app/indexing/file_objects.py` reads, both under the key contract `deploy/contracts/object_store_keys.json`. Every path component is opened relative to its parent with `O_NOFOLLOW` from a descriptor of the root, so neither `..` nor a symlink anywhere below the root can lead outside it. Writes: temporary file, `fsync`, `rename`, directory `fsync`. Bootstrap checks every document's file (size, SHA-256).
+
+**Guard (`cas-keeper`, every 10 s; status in `/run/cas/storage-status.json`).** Problems: WAL receiver not streaming synchronously; replication slot lost; durable LSN not recorded for 30 s; a READY Qdrant generation incomplete or different from its baseline (snapshot refused, or the periodic check); no Qdrant snapshot of the current READY set for 10 minutes; free space below `CAS_VOLUME_MIN_FREE_GB` (10) of `CAS_VOLUME_QUOTA_GB` (200), measured with `du` of the whole volume every `CAS_VOLUME_SCAN_SECONDS` (1800) plus this system's own growth in between. Any problem: `/readyz` answers 503 and `healthcheck.sh` fails; low free space also sets the database read-only (`default_transaction_read_only`) until free space is back above the minimum plus `CAS_VOLUME_RESUME_MARGIN_GB` (5) (PT8). Warnings: WAL above `CAS_WAL_BUDGET_GB` (10). Base backups every `CAS_BASEBACKUP_HOURS` (24) or after `CAS_BASEBACKUP_WAL_GB` (1) of WAL; WAL older than the oldest kept base backup is removed (`pg_archivecleanup`); `CAS_SNAPSHOT_KEEP` (3) snapshots kept.
 
 ## Speech mode
 
@@ -100,12 +137,10 @@ There is no default: an unset or unknown value is refused.
 
 | Program | Secrets it receives |
 |---|---|
-| nginx, postgres, qdrant, pg-lease | none |
-| minio | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` |
-| index-reaper | `DATABASE_URL` |
-| bootstrap | `DATABASE_URL`, object storage keys |
-| api | `DATABASE_URL`, `JWT_SECRET`, `AI_SERVICE_TOKEN`, object storage keys, `SPEECH_SERVICE_TOKEN` |
-| ai-service | `DATABASE_URL`, `AI_SERVICE_TOKEN`, object storage keys, `GEMINI_API_KEY` / `OPENAI_API_KEY` |
+| nginx, postgres, qdrant, pg-lease, pg-receivewal | none |
+| index-reaper, bootstrap, cas-keeper | `DATABASE_URL` |
+| api | `DATABASE_URL`, `JWT_SECRET`, `AI_SERVICE_TOKEN`, `SPEECH_SERVICE_TOKEN` |
+| ai-service | `DATABASE_URL`, `AI_SERVICE_TOKEN`, `GEMINI_API_KEY` / `OPENAI_API_KEY` |
 | speech | `SPEECH_SERVICE_TOKEN` |
 
 `POSTGRES_PASSWORD` itself reaches no program; it is only used to build `DATABASE_URL` and at first init. A variable set in the RunPod template reaches a program only if it is in that program's allowlist in `entrypoint.sh`. Smoke test E1 reads `/proc/<pid>/environ` of every program and checks this table.
@@ -115,23 +150,24 @@ There is no default: an unset or unknown value is refused.
 | What | User | Mode |
 |---|---|---|
 | entrypoint, supervisord, tini | root | — |
-| Postgres, `pgdata` | `postgres` (10010) | `0700` |
-| MinIO, `minio/` | `minio` (10011) | `0700` |
-| Qdrant, `qdrant/` | `qdrant` (10012) | `0700` |
-| Go API, index-reaper, ai-service, bootstrap, `backups/`, `/run/cas` | `cas` (10001) | `0700` / `/run/cas` `0755` |
+| Postgres, `/var/lib/cas/pgdata`; pg_receivewal | `postgres` (10010) | `0700` |
+| Qdrant, `/var/lib/cas/qdrant` | `qdrant` (10012) | `0700` |
+| Go API, index-reaper, ai-service, bootstrap, `/run/cas` | `cas` (10001) | `/run/cas` `0755` |
+| cas-keeper | root (drops to postgres for `pg_basebackup`) | — |
 | Speech C0 | `speech` (10013) | — |
 | nginx | `web` (10014) | — |
-| `tls/` / `tls/ca/` / `tls/postgres/` / `tls/minio/` | root / root / postgres / minio | `0711` / `0700` / `0700` / `0700`; keys `0600` |
-| `tls/ca.crt` | root | `0644` |
+| `/var/lib/cas/tls/` / `tls/ca/` / `tls/postgres/` | root / root / postgres | `0711` / `0700` / `0700`; keys `0600` |
+| `/var/lib/cas/tls/ca.crt` | root | `0644` |
+| volume: `pg/`, `pg/wal`, `pg/base` / `backups/`, `objects/` / `pg/state`, `qdrant/` | postgres / cas / root (writer) | `0750` (`qdrant/` `0755`) where the volume keeps modes |
 
-UIDs are fixed in the image. On every start, `entrypoint.sh` repairs ownership on the volume if another pod or image wrote it.
+UIDs are fixed in the image. Owners and modes on the **volume** are applied where the filesystem supports them and are never relied on: the RunPod network volume (MooseFS over FUSE) reports `0777` and refuses `chown`. Nothing secret is written there (smoke F1): every key, the CA and `pgdata` stay on the container disk.
 
 ## TLS
 
-- The internal CA lives in `tls/ca/` (EC P-256, 10 years). Leaf certs are signed by it, valid 825 days, with SAN `IP:127.0.0.1,DNS:localhost`.
+- The internal CA lives in `/var/lib/cas/tls/ca/` on the container disk (EC P-256, 10 years). A new container gets a new CA; only loopback clients of this container use it. Leaf certs are signed by it, valid 825 days, with SAN `IP:127.0.0.1,DNS:localhost`.
 - Certificates are created only when absent. If a key or certificate is half-present, mismatched, expired, or signed by another CA, startup stops with an error. Nothing is regenerated or overwritten silently.
-- The CA is added to the system trust store, and `SSL_CERT_FILE` points to that bundle. Go and minio-py verify MinIO with it.
-- Postgres accepts TCP only with TLS (`hostssl`). Apps connect with `sslmode=verify-full&sslrootcert=/workspace/cas/tls/ca.crt`, so the client checks the chain and the `127.0.0.1` SAN. A wrong CA is refused (smoke T6).
+- The CA is added to the system trust store, and `SSL_CERT_FILE` points to that bundle.
+- Postgres accepts TCP only with TLS (`hostssl`). Apps connect with `sslmode=verify-full&sslrootcert=/var/lib/cas/tls/ca.crt`, so the client checks the chain and the `127.0.0.1` SAN. A wrong CA is refused (smoke T6).
 - Rotation is manual: stop the pod, move the old files away, start again.
 
 ## Operations
@@ -141,29 +177,30 @@ docker exec <c> healthcheck.sh                                   # status table 
 docker exec <c> supervisorctl -c /etc/cas/supervisord.conf status
 docker exec -e BOOTSTRAP_ADMIN_EMAIL=admin@chuse.vn -e BOOTSTRAP_ADMIN_PASSWORD='<strong>' \
   <c> cas-run cas /opt/cas/api/bootstrap-admin                   # set the admin password
-docker exec <c> backup.sh                                        # pg_dump + Qdrant snapshot
-docker exec <c> restore_drill.sh                                 # full drill: Postgres AND Qdrant must restore (missing snapshot = FAIL)
+docker exec <c> backup.sh                                        # pg_dump + verified base backup + Qdrant snapshot
+docker exec <c> restore_drill.sh                                 # full drill: Postgres, Qdrant and objects must restore/verify
 docker exec <c> restore_drill.sh --postgres-only                 # explicit partial drill; result line says PARTIAL
+docker exec <c> cas-storage status                               # keeper status: receiver, slot, free space, backups
 ```
 
-`backup.sh` writes only to the volume. Copy `/workspace/cas/backups`, and the MinIO data, out of RunPod.
+Everything stays on the volume. Copy `/workspace/cas/pg`, `backups`, `qdrant/snapshots`, `qdrant/baselines` and `objects` out of RunPod (off-site copy: not automated yet).
 
 ## Rules
 
-- **Single writer per volume.** Postgres, Qdrant and MinIO data must never have two writers; see "Single-writer lease" below.
-- First Postgres init writes `pgdata/.cas-init-complete` last. A `pgdata` without it (interrupted first init) is refused instead of being used half-initialised.
+- **Single writer per volume.** The WAL, base backups, snapshots and objects of the volume must never have two writers; see "Single-writer lease" below.
+- First Postgres init and every restore write `pgdata/.cas-init-complete` last. A `pgdata` without it is refused instead of being used half-initialised. A `pgdata` of another cluster than the volume's (`pg/state/system_identifier`) is refused too.
 - `POSTGRES_PASSWORD` is applied once, at first init. To rotate it, run `ALTER ROLE cas PASSWORD ...` as `postgres` first, then change the secret.
 - Migrations only move up. A DB newer than the image is refused, and so is a dirty state. Nothing is forced or rolled back automatically.
 - No procedure is activated automatically. The Admin activates in the UI.
 
 ## Single-writer lease
 
-`/workspace/cas/locks/` protects `pgdata`, `qdrant` and `minio` with two layers:
+`/workspace/cas/locks/` protects the volume (WAL, base backups, snapshots, objects) with two layers:
 
 Owner identity: `runpod-<RUNPOD_POD_ID>`, else `docker-<container id>` (stable across restarts of the same container, different for every new container even with the same `--hostname`), else `host-<hostname>`.
 
 1. **`flock` on `workspace.flock`.** `entrypoint.sh` takes it before touching any data, and supervisord keeps it (inherited fd) for the container's lifetime. A second container on the same host is refused immediately.
-2. **Lease directory `workspace.lease/`.** It is created with `mkdir`, which is atomic. It holds `owner.json` (owner = `RUNPOD_POD_ID`, or the container hostname) and a `heartbeat`, which `pg-lease` rewrites every 10 s. `pg-lease` stops the data services at once if the lease names another owner or the heartbeat cannot be written. Postgres, Qdrant and MinIO start through `pg-start.sh`, which refuses to run without this container's fresh lease.
+2. **Lease directory `workspace.lease/`.** It is created with `mkdir`, which is atomic. It holds `owner.json` (owner = `RUNPOD_POD_ID`, or the container hostname) and a `heartbeat`, which `pg-lease` rewrites every 10 s. `pg-lease` stops the data services at once if the lease names another owner or the heartbeat cannot be written. Postgres, Qdrant, the WAL receiver and `cas-keeper` start through `pg-start.sh`, which refuses to run without this container's fresh lease; fencing also stops the API, which writes document files.
 
 Behaviour on start:
 
@@ -234,7 +271,7 @@ Manifests: `models/embedding.manifest.fp32.json`, `models/embedding.manifest.int
 
 Never switch in place:
 
-1. `backup.sh` (pg_dump + Qdrant snapshot).
+1. `backup.sh` (pg_dump, base backup, Qdrant snapshot).
 2. Fetch the new variant's model into a new directory, set `EMBEDDING_VARIANT` and `EMBEDDING_MODEL_DIR`, restart.
 3. Reindex each document from the admin page. Until a document is reindexed, retrieval answers `embedding_identity_mismatch` for it instead of returning vectors of the other model.
 4. Rollback: set the previous `EMBEDDING_VARIANT` and `EMBEDDING_MODEL_DIR` back and reindex again, or restore the backup of step 1. A reindex marks the previous generation `SUPERSEDED`; only failed generations are cleaned from Qdrant, so do not count on the old vectors being usable: the backup is the rollback.
@@ -246,11 +283,12 @@ Never switch in place:
 
 ## Known limits
 
-- **MinIO credentials:** the app uses the MinIO root credentials; a scoped service account is a Go-live item.
+- **Volume isolation:** on the RunPod network volume every file is `0777`: any process in this container could read or change any file there, the research data included. Nothing secret is stored on it, and every write of this system goes under `/workspace/cas` (file store confined to its root, no symlink followed), but full separation needs a volume of its own.
+- **Off-site copy:** WAL, base backups, snapshots and objects are all on the same network volume. A copy outside RunPod is not automated.
 - **Qdrant:** no API key, because the code has no client support for one. Qdrant is reachable on loopback only.
 - **Client IP for rate limiting:** nginx uses `CF-Connecting-IP`, falling back to the TCP peer. Which header RunPod forwards is unverified until 8.1-B.
 - **Legacy `/ai-drafts` call:** this synchronous call can exceed the 100 s proxy limit. Drafting jobs are asynchronous and are not affected.
-- **Restore drill timing:** `restore_drill.sh` compares the restored copy with the live data at drill time. Run it right after `backup.sh`, when nothing is writing; writes in between show up as a count mismatch.
+- **Restore drill timing:** `restore_drill.sh` compares the restored copy with the live data at drill time. Run it when nothing is writing; writes in between show up as a content mismatch.
 - **Replacing the model:** when `fetch_models.sh` installs a *different* model, it swaps the directory, so restart any container that bind-mounts it. A model that is already complete and valid is never touched.
 - **Model swap interrupted:**
   - If publishing fails, the previous model is put back.

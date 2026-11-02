@@ -1,0 +1,12 @@
+#!/bin/sh
+# Durable-storage tool of the all-in-one pod; see /opt/cas/lib/cas_storage.py.
+# From `docker exec` (root, e.g. `cas-storage qdrant-snapshot`) the keeper's environment
+# (DATABASE_URL, volume limits) is not inherited: take it from the keeper's allowlist
+# (KEY=VALUE lines, read literally: values hold '&'), never overriding a variable already set.
+if [ -z "${DATABASE_URL:-}" ] && [ -r /run/cas-env/cas-keeper.env ]; then
+  while IFS= read -r kv; do
+    k="${kv%%=*}"
+    eval "[ -n \"\${$k+x}\" ]" || export "$kv"
+  done < /run/cas-env/cas-keeper.env
+fi
+cd /opt/cas/ai && exec /opt/cas/venv-ai/bin/python /opt/cas/lib/cas_storage.py "$@"

@@ -15,7 +15,7 @@ Nothing here trains a model or writes to the research tree. Every step that cost
 | Volume | `bahnar-thesis-storage`, ID `buppvu4d48`, 200 GB, US-IL-1, mounted at `/workspace` |
 | CPU | AMD EPYC 7B13: AVX2 yes, AVX-512 VNNI no. E5 therefore runs **fp32** |
 | GPU | NVIDIA RTX 4090, 24 GB |
-| Image | `ghcr.io/minhtuandev25/citizen-assistance-system/cas-aio@sha256:40deae613fcc8f716d1874e41a12c565dfcd0e0e95b2ffb3fc4de396ca8cc566`, revision `b474deb`, amd64, 5.03 GB compressed. Torch 2.8.0 from PyPI, a CUDA 12.8 build; the C0 venv layer alone is 4.1 GB |
+| Image | `ghcr.io/minhtuandev25/citizen-assistance-system/cas-aio@sha256:81a41a0feec160c3d943227b6f9e9a1580c3b197c837d96b4bb949e2985416ca`, revision `7fefeb2` (storage A-file), amd64, 4.97 GB compressed. Torch 2.8.0 from PyPI, a CUDA 12.8 build; the C0 venv layer alone is 4.1 GB |
 | ASR | `checkpoint-12500` (`full_xlsr300m_v1`), 5/5 required files. `model.safetensors` sha256 `dacbe7f82d8ed0a33f7e9798860d0e1808a20b9dc84725355a2db9b4229a6a2a` |
 | MT | `checkpoint-17500` (`mt_bartpho_syllable_v1`), 6/6 required files. `model.safetensors` sha256 `f9bee0d53399f76548eee297fc67ff83bad4e43cd8fda630c9cb6dab93284ead` |
 | MT contract | `.../mt_full_state/contract_c3d7b95698738634/mt_training_contract.json` |
@@ -55,19 +55,19 @@ The manifest has absolute paths. `entrypoint.sh` checks it in gpu mode with `cd 
 
 Training-state files (`optimizer.pt` and the like) are not in the manifest. `apply` refuses to write the manifest unless both weight hashes equal the pins above.
 
-On the first boot the image itself creates `pgdata/`, `qdrant/`, `minio/`, `tls/`, `locks/` and `backups/` under `/workspace/cas`. The image writes nothing else on the volume. `ARTIFACT_ROOT` and the checkpoint paths are only read.
+On the first boot the image creates `pg/` (WAL, base backups, cluster identity), `backups/`, `qdrant/snapshots/`, `objects/` and `locks/` under `/workspace/cas`. Postgres and Qdrant themselves, and every key, run on the container disk (`/var/lib/cas`); see `../README.md`, "Storage". The image writes nothing else on the volume. `ARTIFACT_ROOT` and the checkpoint paths are only read.
 
 ## Configuration in the new container
 
 | Item | Value |
 |---|---|
 | E5 | `EMBEDDING_VARIANT=fp32`, model `/workspace/cas/models/embedding`. Boot log: `-> fp32 … avx512_vnni=no` |
-| PostgreSQL 16 | `127.0.0.1:5432`, TLS `verify-full` with the internal CA, data in `pgdata/`. `POSTGRES_PASSWORD` is applied at the first init only |
-| Qdrant 1.13.4 | `127.0.0.1:6333`, collection `knowledge_chunks` |
-| MinIO | `https://127.0.0.1:9000`, bucket `cas-documents`, console off |
+| PostgreSQL 16 | `127.0.0.1:5432`, TLS `verify-full`, data on the container disk; synchronous WAL to `/workspace/cas/pg/wal`, verified base backups in `pg/base`. `POSTGRES_PASSWORD` is applied at the first init only |
+| Qdrant 1.13.4 | `127.0.0.1:6333`, collection `knowledge_chunks`, data on the container disk; snapshots + fingerprints in `/workspace/cas/qdrant/snapshots` |
+| Documents | files under `/workspace/cas/objects/cas-documents/` (file store, no MinIO) |
 | Speech C0 | `127.0.0.1:8090`, `SPEECH_DEVICE=cuda`, Bearer `SPEECH_SERVICE_TOKEN`. Go reaches it on loopback |
 | nginx | `:8088`, the only port that listens beyond loopback |
-| Secrets (RunPod Secrets) | `CAS_JWT_SECRET` (≥ 32), `CAS_AI_SERVICE_TOKEN`, `CAS_SPEECH_SERVICE_TOKEN`, `CAS_POSTGRES_PASSWORD`, `CAS_MINIO_ROOT_PASSWORD` (≥ 16 each), `CAS_MINIO_ROOT_USER` (≥ 8, not containing `minioadmin`), `CAS_GEMINI_API_KEY`. Generate each with `openssl rand -hex 32`, and keep a copy outside RunPod |
+| Secrets (RunPod Secrets) | `CAS_JWT_SECRET` (≥ 32), `CAS_AI_SERVICE_TOKEN`, `CAS_SPEECH_SERVICE_TOKEN`, `CAS_POSTGRES_PASSWORD` (≥ 16 each), `CAS_GEMINI_API_KEY`. Generate each with `openssl rand -hex 32`, and keep a copy outside RunPod |
 
 ## Procedure
 
@@ -105,14 +105,14 @@ You need **0 FAIL** and `exit=0`. The pipe into `tee` would hide the script's ex
 |---|---|
 | `WARN workspace-idle` | Something still uses `/workspace` |
 | `WARN gpu-cuda` | The driver supports less than CUDA 12.8 |
-| `INFO container-disk` / `keep-candidate` | Files that are lost at the switch |
+| `INFO container-disk` / `keep-candidate` / `secret` | Files that are lost at the switch; `secret` paths are never preserved on the volume |
 | `volume-free` | The 200 GB quota minus the usage measured with `du`. `df` on a network volume shows the shared backend (hundreds of TB), not the quota, so it is printed as information only. The 200 GB is configured (`VOL_QUOTA_GB`), **not read from RunPod**. Confirming the size and usage in Console > Storage is a required manual step before `apply`. Any `du` error counts as FAIL, never as a partial number |
 
 `apply` refuses to run unless `CAS_STAGE_EXPECT_COMMIT` is set and equals the clone's HEAD (`source-commit`). `check` only warns when it is unset. Together with `source-clean`, this proves that the code that runs is the reviewed commit, byte for byte. `READY_TO_SWITCH` records that commit as `clone=`.
 
 `check` also requires `/workspace` to be a mount point (`volume-mount`). Without the network volume, everything would be prepared on the container disk and lost at the switch.
 
-The clone must be a blob-less clone, not `--depth 1`, because `check` compares the C0 and E5 files with image revision `b474deb`.
+The clone must be a blob-less clone, not `--depth 1`, because `check` compares the C0 and E5 files with image revision `7fefeb2`.
 
 `check` (and `apply`) also refuse two more situations:
 
@@ -124,7 +124,7 @@ The clone must be a blob-less clone, not `--depth 1`, because `check` compares t
 Use the `container-disk` and `keep-candidate` lines from step 2, for example:
 
 ```bash
-bash /tmp/cas-src/deploy/runpod/staging/pod_stage.sh preserve /root/.jupyter /root/.config
+bash /tmp/cas-src/deploy/runpod/staging/pod_stage.sh preserve /root/.jupyter
 ```
 
 `preserve` writes to `/workspace/cas/preserve/<pod>-<ts>/`:
@@ -138,7 +138,9 @@ bash /tmp/cas-src/deploy/runpod/staging/pod_stage.sh preserve /root/.jupyter /ro
 
 It refuses paths that are already on the volume, because those survive the switch. It also refuses to write anything when `/workspace` is not a mount point or a path under `/workspace/cas` is unsafe; a backup on the container disk would be lost at the switch.
 
-Anything not preserved is lost: `pip install`s, `~/.cache/huggingface`, shell history, SSH `authorized_keys`, notebooks saved outside `/workspace`. If the tar contains secrets, move it off RunPod or keep the directory at `0700`.
+Anything not preserved is lost: `pip install`s, `~/.cache/huggingface`, shell history, SSH `authorized_keys`, notebooks saved outside `/workspace`.
+
+**Never preserve secrets.** The volume does not keep modes (it shows `0777`), so every user of the next container can read `preserve/`. Private keys, tokens and credentials (`/root/.ssh`, `.netrc`, `.git-credentials`, cloud CLI logins under `/root/.config`) are copied off RunPod by you, never passed to `preserve`. `check` lists them as `INFO secret`; check every `keep-candidate` for credentials before passing it.
 
 ### 4. Apply (writes under `/workspace/cas` only)
 
@@ -150,7 +152,7 @@ bash /tmp/cas-src/deploy/runpod/staging/pod_stage.sh apply 2>&1 | tee /tmp/stage
 
 `apply` first removes any old `preflight/READY_TO_SWITCH`. It then runs every check of `check` again and writes nothing if any of them fails. Those checks cover the CPU (AVX2), the GPU and the driver, path safety, a clean clone, the volume quota, the checkpoints and pins, and read access. It then runs these steps in order, and **stops at the first step that fails**; no later step writes anything:
 
-1. **Probes the filesystem.** It runs what the first boot will do: `chown` to uid 10010, mode `0700`, `fsync`, rename, `flock`, `mkdir`, and an `O_DIRECT` test.
+1. **Probes the filesystem** for what the image needs on the volume: as root, as uid 10010 (postgres: WAL, base backups) and as uid 10001 (cas: documents, dumps), write, `fsync`, rename, directory `fsync`, `flock` and atomic `mkdir`. Owners and modes are only reported: the RunPod volume refuses `chown` and shows `0777`, which this design does not rely on.
 2. **Installs the E5 model.** It runs `fetch_models.sh --variant fp32`, which downloads about 0.5 GB from the Hub.
 3. **Fills the tokenizer cache.** It installs `transformers==4.57.6` in `/tmp/cas-c0-tok`, then downloads the pinned tokenizer files without weights.
 4. **Checks the Speech serving gate.** It runs `python -m src.c0_tokenizer --contract …` **as uid 10013 with `HF_HUB_OFFLINE=1`**. The result must be `VERIFIED`.
@@ -166,7 +168,7 @@ Do not start RQ work between `apply` and the switch. Any change in `/workspace` 
 
 ### 5. Secrets
 
-Create the seven RunPod Secrets listed above. RunPod Secrets are free.
+Create the five RunPod Secrets listed above. RunPod Secrets are free.
 
 ### 6. Access and recovery: check before the switch
 
@@ -263,7 +265,7 @@ To try the switch again later, run `apply` again (it must write `READY_TO_SWITCH
 
 ## Blockers and unverified points
 
-1. **Production data.** The first boot creates a new Postgres (migration seed only), an empty Qdrant collection and an empty MinIO. The current data lives in the Mac Docker stack. Moving it needs its own approved plan: `pg_dump`/restore, the MinIO objects, and a reindex (or a Qdrant snapshot), followed by `bootstrap-admin`. Activation stays manual.
+1. **Production data.** The first boot creates a new Postgres (migration seed only), an empty Qdrant collection and an empty object store. The current data lives in the Mac Docker stack. Moving it needs its own approved plan: `pg_dump`/restore, the PDF objects copied into `objects/`, and a reindex (or a Qdrant snapshot), followed by `bootstrap-admin`. Activation stays manual.
 2. **Shell access after the switch is UNVERIFIED.** The image has no `sshd`. RunPod documents basic proxied SSH for any container, but that has not been tried on this image. Step 6 limits the risk: the key path is checked beforehand, there is a 10-minute go/no-go, and the rollback is a Console edit that needs no shell. No public port and no `sshd` are added.
 3. **Public access is not opened.** Exposing `8088` gives a public proxy URL. The client IP header and the 100 s proxy limit are unverified (see `../README.md`, "Known limits").
 4. **Network volume behaviour.** `apply` probes `chown`, modes, `fsync`, `flock` and `O_DIRECT` once. Postgres durability and performance on the network volume, and `flock` between two pods, stay unverified. Run only one cas-aio container on this volume.

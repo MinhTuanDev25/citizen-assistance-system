@@ -55,9 +55,13 @@ type Config struct {
 	IndexPublishTimeout   time.Duration
 	// IndexAsync runs pipeline indexing as a background job: the admin request
 	// returns once the job is claimed, and a heartbeat renews the lease.
-	IndexAsync                    bool
-	IndexHeartbeat                time.Duration
-	IndexMaxConcurrent            int
+	IndexAsync         bool
+	IndexHeartbeat     time.Duration
+	IndexMaxConcurrent int
+	// ObjectStorageBackend is "s3" (MinIO / S3-compatible, the default) or "file":
+	// objects as files under ObjectStorageFileRoot/<bucket>/<key> (all-in-one pod).
+	ObjectStorageBackend          string
+	ObjectStorageFileRoot         string
 	ObjectStorageEndpoint         string
 	ObjectStorageAccessKey        string
 	ObjectStorageSecretKey        string
@@ -184,6 +188,7 @@ func Load() (Config, error) {
 		IndexPublishTimeout:           10 * time.Second,
 		IndexHeartbeat:                15 * time.Second,
 		IndexMaxConcurrent:            1,
+		ObjectStorageBackend:          "s3",
 		ObjectStorageAutoCreateBucket: true,
 		SpeechEnabled:                 false,
 		SpeechTimeoutMS:               130000,
@@ -307,7 +312,7 @@ func validateProduction(cfg Config) error {
 	if cfg.SpeechEnabled && isDevPlaceholder(cfg.SpeechServiceToken) {
 		return fmt.Errorf("SPEECH_SERVICE_TOKEN is a development placeholder")
 	}
-	if cfg.AdminIngestionEnabled {
+	if cfg.AdminIngestionEnabled && cfg.ObjectStorageBackend == "s3" {
 		if cfg.ObjectStorageAutoCreateBucket {
 			return fmt.Errorf("OBJECT_STORAGE_AUTO_CREATE_BUCKET must be false when APP_ENV=prod")
 		}
@@ -379,6 +384,23 @@ func runPodPortError(endpoint string) error {
 func validateIngestionConfig(cfg Config) error {
 	if !cfg.AdminIngestionEnabled {
 		return nil
+	}
+	switch cfg.ObjectStorageBackend {
+	case "file":
+		root := cfg.ObjectStorageFileRoot
+		if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root {
+			return fmt.Errorf("OBJECT_STORAGE_FILE_ROOT must be an absolute clean path when OBJECT_STORAGE_BACKEND=file")
+		}
+		if strings.TrimSpace(cfg.ObjectStorageBucket) == "" {
+			return fmt.Errorf("OBJECT_STORAGE_BUCKET is required when ADMIN_INGESTION_ENABLED=true")
+		}
+		if cfg.DocumentMaxBytes <= 0 || cfg.DocumentMaxBytes > DocumentMaxHardBytes {
+			return fmt.Errorf("DOCUMENT_MAX_BYTES must be in (0, %d]", DocumentMaxHardBytes)
+		}
+		return nil
+	case "s3", "":
+	default:
+		return fmt.Errorf("OBJECT_STORAGE_BACKEND must be s3 or file")
 	}
 	if strings.TrimSpace(cfg.ObjectStorageEndpoint) == "" ||
 		strings.TrimSpace(cfg.ObjectStorageAccessKey) == "" ||
@@ -664,6 +686,12 @@ func applyEnvOverrides(cfg *Config) error {
 		default:
 			return fmt.Errorf("ADMIN_INGESTION_ENABLED must be true or false")
 		}
+	}
+	if v := os.Getenv("OBJECT_STORAGE_BACKEND"); strings.TrimSpace(v) != "" {
+		cfg.ObjectStorageBackend = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("OBJECT_STORAGE_FILE_ROOT"); v != "" {
+		cfg.ObjectStorageFileRoot = strings.TrimSpace(v)
 	}
 	if v := os.Getenv("OBJECT_STORAGE_ENDPOINT"); v != "" {
 		cfg.ObjectStorageEndpoint = strings.TrimSpace(v)
