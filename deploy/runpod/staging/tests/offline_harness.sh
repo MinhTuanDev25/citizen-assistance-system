@@ -114,7 +114,7 @@ t "T3 apply (simulated hardware) -> READY_TO_SWITCH with simulated_hardware=yes"
 rc=$(run /tmp/t3 env CAS_STAGE_TEST_HW=$HW bash "$S" apply); check "rc" "$rc" 0
 has "tokenizer VERIFIED as uid 10013, offline" '^PASS  tokenizer .*VERIFIED' /tmp/t3
 has "e5 fp32 verified" '^PASS  embedding' /tmp/t3; has "fs-probe" '^PASS  fs-probe' /tmp/t3
-exists "READY written" $W/preflight/READY_TO_SWITCH
+exists "READY written" $W/preflight/READY_TO_SWITCH; exists "verify_gates.py copied" $W/preflight/verify_gates.py
 has "READY says simulated" '^simulated_hardware=yes$' $W/preflight/READY_TO_SWITCH
 has "READY records the reviewed commit" "^clone=$CAS_STAGE_EXPECT_COMMIT$" $W/preflight/READY_TO_SWITCH
 has "READY has the manifest hash" "^manifest_sha256=$(sha256sum $W/manifests/c0_checkpoints.sha256 | cut -c1-64)$" $W/preflight/READY_TO_SWITCH
