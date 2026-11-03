@@ -4,14 +4,16 @@
 #
 #   bash /workspace/cas/preflight/verify_after_switch.sh --audio <16 kHz mono WAV>
 #
-# Read-only: HTTP calls on 127.0.0.1, one read-only SQL session, nvidia-smi, the RQ
+# Read-only: HTTP calls on 127.0.0.1, one read-only SQL session, nvidia-smi, /proc, the RQ
 # fingerprint comparison, one e5 embedding as user cas, Gemini models.get (metadata, no
 # tokens; required, a FAIL blocks the features that use the LLM). --audio (required) sends
 # one file to Speech C0 directly (127.0.0.1:8090); it must be a sample the research data
 # already holds, and it is not stored.
+# The GPU and listener gates are in verify_gates.py next to this script (stdlib only).
 # Exit 1 if a required check fails: then follow the rollback in README.md.
 set -uo pipefail
 
+HERE="$(cd "$(dirname "$0")" && pwd)"
 W=/workspace/cas
 P="$W/preflight"
 AUDIO=""
@@ -23,6 +25,22 @@ bad()  { printf 'FAIL  %-18s %s\n' "$1" "$2"; fails=$((fails + 1)); }
 info() { printf 'INFO  %-18s %s\n' "$1" "$2"; }
 [[ $(id -u) == 0 ]] || { echo "run as root" >&2; exit 1; }
 [[ -f /opt/cas/REVISION ]] || { echo "not a cas-aio container" >&2; exit 1; }
+[[ -f $HERE/verify_gates.py ]] || { echo "verify_gates.py missing next to $0" >&2; exit 1; }
+# gates <verify_gates.py args>: prints its lines and counts its FAIL/WARN. Fails closed: the
+# result counts only if the exit code agrees with the lines (0 = no FAIL and at least one
+# PASS, 1 = at least one FAIL) and every line has the gate format; a crash, an empty or
+# malformed output, or any other exit code adds a FAIL of its own.
+gates() {
+  local out rc nf nw np odd
+  out="$(python3 "$HERE/verify_gates.py" "$@" 2>&1)"; rc=$?
+  [[ -z $out ]] || echo "$out"
+  nf=$(grep -c '^FAIL  ' <<<"$out"); nw=$(grep -c '^WARN  ' <<<"$out"); np=$(grep -c '^PASS  ' <<<"$out")
+  odd=$(grep -cvE '^(PASS|FAIL|WARN|INFO)  [a-z0-9-]+ |^      ' <<<"$out")
+  fails=$((fails + nf)); warns=$((warns + nw))
+  if ! { (( odd == 0 )) && { (( rc == 0 && nf == 0 && np > 0 )) || (( rc == 1 && nf > 0 )); }; }; then
+    bad "gate-$1" "verify_gates.py $1 did not complete as a gate (exit $rc, $nf FAIL, $np PASS, $odd malformed lines): counted as FAIL"
+  fi
+}
 
 echo "== verify_after_switch $(date -u +%FT%TZ) image revision $(cat /opt/cas/REVISION), C0 $(cat /opt/cas/c0/SOURCE_REVISION)"
 
@@ -58,19 +76,14 @@ if r="$(curl -fsS --max-time 5 http://127.0.0.1:8090/readyz 2>&1)"; then
   if python3 -c 'import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if d.get("status")=="ready" and d.get("tokenizer_parity")=="VERIFIED" and d.get("generation_matches_rq1") is True else 1)' "$r"
   then ok speech-ready "$r"; else bad speech-ready "$r"; fi
 else bad speech-ready "$r"; fi
-# The models are on the GPU when all of these hold: Speech is ready while forced to
-# SPEECH_DEVICE=cuda (resolve_device fails closed when CUDA is unavailable), the speech
-# process itself holds /dev/nvidia* open (its own CUDA context; nvidia-smi often cannot
-# map PIDs inside a container, and VRAM alone may belong to another process), and a
-# real inference succeeds (section 8, required).
+# The models are on the GPU when all of these hold: Speech is forced to SPEECH_DEVICE=cuda
+# (resolve_device fails closed without CUDA), the NVIDIA driver accounts GPU memory > 0 to
+# the Speech C0 process (supervisor pid or a child; uid 10013, src.c0_speech), and a real
+# inference succeeds (section 8, required). Its /dev/nvidia* fds are not used as evidence:
+# without CAP_SYS_PTRACE root cannot read the fds of uid 10013.
 spid="$(supervisorctl -c /etc/cas/supervisord.conf pid speech 2>/dev/null)"
 sdev="$(grep -m1 '^SPEECH_DEVICE=' /run/cas-env/speech.env | cut -d= -f2)"
-nvfd=0
-if [[ $spid =~ ^[1-9][0-9]*$ ]]; then
-  for fd in /proc/"$spid"/fd/*; do [[ "$(readlink "$fd" 2>/dev/null)" == /dev/nvidia* ]] && nvfd=$((nvfd + 1)); done
-fi
-if [[ $sdev == cuda ]] && (( nvfd > 0 )); then ok speech-on-gpu "SPEECH_DEVICE=cuda, speech pid $spid holds $nvfd /dev/nvidia* descriptors"
-else bad speech-on-gpu "SPEECH_DEVICE=${sdev:-?}, speech pid ${spid:-?} holds $nvfd /dev/nvidia* descriptors"; fi
+gates gpu --speech-pid "$spid" --speech-device "$sdev"
 
 # 4. E5: the configured variant must be fp32, and a real embedding must run on this CPU
 ev="$(grep -m1 '^EMBEDDING_VARIANT=' /run/cas-env/ai-service.env | cut -d= -f2)"
@@ -112,15 +125,11 @@ PY
 else bad embedding-run "$(tail -2 <<<"$e" | tr '\n' ' ')"; fi
 info ai-service "$(curl -sS --max-time 5 http://127.0.0.1:8001/ready 2>&1 | cut -c1-300)"
 
-# 5. only nginx :8088 listens beyond loopback
-# A listener this image does not start (for example one RunPod injects) is a FAIL with
-# its process name: identify it before accepting the switch.
-bad_l=""
-while read -r addr proc; do
-  case "$addr" in 127.0.0.1:*|\[::1\]:*|::1:*) ;; *:8088) ;; *) bad_l+="$addr ${proc:-?}; " ;; esac
-done < <(ss -ltnpH | awk '{print $4, $6}')
-if [[ -z $bad_l ]]; then ok listeners "only :8088 is not loopback ($(ss -ltnH | awk '{print $4}' | tr '\n' ' '))"
-else bad listeners "non-loopback listeners besides :8088: $bad_l"; fi
+# 5. beyond loopback only the CAS nginx listens on :8088 (TCP and UDP, IPv4 and IPv6).
+# Everything else is a FAIL with its classification and the evidence found: the RunPod
+# Web Terminal (gotty, a root shell behind the proxy: stop it), or a listener no process
+# here can be shown to own (identify it first; it is never allowlisted blindly).
+gates listeners --program nginx="$(supervisorctl -c /etc/cas/supervisord.conf pid nginx 2>/dev/null)"
 if c="$(curl -fsS --max-time 5 http://127.0.0.1:8088/readyz 2>&1)"; then ok nginx "/readyz via :8088: $c"
 else bad nginx "$c"; fi
 

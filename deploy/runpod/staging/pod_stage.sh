@@ -472,7 +472,7 @@ cmd_apply() {
   install_same "$HERE/c0_inference.yaml" "$W/config/c0_inference.yaml" 0644; gate "c0_inference.yaml"
   write_manifest;                                                             gate "checkpoint manifest"
   install -d -m 0755 "$W/preflight" || die "cannot create $W/preflight"
-  install -m 0755 "$HERE/verify_after_switch.sh" "$HERE/rq_fingerprint.py" "$W/preflight/" || die "cannot copy the verify scripts"
+  install -m 0755 "$HERE/verify_after_switch.sh" "$HERE/verify_gates.py" "$HERE/rq_fingerprint.py" "$W/preflight/" || die "cannot copy the verify scripts"
   if python3 "$HERE/rq_fingerprint.py" "$VOL" --exclude "$W" --listing-out "$W/preflight/rq_tree.listing.gz" \
        > "$W/preflight/rq_tree.fingerprint"; then
     ok rq-fingerprint "$(cat "$W/preflight/rq_tree.fingerprint")"
