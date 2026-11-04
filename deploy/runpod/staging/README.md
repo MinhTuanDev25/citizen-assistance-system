@@ -238,6 +238,17 @@ On a first boot the database holds only what the migrations seed: in a local tes
 
 `checkpoint_identity` will be `configured_hash_match` and `research_provenance` will be `NOT_VERIFIED`. That is by design: `configs/c0_research_pins.yaml` stays empty, and filling it is a research decision.
 
+## Upgrading the image (pod already on cas-aio)
+
+A newer image whose C0 sources, `fetch_models.sh`, e5 manifests and `embed.py` equal those of the image `apply` was made for needs no new `apply`: the model, tokenizer, manifest and config on the volume stay valid. `verify_after_switch.sh` accepts it only for a pair listed in its `C0_EQUIVALENT` (`<running revision> <apply's image revision>`), proven by `tests/c0_equivalence.sh` with `git diff`. Migrations move up on boot; `backup.sh` takes a `pg_dump` before them.
+
+Listed: `e63539f` (image `sha256:53aac3e9…`) after an apply for `7fefeb2`.
+
+1. In the running container: `healthcheck.sh` and `cas-storage status` without problems, then `backup.sh`, then `restore_drill.sh` with `RESULT FULL`. The switch wipes the container disk, so the new container restores Postgres and Qdrant from the volume: the drill shows that this restore works before relying on it.
+2. Edit Pod: only the container image changes, to the new digest. Environment, disk and ports stay as they are.
+3. Verify as in step 8 with the scripts of the commit that lists the pair, run from `/tmp`. `ready-marker` prints `INFO upgrade`.
+4. Rollback: Edit Pod back to the previous digest; Postgres restores from the volume again. `e63539f` adds no migration, so `7fefeb2` accepts the database. After an upgrade that adds one, the older image refuses the newer database (migrations only move up): rolling back then needs the `pg_dump` from `backups/`.
+
 ## Rollback
 
 Roll back when any of these happens:

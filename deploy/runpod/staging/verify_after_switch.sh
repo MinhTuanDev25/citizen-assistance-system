@@ -46,11 +46,27 @@ echo "== verify_after_switch $(date -u +%FT%TZ) image revision $(cat /opt/cas/RE
 
 # 0. the switch was made from a complete apply, and the files it prepared are unchanged
 mk() { grep -m1 "^$1=" "$P/READY_TO_SWITCH" | cut -d= -f2-; }
+# Image upgrades without a new apply: "<running revision> <apply's image revision>" pairs whose
+# C0 sources, fetch_models.sh, e5 manifests and embed.py are equal, so the files apply wrote
+# stay valid. Checked with git diff by tests/c0_equivalence.sh; add a pair only with it passing.
+C0_EQUIVALENT=(
+  "e63539fd03675bb3d963869b0ea58971e02fcd28 7fefeb25ccfc55f29a382dbe4aa316b8c87b0903"
+)
+c0_equivalent() {
+  local pair
+  for pair in "${C0_EQUIVALENT[@]}"; do [[ $pair == "$1 $2" ]] && return 0; done
+  return 1
+}
 if [[ -f $P/READY_TO_SWITCH ]]; then
   rp=""
   sim="$(mk simulated_hardware)"
   [[ $sim == no ]] || rp+="simulated_hardware=${sim:-<missing>}: only a marker from an apply on the real hardware (no) is accepted; "
-  [[ "$(mk image_revision)" == "$(cat /opt/cas/REVISION)" ]] || rp+="image_revision $(mk image_revision) != running $(cat /opt/cas/REVISION); "
+  running="$(cat /opt/cas/REVISION)"
+  if [[ "$(mk image_revision)" != "$running" ]]; then
+    if c0_equivalent "$running" "$(mk image_revision)"; then
+      info upgrade "running ${running:0:7}, apply made for $(mk image_revision | cut -c1-7); C0/e5 files equal (C0_EQUIVALENT)"
+    else rp+="image_revision $(mk image_revision) != running $running (no C0_EQUIVALENT pair); "; fi
+  fi
   [[ "$(mk manifest_sha256)" == "$(sha256sum "$W/manifests/c0_checkpoints.sha256" 2>/dev/null | cut -d' ' -f1)" ]] || rp+="manifest changed since apply; "
   [[ "$(mk config_sha256)" == "$(sha256sum "$W/config/c0_inference.yaml" 2>/dev/null | cut -d' ' -f1)" ]] || rp+="c0_inference.yaml changed since apply; "
   [[ "$(grep -m1 '^C0_INFERENCE_CONFIG=' /run/cas-env/speech.env | cut -d= -f2-)" == "$W/config/c0_inference.yaml" ]] || rp+="Speech does not use $W/config/c0_inference.yaml; "
