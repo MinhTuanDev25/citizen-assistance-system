@@ -20,7 +20,7 @@ const drafts = vi.hoisted(() => ({
 
 vi.mock('../../api/drafts.js', () => drafts)
 
-const catalog = vi.hoisted(() => ({ listAdminProcedures: vi.fn() }))
+const catalog = vi.hoisted(() => ({ listAdminProcedures: vi.fn(), listProcedureVersions: vi.fn() }))
 vi.mock('../../api/catalog.js', () => catalog)
 
 const baseDraft = {
@@ -94,6 +94,8 @@ describe('DraftReviewPage', () => {
     document.body.innerHTML = ''
     for (const fn of Object.values(drafts)) fn.mockReset()
     catalog.listAdminProcedures.mockReset()
+    catalog.listProcedureVersions.mockReset()
+    catalog.listProcedureVersions.mockResolvedValue({ items: [] })
     drafts.canApproveDraft.mockReturnValue(false)
     drafts.getDraft.mockResolvedValue(baseDraft)
   })
@@ -336,6 +338,32 @@ describe('DraftReviewPage', () => {
     })
   })
 
+  it('shows a refused Admin decision next to its button, not only at the top', async () => {
+    const refused = Object.assign(new Error('Bản nháp đã được phê duyệt nên không sửa được. Dùng "Tạo bản nháp để sửa".'), { code: 'REVIEW_INVALID', status: 422 })
+    drafts.decideWithoutSource.mockRejectedValue(refused)
+    const host = await renderPage()
+    const card = [...host.querySelectorAll('.dr-card')].find((c) => c.classList.contains('is-missing'))
+    const keep = () => [...card.querySelectorAll('button')].find((b) => b.textContent === 'Giữ theo quyết định của cán bộ')
+    const area = card.querySelector('textarea.dr-reason')
+    await act(async () => { keep().click() })
+    await flush()
+    expect(card.querySelector('[role="alert"]').textContent).toContain('Ghi lý do (ít nhất 10 ký tự)')
+    expect(area.getAttribute('aria-invalid')).toBe('true')
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
+      setter.call(area, 'Quy định riêng')
+      area.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(card.querySelector('.dr-reason-count').textContent).toBe('14/10 ký tự tối thiểu')
+    expect(card.querySelector('[role="alert"]')).toBeNull()
+    await act(async () => { keep().click() })
+    await flush()
+    expect(drafts.decideWithoutSource).toHaveBeenCalledTimes(1)
+    expect(card.querySelector('[role="alert"]').textContent).toContain('Bản nháp đã được phê duyệt nên không sửa được')
+    // Not repeated at the top of the page.
+    expect(host.querySelectorAll('[role="alert"]')).toHaveLength(1)
+  })
+
   it('shows a decided proposal as an Admin decision that counts as accepted', async () => {
     drafts.getDraft.mockResolvedValue({
       ...baseDraft,
@@ -413,6 +441,85 @@ describe('DraftReviewPage', () => {
       expected_active_version_id: 'old-v',
     })
     expect(host.textContent).toContain('Đã kích hoạt phiên bản 8.2.2')
+  })
+
+  it('fills the version the Admin created instead of adding the next one', async () => {
+    drafts.getDraft.mockResolvedValue({ ...baseDraft, status: 'APPROVED' })
+    catalog.listAdminProcedures.mockResolvedValue({ items: [{ id: 'proc-1', active_version_id: 'v101', active_version: '1.0.1' }] })
+    catalog.listProcedureVersions.mockResolvedValue({ items: [
+      { id: 'v100', version: '1.0.0', status: 'APPROVED', created_at: '2026-11-03T17:00:00Z' },
+      { id: 'v101', version: '1.0.1', status: 'ACTIVE', activated_at: '2026-11-04T04:12:00Z', created_at: '2026-11-04T04:12:00Z', source_draft_id: 'd0' },
+      { id: 'v102', version: '1.0.2', status: 'APPROVED', created_at: '2026-11-04T07:38:00Z' },
+    ] })
+    drafts.activateDraft.mockResolvedValue({ activated: true, version: { version: '1.0.2' }, draft: { ...baseDraft, status: 'PUBLISHED' } })
+    const host = await renderPage()
+    await act(async () => { button(host, 'Kích hoạt').click() })
+    await flush()
+    const select = host.querySelector('.dr-target-version select')
+    expect([...select.options].map((o) => o.textContent)).toEqual(['1.0.2 (đã tạo, chưa kích hoạt)', 'Tạo phiên bản mới'])
+    expect(select.value).toBe('v102')
+    await act(async () => { button(host, 'Xác nhận kích hoạt').click() })
+    await flush()
+    expect(drafts.activateDraft.mock.calls[0][1]).toEqual({
+      confirm: true,
+      expected_updated_at: baseDraft.updated_at,
+      expected_active_version_id: 'v101',
+      target_version_id: 'v102',
+    })
+    expect(host.textContent).toContain('Đã kích hoạt phiên bản 1.0.2')
+  })
+
+  it('keeps activating on its own while the source is indexed, without a reload', async () => {
+    vi.useFakeTimers()
+    try {
+      drafts.getDraft.mockResolvedValue({ ...baseDraft, status: 'APPROVED' })
+      catalog.listAdminProcedures.mockResolvedValue({ items: [{ id: 'proc-1', active_version_id: 'old-v', active_version: '1.0.0' }] })
+      const pending = { indexing_pending: true, blocked_reason: 'INDEXING_PENDING', version: { version: '1.0.2' }, draft: { ...baseDraft, status: 'APPROVED', updated_at: '2026-10-26T15:01:00Z' } }
+      drafts.activateDraft
+        .mockResolvedValueOnce(pending)
+        .mockResolvedValueOnce(pending)
+        .mockResolvedValueOnce({ activated: true, version: { version: '1.0.2' }, draft: { ...baseDraft, status: 'PUBLISHED' } })
+      const host = await renderPage()
+      await act(async () => { button(host, 'Kích hoạt').click() })
+      await flush()
+      await act(async () => { button(host, 'Xác nhận kích hoạt').click() })
+      await flush()
+      expect(host.textContent).toContain('Đã tạo phiên bản 1.0.2. Đang lập chỉ mục tài liệu nguồn')
+      expect(button(host, 'Đang kích hoạt').disabled).toBe(true)
+      const { ACTIVATE_POLL_MS } = await import('./DraftReviewPage.jsx')
+      await act(async () => { vi.advanceTimersByTime(ACTIVATE_POLL_MS) })
+      await flush()
+      expect(drafts.activateDraft).toHaveBeenCalledTimes(2)
+      await act(async () => { vi.advanceTimersByTime(ACTIVATE_POLL_MS) })
+      await flush()
+      expect(drafts.activateDraft).toHaveBeenCalledTimes(3)
+      // Every retry targets the same ACTIVE version and the latest draft revision.
+      expect(drafts.activateDraft.mock.calls[2][1]).toEqual({
+        confirm: true,
+        expected_updated_at: '2026-10-26T15:01:00Z',
+        expected_active_version_id: 'old-v',
+      })
+      expect(host.textContent).toContain('Đã kích hoạt phiên bản 1.0.2')
+      await act(async () => { vi.advanceTimersByTime(ACTIVATE_POLL_MS * 3) })
+      await flush()
+      expect(drafts.activateDraft).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('explains a blocked activation in Vietnamese instead of a reason code', async () => {
+    drafts.getDraft.mockResolvedValue({ ...baseDraft, status: 'APPROVED' })
+    catalog.listAdminProcedures.mockResolvedValue({ items: [{ id: 'proc-1', active_version_id: null }] })
+    drafts.activateDraft.mockResolvedValue({ activated: false, blocked_reason: 'INDEXING_FAILED', reasons: ['DOCUMENT_INDEX_FAILED'], draft: { ...baseDraft, status: 'APPROVED' } })
+    const host = await renderPage()
+    expect(host.querySelector('.dr-actionbar p').textContent).toContain('Đã phê duyệt — bấm "Kích hoạt / Tiếp tục"')
+    await act(async () => { button(host, 'Kích hoạt').click() })
+    await flush()
+    await act(async () => { button(host, 'Xác nhận kích hoạt').click() })
+    await flush()
+    expect(host.textContent).toContain('Chưa kích hoạt: Không lập được chỉ mục tài liệu nguồn.')
+    expect(host.textContent).not.toContain('INDEXING_FAILED')
   })
 
   it('shows coverage, source conflicts and provenance of a merged job draft', async () => {
@@ -498,7 +605,7 @@ describe('DraftReviewPage', () => {
     const host = await renderPage()
     const [inactive, reopened] = host.querySelectorAll('.dr-conflict')
     expect(inactive.textContent).toContain('Chưa áp dụng')
-    expect(inactive.textContent).toContain('hiện không có trong citations')
+    expect(inactive.textContent).toContain('hiện không có trong danh sách trích dẫn')
     expect(inactive.textContent).toContain('đợt 1 · cũng có ở đợt 3')
     expect(reopened.textContent).toContain('Chưa chọn')
     expect(reopened.textContent).toContain('Giá trị đã bị sửa sau lần chọn trước')

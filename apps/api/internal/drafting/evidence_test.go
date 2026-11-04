@@ -278,3 +278,53 @@ func TestInvalidPage(t *testing.T) {
 		t.Fatal("expected invalid page")
 	}
 }
+
+func TestAdminDecisionSupersedesBadQuote(t *testing.T) {
+	ex := testExcerpt()
+	quote := "giấy chứng sinh"
+	ids := []string{
+		"slot:noi_sinh", "slot:co_giay_chung_sinh", "slot:nguoi_di_dang_ky",
+		"required:noi_sinh", "required:co_giay_chung_sinh",
+		"conditional:0", "checklist:0",
+		"guidance:summary", "guidance:where_to_submit",
+	}
+	items := make([]EvidenceItem, 0, len(ids)+1)
+	for _, id := range ids {
+		items = append(items, validItem(id, quote))
+	}
+	// The model cited a sentence the excerpt does not contain.
+	items = append(items, validItem("checklist:1", "Giấy tờ tùy thân của người đi đăng ký"))
+	snap := SourceSnapshot{Excerpts: []Excerpt{ex}}
+
+	cov := EvaluateCoverage(testDefinition(nil), items, []Excerpt{ex}, snap)
+	if cov.QuotesVerified || cov.Invalid != 1 {
+		t.Fatalf("an unverified quote must block without a decision: invalid=%d", cov.Invalid)
+	}
+	key := ""
+	for _, p := range cov.Proposals {
+		if p.ID == "checklist:1" {
+			key = proposalContentKey(p)
+		}
+	}
+
+	cov = EvaluateCoverage(testDefinition(nil), items, []Excerpt{ex}, snap, map[string]bool{key: true})
+	if !cov.GroundingVerified || cov.Invalid != 0 {
+		t.Fatalf("an Admin decision must supersede the bad quote: invalid=%d issues=%v", cov.Invalid, cov.Issues)
+	}
+	codes := map[string]string{}
+	for _, is := range cov.Issues {
+		if is.ProposalID == "checklist:1" {
+			codes[is.Code] = is.Severity
+		}
+	}
+	if codes["QUOTE_SUPERSEDED_BY_ADMIN_DECISION"] != "warning" || codes["ADMIN_DECISION_NO_SOURCE"] != "warning" || codes["QUOTATION_NOT_FOUND"] != "" {
+		t.Fatalf("the bad quote must stay visible as a warning: %v", codes)
+	}
+
+	// A proposal with its own valid citation keeps the error for a bad extra one.
+	items = append(items, validItem("checklist:0", "Một câu không có trong nguồn"))
+	cov = EvaluateCoverage(testDefinition(nil), items, []Excerpt{ex}, snap, map[string]bool{key: true})
+	if cov.QuotesVerified {
+		t.Fatalf("a bad quote beside a valid one must still block")
+	}
+}

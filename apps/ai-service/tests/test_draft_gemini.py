@@ -338,3 +338,41 @@ def test_concurrent_draft_usage_is_request_scoped():
     assert None not in usages
     assert all(item.usage.prompt_token_count is not None for item in results.values())
     assert not hasattr(provider, "last_usage")
+
+
+def test_draft_blocked_answer_names_finish_reason():
+    def handler(_r):
+        return httpx.Response(200, json={
+            "candidates": [{"finishReason": "RECITATION"}],
+            "usageMetadata": {"promptTokenCount": 9000, "totalTokenCount": 9000},
+        })
+
+    with pytest.raises(ProviderError) as exc:
+        _provider(handler).draft_definition(_request())
+    assert exc.value.reason == REASON_MALFORMED
+    assert "finishReason=RECITATION" in str(exc.value)
+    assert "promptTokens=9000" in str(exc.value)
+
+
+def test_draft_truncated_answer_reports_tokens():
+    def handler(_r):
+        return httpx.Response(200, json={
+            "candidates": [{"finishReason": "MAX_TOKENS", "content": {"parts": [{"text": "{\"a\""}]}}],
+            "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 8192, "totalTokenCount": 8197},
+        })
+
+    with pytest.raises(ProviderError) as exc:
+        _provider(handler).draft_definition(_request())
+    assert "finishReason=MAX_TOKENS" in str(exc.value)
+    assert "candidateTokens=8192" in str(exc.value)
+    assert "maxOutputTokens=8192" in str(exc.value)
+
+
+def test_draft_bad_json_reports_finish_reason():
+    def handler(_r):
+        return httpx.Response(200, json={"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": "{oops"}]}}]})
+
+    with pytest.raises(ProviderError) as exc:
+        _provider(handler).draft_definition(_request())
+    assert "malformed draft content" in str(exc.value)
+    assert "finishReason=STOP" in str(exc.value)

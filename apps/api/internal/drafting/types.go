@@ -86,6 +86,9 @@ type ActivateDraftRequest struct {
 	ExpectedActiveVersionID *uuid.UUID `json:"expected_active_version_id"`
 	Version                 string     `json:"version"`
 	PageRange               string     `json:"page_range"`
+	// TargetVersionID: an Admin-created, never activated version to fill
+	// with this draft. Empty: a new version with the next label.
+	TargetVersionID *uuid.UUID `json:"target_version_id,omitempty"`
 }
 
 type DraftView struct {

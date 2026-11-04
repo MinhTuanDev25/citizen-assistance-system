@@ -76,7 +76,7 @@ func (s *Service) CreateVersion(ctx context.Context, actor, requestID, procedure
 	if !in.Confirm {
 		return CreateVersionResult{}, fmt.Errorf("%w: confirm is required", ErrValidation)
 	}
-	hash := hashPayload(procedureID.String(), strings.TrimSpace(in.Version), string(in.Definition), uuidString(in.CopyFromVersionID), uuidString(in.SourceDraftID))
+	hash := hashPayload(procedureID.String(), strings.TrimSpace(in.Version), string(in.Definition), uuidString(in.CopyFromVersionID), uuidString(in.SourceDraftID), uuidString(in.TargetVersionID))
 	tx, err := s.Store.begin(ctx)
 	if err != nil {
 		return CreateVersionResult{}, err
@@ -97,6 +97,16 @@ func (s *Service) CreateVersion(ctx context.Context, actor, requestID, procedure
 	_, code, name, domain, activeID, err := lockProcedure(ctx, tx, s.XAID, procedureID)
 	if err != nil {
 		return CreateVersionResult{}, err
+	}
+	if in.TargetVersionID != nil {
+		out, err := s.fillFromDraft(ctx, tx, actor, requestID, procedureID, code, name, domain, hash, in)
+		if err != nil {
+			return CreateVersionResult{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return CreateVersionResult{}, err
+		}
+		return out, nil
 	}
 	sourceID := in.CopyFromVersionID
 	if sourceID == nil {
@@ -192,6 +202,63 @@ func (s *Service) CreateVersion(ctx context.Context, actor, requestID, procedure
 		return CreateVersionResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
+		return CreateVersionResult{}, err
+	}
+	return out, nil
+}
+
+// fillFromDraft puts an approved draft's definition into a version the Admin
+// created for it (Thủ tục → Tạo phiên bản, then link and index the document),
+// so activating the draft uses that label instead of adding the next one. The
+// target must be APPROVED, never activated, and not filled from another draft.
+func (s *Service) fillFromDraft(ctx context.Context, tx pgx.Tx, actor, requestID, procedureID uuid.UUID, code, name, domain, hash string, in CreateVersionRequest) (CreateVersionResult, error) {
+	if in.SourceDraftID == nil || len(strings.TrimSpace(string(in.Definition))) == 0 {
+		return CreateVersionResult{}, fmt.Errorf("%w: target_version_id needs source_draft_id and definition", ErrValidation)
+	}
+	target, err := loadVersion(ctx, tx, s.XAID, procedureID, *in.TargetVersionID)
+	if err != nil {
+		return CreateVersionResult{}, err
+	}
+	out := CreateVersionResult{ID: target.ID, ProcedureID: procedureID, Version: target.Version, Status: target.Status}
+	if target.SourceDraftID != nil && *target.SourceDraftID == *in.SourceDraftID {
+		out.Replayed = true
+		return out, nil
+	}
+	if label := strings.TrimSpace(in.Version); label != "" && label != target.Version {
+		return CreateVersionResult{}, fmt.Errorf("%w: version does not match the target version", ErrValidation)
+	}
+	if target.Status != "APPROVED" || target.ActivatedAt != nil || target.SourceDraftID != nil {
+		return CreateVersionResult{}, fmt.Errorf("%w: target version is not an unused Admin-created version", ErrValidation)
+	}
+	var other uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT id FROM procedure_versions WHERE source_draft_id = $1`, *in.SourceDraftID).Scan(&other)
+	if err == nil {
+		return CreateVersionResult{}, fmt.Errorf("%w: the draft already has a version", ErrValidation)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return CreateVersionResult{}, err
+	}
+	body, err := wrapDefinition(in.Definition, code, name, domain, s.XAID, target.Version, "APPROVED")
+	if err != nil {
+		return CreateVersionResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE procedure_versions
+		SET definition = $2::jsonb, source_draft_id = $3, approved_by = $4, approved_at = now()
+		WHERE id = $1`, target.ID, body, *in.SourceDraftID, actor); err != nil {
+		return CreateVersionResult{}, err
+	}
+	if err := writeAudit(ctx, tx, requestID, actor, AuditFillFromDraft, "procedure_version", target.ID.String(), map[string]any{
+		"xa_id": s.XAID, "procedure_id": procedureID.String(), "version": target.Version,
+		"source_draft_id": in.SourceDraftID.String(),
+	}); err != nil {
+		return CreateVersionResult{}, err
+	}
+	rawOut, err := json.Marshal(out)
+	if err != nil {
+		return CreateVersionResult{}, err
+	}
+	if err := storeIdempotency(ctx, tx, s.XAID, requestID, ActionCreate, hash, 201, rawOut); err != nil {
 		return CreateVersionResult{}, err
 	}
 	return out, nil

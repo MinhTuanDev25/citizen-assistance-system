@@ -115,7 +115,7 @@ class GeminiProvider:
         """
         if not self.draft_model:
             raise ProviderError(REASON_CONFIG_ERROR, "LLM_MODEL_DEFINITION is not configured")
-        max_tokens = getattr(self._settings, "draft_max_output_tokens", 8192) or 8192
+        max_tokens = getattr(self._settings, "draft_max_output_tokens", 32768) or 32768
         timeout_s = getattr(self._settings, "draft_timeout_s", 45.0) or 45.0
         body = {
             "contents": [{"role": "user", "parts": [{"text": build_draft_prompt(request)}]}],
@@ -156,17 +156,31 @@ class GeminiProvider:
             )
 
         usage_raw = parse_usage_metadata({})
+        # finishReason and token counts go into every malformed error: without
+        # them a blocked answer (RECITATION/SAFETY), a truncated one and bad
+        # JSON all look the same in the logs.
+        finish = ""
         try:
             payload = resp.json()
             usage_raw = parse_usage_metadata(payload)
+            block = str((payload.get("promptFeedback") or {}).get("blockReason") or "")
+            if block:
+                raise ProviderError(REASON_MALFORMED, f"gemini draft prompt blocked: blockReason={block}")
             candidate = payload["candidates"][0]
             finish = str(candidate.get("finishReason") or "")
             if finish in {"MAX_TOKENS", "max_tokens"}:
                 raise ProviderError(
                     REASON_MALFORMED,
-                    "gemini draft truncated: finishReason=MAX_TOKENS",
+                    "gemini draft truncated: finishReason=MAX_TOKENS"
+                    f" ({_token_note(usage_raw)}, maxOutputTokens={max_tokens})",
                 )
-            content = candidate["content"]["parts"][0]["text"]
+            parts = (candidate.get("content") or {}).get("parts") or []
+            if not parts:
+                raise ProviderError(
+                    REASON_MALFORMED,
+                    f"gemini draft has no content: finishReason={finish or 'none'} ({_token_note(usage_raw)})",
+                )
+            content = parts[0]["text"]
             if len(content) > 200_000:
                 raise ProviderError(REASON_MALFORMED, "gemini draft response exceeded size limit")
             parsed = json.loads(content)
@@ -174,7 +188,9 @@ class GeminiProvider:
             raise
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ProviderError(
-                REASON_MALFORMED, f"gemini returned malformed draft content: {exc}"
+                REASON_MALFORMED,
+                f"gemini returned malformed draft content: {exc}"
+                f" (finishReason={finish or 'none'}, {_token_note(usage_raw)})",
             ) from exc
 
         if not isinstance(parsed, dict):
@@ -214,3 +230,11 @@ class GeminiProvider:
             time.sleep(max(0.0, TRANSIENT_RETRY_SLEEP_S))
             resp = self._client.post(path, **kwargs)
         return resp
+
+
+def _token_note(usage: dict) -> str:
+    return (
+        f"promptTokens={usage.get('prompt_token_count')},"
+        f" candidateTokens={usage.get('candidates_token_count')},"
+        f" totalTokens={usage.get('total_token_count')}"
+    )

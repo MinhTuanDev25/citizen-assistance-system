@@ -96,6 +96,9 @@ func Decide(in TurnInput) TurnOutput {
 		out.AskNow = append([]string{}, missingAfter...)
 		out.Questions = questionsFor(in.Definition, missingAfter)
 		out.ReplyText = askReply(in.Definition.Name, out.Questions)
+		if note := hedgeNote(in.Definition, missingAfter, in.Message, len(extracted) > 0 || len(updated) > 0); note != "" {
+			out.ReplyText = note + "\n\n" + out.ReplyText
+		}
 		out.ReplyText = prefaceReply(updated, rejected, out.ReplyText)
 		out.Citations = nil
 		return out
@@ -314,4 +317,40 @@ func OutOfScopeReply(procedureNames []string) string {
 		return text
 	}
 	return text + "\n\nBạn có thể hỏi về: " + strings.Join(procedureNames, ", ") + "."
+}
+
+// hedgeNote says why a hedged answer ("chưa chắc nộp trực tiếp") was not taken,
+// instead of silently asking the same questions again. Hedged answers stay
+// unrecorded: the citizen confirms the option with a plain answer. A soft
+// hedge on a choice ("chắc là nộp trực tiếp") is taken, so it gets no note.
+func hedgeNote(def Definition, missing []string, message string, filledNow bool) string {
+	var labels []string
+	hedged := false
+	for _, clause := range splitClauses(message) {
+		folded := Fold(clause)
+		if !isUncertainFolded(folded) {
+			continue
+		}
+		hedged = true
+		for _, key := range missing {
+			slot := def.Slots[key]
+			if slot.Type != "enum" || !hedgedFor(slot, folded) {
+				continue
+			}
+			for i := range slot.EnumValues {
+				if enumOptionMatches(slot, i, folded) && !containsStr(labels, slot.OptionLabel(i)) {
+					labels = append(labels, slot.OptionLabel(i))
+				}
+			}
+		}
+	}
+	switch {
+	case len(labels) == 1:
+		return fmt.Sprintf("Mình chưa ghi «%s» vì câu trả lời còn chưa chắc chắn. Nếu anh/chị đã chọn, hãy trả lời «%s» để mình ghi nhận.", labels[0], labels[0])
+	case len(labels) > 1:
+		return fmt.Sprintf("Mình chưa ghi «%s» vì câu trả lời còn chưa chắc chắn. Anh/chị trả lời rõ lựa chọn để mình ghi nhận.", strings.Join(labels, "», «"))
+	case hedged && !filledNow:
+		return "Mình chưa ghi nhận câu trả lời vì còn chưa chắc chắn. Khi đã rõ, anh/chị trả lời ngắn gọn theo các câu hỏi dưới đây."
+	}
+	return ""
 }

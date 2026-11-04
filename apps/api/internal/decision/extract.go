@@ -179,11 +179,122 @@ func LoneChoiceAnswer(def Definition, allowed []string, message string) (string,
 		return "", nil, false
 	}
 	slot := def.Slots[only]
-	i, ok := choiceIndex(Fold(message), len(slot.EnumValues))
-	if !ok {
+	folded := Fold(message)
+	if i, ok := choiceIndex(folded, len(slot.EnumValues)); ok {
+		return only, slot.EnumValues[i], true
+	}
+	if len(splitClauses(message)) != 1 || hedgedFor(slot, folded) {
 		return "", nil, false
 	}
-	return only, slot.EnumValues[i], true
+	if asksChoice(slot) {
+		folded = withoutSoftHedges(folded)
+	}
+	if i, ok := shortOptionAnswer(slot, folded); ok {
+		return only, slot.EnumValues[i], true
+	}
+	return "", nil, false
+}
+
+// answerFiller: pronouns and particles around a short answer ("con tôi đẻ
+// thường", "dạ có ạ"). Not negations or "có": they carry the polarity.
+var answerFiller = map[string]bool{
+	"con": true, "toi": true, "em": true, "be": true, "chau": true, "minh": true,
+	"tui": true, "nha": true, "nhe": true, "a": true, "da": true, "oi": true,
+	"thi": true, "la": true, "ma": true, "vang": true, "u": true,
+	"luon": true, "se": true, "muon": true,
+}
+
+var answerNegation = map[string]bool{"khong": true, "chua": true, "ko": true}
+
+// shortOptionAnswer reads a short answer to the only open choice question:
+//   - every word belongs to exactly one option with the same polarity
+//     ("có", "có giấy" → "Có Giấy chứng sinh", not "Không có Giấy chứng sinh…"), or
+//   - it has a word only one option uses and none of another's
+//     ("đẻ thường" → "Trẻ sinh thông thường").
+//
+// Hedged answers never reach here.
+func shortOptionAnswer(slot SlotDef, folded string) (int, bool) {
+	var words []string
+	negated := false
+	for _, w := range strings.Fields(folded) {
+		if answerFiller[w] {
+			continue
+		}
+		if answerNegation[w] {
+			negated = true
+		}
+		words = append(words, w)
+	}
+	if len(words) == 0 || len(words) > 6 {
+		return 0, false
+	}
+	n := len(slot.EnumValues)
+	own := make([]map[string]bool, n)
+	neg := make([]bool, n)
+	for i, v := range slot.EnumValues {
+		own[i] = map[string]bool{}
+		text := strings.ReplaceAll(v, "_", " ")
+		if i < len(slot.EnumLabels) {
+			text += " " + slot.EnumLabels[i]
+		}
+		for _, w := range strings.Fields(Fold(text)) {
+			own[i][w] = true
+		}
+		if i < len(slot.EnumLabels) {
+			for _, w := range strings.Fields(Fold(slot.EnumLabels[i])) {
+				if answerNegation[w] {
+					neg[i] = true
+				}
+			}
+		}
+	}
+	match := -1
+	for i := range own {
+		if neg[i] != negated {
+			continue
+		}
+		all := true
+		for _, w := range words {
+			if !own[i][w] {
+				all = false
+				break
+			}
+		}
+		if all {
+			if match >= 0 {
+				match = -2
+				break
+			}
+			match = i
+		}
+	}
+	if match >= 0 {
+		return match, true
+	}
+	if negated {
+		return 0, false
+	}
+	// A word that only one option uses names it, when no word names another.
+	hit := -1
+	for _, w := range words {
+		users := []int{}
+		for i := range own {
+			if own[i][w] {
+				users = append(users, i)
+			}
+		}
+		if len(users) != 1 {
+			continue
+		}
+		if hit >= 0 && hit != users[0] {
+			return 0, false
+		}
+		hit = users[0]
+	}
+	if hit < 0 || neg[hit] {
+		return 0, false
+	}
+	return hit, true
 }
 
 func LoneStringAnswer(def Definition, allowed []string, message string) (string, any, bool) {
@@ -287,15 +398,12 @@ func matchClause(def Definition, allowed map[string]struct{}, clause string, all
 }
 
 func matchEnumClause(def Definition, allowed map[string]struct{}, folded string) (string, any, bool) {
-	if isUncertainFolded(folded) {
-		return "", nil, false
-	}
 	var hitKey string
 	var hitValue string
 	hits := 0
 	for key := range allowed {
 		slot := def.Slots[key]
-		if slot.Type != "enum" {
+		if slot.Type != "enum" || hedgedFor(slot, folded) {
 			continue
 		}
 		for i, raw := range slot.EnumValues {
@@ -422,8 +530,8 @@ func keywordScore(question, foldedClause string) int {
 	return score
 }
 
-func isUncertainFolded(folded string) bool {
-	for _, p := range []string{
+var (
+	uncertainPhrases = []string{
 		"khong xac dinh duoc",
 		"khong biet",
 		"khong ro",
@@ -438,12 +546,59 @@ func isUncertainFolded(folded string) bool {
 		"co the se",
 		"co the",
 		"khong muon",
-	} {
+	}
+	// Soften a choice without leaving it open ("chắc là tôi muốn trực tiếp").
+	softHedges = map[string]bool{"hinh nhu": true, "co le": true, "chac la": true, "co the se": true, "co the": true}
+	// A question with these words asks what the citizen wants or chooses.
+	choiceQuestionPhrases = []string{"muon", "lua chon", "chon", "du dinh", "du kien"}
+)
+
+func isUncertainFolded(folded string) bool {
+	for _, p := range uncertainPhrases {
 		if containsPhrase(folded, p) {
 			return true
 		}
 	}
 	return false
+}
+
+// isUndecidedFolded: uncertain even for a choice ("không biết", "chưa chắc",
+// "không muốn"), not just softened.
+func isUndecidedFolded(folded string) bool {
+	for _, p := range uncertainPhrases {
+		if !softHedges[p] && containsPhrase(folded, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func asksChoice(slot SlotDef) bool {
+	folded := Fold(slot.Question)
+	for _, p := range choiceQuestionPhrases {
+		if containsPhrase(folded, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// hedgedFor: the clause is too unsure to answer slot. A choice belongs to the
+// citizen, so a soft hedge still picks it; a fact ("chắc là có giấy") does not.
+func hedgedFor(slot SlotDef, folded string) bool {
+	if slot.Type == "enum" && asksChoice(slot) {
+		return isUndecidedFolded(folded)
+	}
+	return isUncertainFolded(folded)
+}
+
+// withoutSoftHedges drops softening words before matching a short answer.
+func withoutSoftHedges(folded string) string {
+	padded := " " + folded + " "
+	for p := range softHedges {
+		padded = strings.ReplaceAll(padded, " "+p+" ", " ")
+	}
+	return strings.TrimSpace(padded)
 }
 
 func polarity(folded string) (bool, bool) {

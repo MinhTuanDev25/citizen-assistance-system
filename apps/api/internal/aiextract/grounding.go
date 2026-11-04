@@ -273,6 +273,7 @@ var questionFiller = map[string]bool{
 	"nao": true, "gi": true, "toi": true, "minh": true, "can": true, "muon": true, "hoac": true,
 	"va": true, "voi": true, "thi": true, "se": true, "dang": true, "roi": true, "nguoi": true,
 	"thuc": true, "hien": true, "thu": true, "tuc": true, "yeu": true, "cau": true,
+	"viec": true, "theo": true, "sau": true, "day": true,
 }
 
 var answerNegation = map[string]bool{"khong": true, "chua": true, "ko": true, "k": true, "chang": true}
@@ -337,16 +338,24 @@ func groundEnum(message, key, value string, spec SlotSpec, foldedEv string) (boo
 	if ok {
 		phrases = table[value]
 	} else {
-		phrases = enumPhrases(spec, value, foldedEv)
+		phrases = enumPhrases(spec, value, foldedEv, message)
 	}
 	if len(phrases) == 0 {
 		return false, dropNoEnumCue
 	}
 	positive, negatedOnly := false, false
 	prevTouched := false
+	asksChoice := questionAsksChoice(spec.Question)
 	for _, clause := range splitClauses(message) {
 		folded := foldMessage(clause)
 		flags := classifyClause(folded)
+		if asksChoice && !hasAnyPhrase(folded, negatedPreferencePhrases) {
+			// "Bạn muốn nộp theo hình thức nào?" — "tôi muốn nộp trực tuyến" is the answer.
+			flags.preference = false
+			// The choice is the citizen's own: "chắc là tôi muốn trực tiếp"
+			// leans to an option. Only "không biết", "chưa chắc" … mean undecided.
+			flags.uncertain = hasAnyPhrase(folded, undecidedPhrases)
+		}
 		hit, negated := longestCueHit(folded, phrases)
 		anyValue := clauseTouchesEnumKey(folded, key)
 		if flags.uncertain && !anyValue && prevTouched {
@@ -358,7 +367,7 @@ func groundEnum(message, key, value string, spec SlotSpec, foldedEv string) (boo
 		if (hit || anyValue) && flags.preference {
 			return false, dropPreference
 		}
-		if flags.alternative && enumDisjunction(folded, key) {
+		if flags.alternative && (enumDisjunction(folded, key) || (!ok && draftedEnumDisjunction(folded, spec))) {
 			return false, dropAlternative
 		}
 		prevTouched = anyValue
@@ -425,13 +434,44 @@ var (
 		"co the se",
 		"co the",
 	}
+	// Hedges that soften a choice without leaving it open. A subset of
+	// uncertaintyPhrases; facts ("chắc là có giấy") stay uncertain.
+	softHedgePhrases  = []string{"hinh nhu", "co le", "chac la", "co the se", "co the"}
+	undecidedPhrases  = withoutAny(uncertaintyPhrases, softHedgePhrases)
 	preferencePhrases = []string{
 		"khong muon",
 		"du dinh",
 		"muon",
 	}
 	alternativePhrases = []string{"hay", "hoac"}
+	// A refused wish is never an answer, whatever the question asks.
+	negatedPreferencePhrases = []string{"khong muon", "chua muon", "chang muon"}
+	// A question with these words asks what the citizen wants or chooses.
+	choiceQuestionPhrases = []string{"muon", "lua chon", "chon", "du dinh", "du kien"}
 )
+
+func withoutAny(list, drop []string) []string {
+	var out []string
+	for _, p := range list {
+		if !slices.Contains(drop, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// withoutPhrases removes whole-word occurrences of phrases from a folded span.
+func withoutPhrases(folded string, phrases []string) string {
+	padded := " " + folded + " "
+	for _, p := range phrases {
+		padded = strings.ReplaceAll(padded, " "+p+" ", " ")
+	}
+	return strings.TrimSpace(padded)
+}
+
+func questionAsksChoice(question string) bool {
+	return hasAnyPhrase(foldMessage(question), choiceQuestionPhrases)
+}
 
 type clauseFlags struct {
 	uncertain   bool
@@ -488,6 +528,22 @@ func enumDisjunction(folded, key string) bool {
 	return hits >= 2
 }
 
+// draftedEnumDisjunction: "trực tuyến hay bưu chính" names two choices of an
+// enum without a cue table (by code or label), so neither is the answer.
+func draftedEnumDisjunction(folded string, spec SlotSpec) bool {
+	hits := 0
+	for i, v := range spec.EnumValues {
+		named := containsFoldedPhrase(folded, foldMessage(strings.ReplaceAll(v, "_", " ")))
+		if !named && i < len(spec.EnumLabels) {
+			named = containsFoldedPhrase(folded, foldMessage(spec.EnumLabels[i]))
+		}
+		if named {
+			hits++
+		}
+	}
+	return hits >= 2
+}
+
 // enumPhrases: the cues of an enum value for a slot without a hand-written
 // cue table (Admin/AI-drafted procedures): its code ("tre sinh thuong"), its
 // label ("tre sinh binh thuong"), and the model's evidence span when that span
@@ -495,7 +551,7 @@ func enumDisjunction(folded, key string) bool {
 // tre_sinh_thuong, and at least one of them to no other choice). The span is
 // verbatim in the message (checked before), so this never accepts invented
 // text; negation and hedging are still checked clause by clause.
-func enumPhrases(spec SlotSpec, value, foldedEv string) []string {
+func enumPhrases(spec SlotSpec, value, foldedEv, message string) []string {
 	idx := -1
 	for i, v := range spec.EnumValues {
 		if v == value {
@@ -535,8 +591,16 @@ func enumPhrases(spec SlotSpec, value, foldedEv string) []string {
 			}
 		}
 	}
-	ev := strings.Fields(foldedEv)
+	span := foldedEv // verbatim in the message; the cue to look for
+	if questionAsksChoice(spec.Question) {
+		foldedEv = withoutPhrases(foldedEv, softHedgePhrases)
+	}
+	ev := withoutSpanFiller(strings.Fields(foldedEv))
 	if len(ev) == 0 {
+		return phrases
+	}
+	if isWholeClause(message, ev) && onlyOptionWithPolarity(spec, idx, ev, words) {
+		add(span)
 		return phrases
 	}
 	inOwn, distinctive := 0, false
@@ -552,9 +616,86 @@ func enumPhrases(spec SlotSpec, value, foldedEv string) []string {
 		}
 	}
 	if distinctive && inOwn*2 >= len(ev) {
-		add(foldedEv)
+		add(span)
 	}
 	return phrases
+}
+
+// spanFiller: pronouns and particles around an answer ("con tôi đẻ thường",
+// "dạ có ạ"). Never negations or "có": those carry the answer's polarity.
+var spanFiller = map[string]bool{
+	"con": true, "toi": true, "em": true, "be": true, "chau": true, "minh": true,
+	"tui": true, "nha": true, "nhe": true, "a": true, "da": true, "oi": true,
+	"thi": true, "la": true, "ma": true, "vang": true, "u": true,
+	"luon": true, "se": true, "muon": true,
+}
+
+func withoutSpanFiller(words []string) []string {
+	out := words[:0:0]
+	for _, w := range words {
+		if !spanFiller[w] {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// isWholeClause: the span is a whole answer clause ("có giấy"), not a word
+// taken out of another answer ("có" in "có uỷ quyền").
+func isWholeClause(message string, ev []string) bool {
+	want := strings.Join(ev, " ")
+	for _, clause := range splitClauses(message) {
+		if strings.Join(withoutSpanFiller(strings.Fields(foldMessage(clause))), " ") == want {
+			return true
+		}
+	}
+	return false
+}
+
+var optionNegation = map[string]bool{"khong": true, "chua": true}
+
+// onlyOptionWithPolarity: a short answer such as "có" or "có giấy" to
+// "Có Giấy chứng sinh / Không có Giấy chứng sinh, … / Không có …" names the
+// one option whose words contain the whole answer and whose label has the
+// same polarity (a negation word or none). Two such options: ambiguous.
+func onlyOptionWithPolarity(spec SlotSpec, idx int, ev []string, words func(int) map[string]bool) bool {
+	negatedSpan := false
+	for _, w := range ev {
+		if optionNegation[w] {
+			negatedSpan = true
+		}
+	}
+	match := -1
+	for i := range spec.EnumValues {
+		label := ""
+		if i < len(spec.EnumLabels) {
+			label = spec.EnumLabels[i]
+		}
+		negatedLabel := false
+		for _, w := range strings.Fields(foldMessage(label)) {
+			if optionNegation[w] {
+				negatedLabel = true
+			}
+		}
+		if negatedLabel != negatedSpan {
+			continue
+		}
+		own, all := words(i), true
+		for _, w := range ev {
+			if !own[w] {
+				all = false
+				break
+			}
+		}
+		if !all {
+			continue
+		}
+		if match >= 0 {
+			return false
+		}
+		match = i
+	}
+	return match == idx
 }
 
 func splitClauses(message string) []string {

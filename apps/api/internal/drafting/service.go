@@ -156,6 +156,11 @@ func (s *Service) Validate(ctx context.Context, draftID uuid.UUID) (DraftView, e
 		return DraftView{}, err
 	}
 	revalidate(&view, snap, row.ProcedureCode, view.OriginalProcedureCode)
+	// Re-checking does not withdraw an Admin approval that is already recorded:
+	// an APPROVED/PUBLISHED draft cannot be edited, so its approval still holds.
+	if view.ApprovedBy != nil && (row.Status == repository.DraftStatusApproved || row.Status == repository.DraftStatusPublished) {
+		view.Validation.SemanticApproved = true
+	}
 	return view, nil
 }
 

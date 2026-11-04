@@ -13,6 +13,7 @@ const (
 	ActionCreateProcedure = "CREATE_PROCEDURE"
 	AuditAction           = "PROCEDURE_VERSION_ACTIVATED"
 	AuditCreate           = "PROCEDURE_VERSION_CREATED"
+	AuditFillFromDraft    = "PROCEDURE_VERSION_FILLED_FROM_DRAFT"
 	AuditCreateProcedure  = "PROCEDURE_CREATED"
 
 	// StatusSource marks the version a new procedure gets for linking and
@@ -47,6 +48,7 @@ type VersionSummary struct {
 	ApprovedAt   *time.Time      `json:"approved_at,omitempty"`
 	ActivatedAt  *time.Time      `json:"activated_at,omitempty"`
 	ActivatedBy  *uuid.UUID      `json:"activated_by,omitempty"`
+	SourceDraft  *uuid.UUID      `json:"source_draft_id,omitempty"`
 	Definition   json.RawMessage `json:"definition,omitempty"`
 	Documents    []DocumentLink  `json:"documents"`
 	Eligibility  Eligibility     `json:"eligibility"`
@@ -91,11 +93,14 @@ type ActivateResult struct {
 }
 
 type CreateVersionRequest struct {
-	Version           string          `json:"version"`
-	CopyFromVersionID *uuid.UUID      `json:"copy_from_version_id"`
-	SourceDraftID     *uuid.UUID      `json:"source_draft_id,omitempty"`
-	Definition        json.RawMessage `json:"definition"`
-	Confirm           bool            `json:"confirm"`
+	Version           string     `json:"version"`
+	CopyFromVersionID *uuid.UUID `json:"copy_from_version_id"`
+	SourceDraftID     *uuid.UUID `json:"source_draft_id,omitempty"`
+	// TargetVersionID (with SourceDraftID): fill this Admin-created version,
+	// never activated and not yet filled from a draft, instead of adding one.
+	TargetVersionID *uuid.UUID      `json:"target_version_id,omitempty"`
+	Definition      json.RawMessage `json:"definition"`
+	Confirm         bool            `json:"confirm"`
 }
 
 type CreateProcedureRequest struct {
@@ -144,6 +149,7 @@ type versionRow struct {
 	ApprovedAt    *time.Time
 	ActivatedAt   *time.Time
 	ActivatedBy   *uuid.UUID
+	SourceDraftID *uuid.UUID
 	XaID          string
 	DomainID      string
 	ProcedureCode string

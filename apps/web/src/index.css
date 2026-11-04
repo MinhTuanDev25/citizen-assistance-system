@@ -2236,6 +2236,16 @@ td button {
   line-height: 1.4;
 }
 
+/* Section label inside page content (the sidebar has its own .cas-side-section). */
+.page-section-label {
+  margin: 1.25rem 0 0.6rem;
+  color: var(--muted, #64748b);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .quick-row {
   display: flex;
   flex-wrap: wrap;
@@ -3164,6 +3174,23 @@ td button {
 
 .dr-modal h2 {
   margin: 0;
+}
+
+.dr-target-version {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  font-weight: 600;
+}
+
+.dr-target-version select {
+  font: inherit;
+  font-weight: 400;
+  padding: 8px 10px;
+  border: 1px solid var(--dr-border);
+  border-radius: 8px;
+  background: var(--dr-card);
+  color: inherit;
 }
 
 .dr-modal .draft-actions {
@@ -4803,4 +4830,62 @@ tbody tr:hover td {
   border: 1px solid var(--line, #d7dbe5);
   font: inherit;
   resize: vertical;
+}
+
+.dr-reason[aria-invalid='true'] {
+  border-color: #c2410c;
+}
+
+.dr-reason-count {
+  display: block;
+  margin: -2px 0 6px;
+  color: var(--muted, #64748b);
+  font-size: 0.8rem;
+}
+
+/* A navigation link that does what a button does ("Mở bản nháp gộp", "Duyệt"). */
+.link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: fit-content;
+  padding: 0.45rem 0.8rem;
+  border: 1px solid #cfdce4;
+  border-radius: 0.7rem;
+  background: #fff;
+  color: #334e68;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.link-btn:hover {
+  color: #0f766e;
+  border-color: #5eead4;
+  background: #f0fdfa;
+}
+
+.link-btn:focus-visible {
+  outline: 2px solid var(--leaf);
+  outline-offset: 2px;
+}
+
+.link-btn-primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #0f766e, #0d9488);
+  color: #fff;
+}
+
+.link-btn-primary:hover {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(135deg, #0f766e, #0d9488);
+  filter: brightness(1.05);
+}
+
+td .link-btn {
+  font-size: 0.85rem;
+  padding: 0.4rem 0.65rem;
 }

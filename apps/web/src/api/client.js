@@ -1,4 +1,5 @@
 import { loadAuth } from '../auth/auth.js'
+import { apiErrorMessage } from '../lib/apiErrors.js'
 
 /**
  * Shared JSON API client (Vite proxy /api → :8080).
@@ -28,15 +29,24 @@ export async function apiRequest(path, options = {}) {
   let res
   try {
     res = await fetch(path, { ...rest, headers, signal: rest.signal || controller?.signal })
+  } catch (cause) {
+    // Keep the name (AbortError, TypeError): callers use it to tell "no answer" from a refusal.
+    const err = new Error('Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại.')
+    err.name = cause?.name || 'Error'
+    err.serverMessage = cause?.message || ''
+    err.cause = cause
+    throw err
   } finally {
     if (timer) clearTimeout(timer)
   }
   const payload = await res.json().catch(() => ({}))
   if (!res.ok) {
-    const msg = payload?.error?.message || `HTTP ${res.status}`
-    const err = new Error(msg)
-    err.code = payload?.error?.code
+    const serverMessage = payload?.error?.message || ''
+    const code = payload?.error?.code
+    const err = new Error(apiErrorMessage({ status: res.status, code, message: serverMessage }))
+    err.code = code
     err.status = res.status
+    err.serverMessage = serverMessage
     err.payload = payload
     throw err
   }

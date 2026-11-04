@@ -72,10 +72,11 @@ class DraftService:
             proposal, usage, http_status = provider.draft_definition(request)
         except ProviderError as exc:
             logger.warning(
-                "draft_provider_error request_id=%s reason=%s provider=%s",
+                "draft_provider_error request_id=%s reason=%s provider=%s detail=%s",
                 request.request_id,
                 exc.reason,
                 self._settings.provider,
+                str(exc)[:500],
             )
             raise DraftServiceError(exc.reason, str(exc)) from exc
 

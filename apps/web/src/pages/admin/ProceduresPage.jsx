@@ -11,6 +11,7 @@ import {
   listProcedureVersions,
 } from '../../api/catalog.js'
 import { useCommune } from '../../commune/CommuneContext.jsx'
+import { reasonLabel, reasonsText } from '../../lib/apiErrors.js'
 
 function newRequestId() {
   return crypto.randomUUID()
@@ -33,15 +34,15 @@ export function validateNewProcedure({ code, name, domainId }) {
 export function createProcedureErrorMessage(err) {
   if (err?.code === 'PROCEDURE_CODE_EXISTS') return 'Mã thủ tục này đã có trong xã. Hãy dùng mã khác.'
   if (err?.code === 'IDEMPOTENCY_CONFLICT') return 'Yêu cầu trước đó chưa rõ kết quả. Tải lại trang để kiểm tra rồi thử lại.'
-  const msg = String(err?.message || '')
+  const msg = String(err?.serverMessage || err?.message || '')
   if (msg.includes('procedure_code')) return 'Mã thủ tục không hợp lệ.'
   if (msg.includes('domain_id')) return 'Lĩnh vực không hợp lệ hoặc đã ngưng.'
   if (msg.includes('name is required')) return 'Nhập tên thủ tục.'
-  return msg || 'Không tạo được thủ tục.'
+  return err?.message || 'Không tạo được thủ tục.'
 }
 
 export function createVersionErrorMessage(err) {
-  const msg = String(err?.message || '')
+  const msg = String(err?.serverMessage || err?.message || '')
   if (msg.includes('version must be n.n.n')) {
     return 'Số phiên bản phải có dạng n.n.n, ví dụ 2.0.0. Để trống nếu muốn hệ thống tự tăng.'
   }
@@ -54,7 +55,7 @@ export function createVersionErrorMessage(err) {
   if (msg.includes('version already exists')) {
     return 'Số phiên bản này đã tồn tại. Hãy nhập số khác.'
   }
-  return msg || 'Không tạo được phiên bản.'
+  return err?.message || 'Không tạo được phiên bản.'
 }
 
 export function isUnknownActivationOutcome(err) {
@@ -62,7 +63,7 @@ export function isUnknownActivationOutcome(err) {
   if (err.status || err.code) return false
   const name = String(err.name || '')
   if (name === 'AbortError' || name === 'TimeoutError' || name === 'TypeError') return true
-  const msg = String(err.message || '').toLowerCase()
+  const msg = String(err.serverMessage || err.message || '').toLowerCase()
   return msg.includes('failed to fetch') || msg.includes('network') || msg.includes('timeout') || msg.includes('abort')
 }
 
@@ -200,31 +201,6 @@ function statusLabel(map, status) {
   return map[code] || status || '—'
 }
 
-function reasonLabel(code) {
-  const map = {
-    VERSION_NOT_APPROVED: 'Phiên bản này chưa được duyệt.',
-    SOURCE_VERSION: 'Phiên nguồn chỉ để gắn tài liệu và tạo bản nháp tự động, không kích hoạt.',
-    VERSION_ARCHIVED: 'Phiên bản đã lưu trữ.',
-    VERSION_ALREADY_ACTIVE: 'Phiên bản này đang được dùng.',
-    INVALID_DEFINITION: 'Nội dung hướng dẫn của phiên bản không hợp lệ.',
-    NO_SOURCE_DOCUMENT: 'Chưa gắn tài liệu nguồn.',
-    PARTIAL_SOURCE_INDEX: 'Một số tài liệu gắn vào phiên bản chưa sẵn sàng.',
-    DOCUMENT_INDEX_UPLOADED: 'Tài liệu mới gắn, chưa lập chỉ mục.',
-    DOCUMENT_INDEX_PROCESSING: 'Tài liệu đang được lập chỉ mục.',
-    DOCUMENT_INDEX_FAILED: 'Chỉ mục tài liệu thất bại.',
-    DOCUMENT_INDEX_NOT_READY: 'Tài liệu chưa sẵn sàng.',
-    ACTIVE_GENERATION_MISSING: 'Tài liệu chưa có bản chỉ mục hoàn chỉnh.',
-    MOCK_INDEX_NOT_PUBLISHED: 'Chưa có nội dung chỉ mục để trả lời. Không kích hoạt được.',
-    DOCUMENT_NOT_CURRENT: 'Tài liệu hết hiệu lực hoặc đã bị thay thế.',
-    SOURCE_SCOPE_MISMATCH: 'Tài liệu không thuộc xã hoặc thủ tục này.',
-    DEFINITION_IDENTITY_MISMATCH: 'Nội dung hướng dẫn không khớp thủ tục hoặc xã đang chọn. Tải lại trang rồi thử lại.',
-    STALE_ACTIVE_VERSION: 'Phiên bản đang dùng đã đổi. Tải lại trang rồi thử lại.',
-    IDEMPOTENCY_CONFLICT: 'Yêu cầu này đã được gửi với nội dung khác. Tải lại trang rồi thử lại.',
-    ACTIVATION_CONFLICT: 'Không kích hoạt được vì còn phiên bản đang bật khác. Tải lại trang rồi thử lại.',
-  }
-  return map[code] || code
-}
-
 function activateHint(version) {
   const reasons = version?.eligibility?.reasons || []
   if (!reasons.length) return ''
@@ -242,7 +218,7 @@ function activateHint(version) {
     const names = waiting.map((d) => `«${d.title}»`).join(', ')
     return `${names} chưa sẵn sàng.`
   }
-  return reasons.map(reasonLabel).join(' ')
+  return reasonsText(reasons) || 'Chưa đủ điều kiện kích hoạt.'
 }
 
 export default function ProceduresPage() {
@@ -533,7 +509,7 @@ export default function ProceduresPage() {
                     Xem phiên bản
                   </button>
                   {' '}
-                  <Link to={adminDraftsPath(p.id)}>Bản nháp tự động</Link>
+                  <Link className="link-btn" to={adminDraftsPath(p.id)}>Bản nháp tự động</Link>
                 </td>
               </tr>
             ))}
@@ -741,7 +717,8 @@ export default function ProceduresPage() {
         <div className="confirm-mask" role="dialog" aria-modal="true">
           <div className="panel modal-card">
             <h2>Tạo phiên bản mới</h2>
-            <p>Sao chép hướng dẫn từ phiên đang dùng. Phiên mới chỉ thay thế khi bạn kích hoạt.</p>
+            <p>Sao chép nguyên hướng dẫn của phiên đang dùng để chỉnh sửa. Phiên mới chỉ thay thế khi bạn kích hoạt.</p>
+            <p className="muted">Muốn hướng dẫn mới soạn từ tài liệu thì vào Bản nháp: phê duyệt rồi bấm Kích hoạt — hệ thống tự tạo phiên bản kế tiếp, không cần tạo ở đây.</p>
             {createError ? <p className="form-error" role="alert">{createError}</p> : null}
             <label>
               Số phiên bản (để trống thì hệ thống tự tăng)

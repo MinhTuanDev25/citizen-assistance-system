@@ -108,7 +108,7 @@ func loadVersion(ctx context.Context, tx pgx.Tx, xaID string, procedureID, versi
 	err := tx.QueryRow(ctx, `
 		SELECT pv.id, pv.procedure_id, pv.version, pv.status, pv.definition,
 		       pv.created_by, pv.approved_by, pv.created_at, pv.approved_at,
-		       pv.activated_at, pv.activated_by,
+		       pv.activated_at, pv.activated_by, pv.source_draft_id,
 		       p.xa_id, p.domain_id, p.procedure_code, p.name
 		FROM procedure_versions pv
 		JOIN procedures p ON p.id = pv.procedure_id
@@ -116,7 +116,7 @@ func loadVersion(ctx context.Context, tx pgx.Tx, xaID string, procedureID, versi
 		FOR UPDATE OF pv`, versionID, procedureID, xaID).Scan(
 		&row.ID, &row.ProcedureID, &row.Version, &row.Status, &row.Definition,
 		&row.CreatedBy, &row.ApprovedBy, &row.CreatedAt, &row.ApprovedAt,
-		&row.ActivatedAt, &row.ActivatedBy,
+		&row.ActivatedAt, &row.ActivatedBy, &row.SourceDraftID,
 		&row.XaID, &row.DomainID, &row.ProcedureCode, &row.ProcedureName,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -212,7 +212,7 @@ func listProcedures(ctx context.Context, pool *pgxpool.Pool, xaID string) ([]Pro
 func listVersions(ctx context.Context, pool *pgxpool.Pool, xaID string, procedureID uuid.UUID) ([]VersionSummary, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT pv.id, pv.procedure_id, pv.version, pv.status, pv.created_at, pv.created_by,
-		       pv.approved_by, pv.approved_at, pv.activated_at, pv.activated_by, pv.definition,
+		       pv.approved_by, pv.approved_at, pv.activated_at, pv.activated_by, pv.source_draft_id, pv.definition,
 		       p.xa_id, p.domain_id, p.procedure_code, p.name
 		FROM procedure_versions pv
 		JOIN procedures p ON p.id = pv.procedure_id
@@ -228,7 +228,7 @@ func listVersions(ctx context.Context, pool *pgxpool.Pool, xaID string, procedur
 		var row versionRow
 		if err := rows.Scan(
 			&row.ID, &row.ProcedureID, &row.Version, &row.Status, &row.CreatedAt, &row.CreatedBy,
-			&row.ApprovedBy, &row.ApprovedAt, &row.ActivatedAt, &row.ActivatedBy, &row.Definition,
+			&row.ApprovedBy, &row.ApprovedAt, &row.ActivatedAt, &row.ActivatedBy, &row.SourceDraftID, &row.Definition,
 			&row.XaID, &row.DomainID, &row.ProcedureCode, &row.ProcedureName,
 		); err != nil {
 			return nil, err
@@ -305,7 +305,7 @@ func toSummary(row versionRow, sources []sourceRow) VersionSummary {
 		ID: row.ID, ProcedureID: row.ProcedureID, Version: row.Version, Status: row.Status,
 		CreatedAt: row.CreatedAt, CreatedBy: row.CreatedBy, ApprovedBy: row.ApprovedBy,
 		ApprovedAt: row.ApprovedAt, ActivatedAt: row.ActivatedAt, ActivatedBy: row.ActivatedBy,
-		Definition: row.Definition, Documents: docs, Eligibility: el,
+		SourceDraft: row.SourceDraftID, Definition: row.Definition, Documents: docs, Eligibility: el,
 		LegacyActive: row.Status == "ACTIVE" && row.ActivatedAt == nil,
 	}
 }
@@ -371,12 +371,19 @@ func nextVersionLabel(ctx context.Context, tx pgx.Tx, procedureID uuid.UUID) (st
 	return bumpVersion(labels), nil
 }
 
+// legacyDraftLabel matches the labels draft activation used to derive from the
+// draft id ("8.<10000-99999>.<0-999>"). They are not a release sequence, so the
+// next label continues after the real ones (1.0.1 -> 1.0.2, not 8.56948.590).
+func legacyDraftLabel(a, b int) bool {
+	return a == 8 && b >= 10000 && b <= 99999
+}
+
 func bumpVersion(labels []string) string {
 	major, minor, patch := 1, 0, 0
 	found := false
 	for _, label := range labels {
 		var a, b, c int
-		if _, err := fmt.Sscanf(label, "%d.%d.%d", &a, &b, &c); err != nil {
+		if _, err := fmt.Sscanf(label, "%d.%d.%d", &a, &b, &c); err != nil || legacyDraftLabel(a, b) {
 			continue
 		}
 		if !found || a > major || (a == major && b > minor) || (a == major && b == minor && c > patch) {

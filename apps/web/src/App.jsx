@@ -9,6 +9,7 @@ import { adminIngestionEnabled } from './config/features.js'
 import CitizenChatPage from './pages/CitizenChatPage.jsx'
 import HomePage from './pages/HomePage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
+import RegisterPage from './pages/RegisterPage.jsx'
 import ProceduresCatalogPage from './pages/ProceduresCatalogPage.jsx'
 import SelectCommunePage from './pages/SelectCommunePage.jsx'
 import DeferredIngestionPage from './pages/admin/DeferredIngestionPage.jsx'
@@ -72,6 +73,14 @@ export default function App() {
               element={
                 <RequireCommune>
                   <LoginPage />
+                </RequireCommune>
+              }
+            />
+            <Route
+              path={ROUTES.register}
+              element={
+                <RequireCommune>
+                  <RegisterPage />
                 </RequireCommune>
               }
             />

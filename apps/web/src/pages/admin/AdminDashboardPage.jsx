@@ -81,16 +81,16 @@ export default function AdminDashboardPage() {
         <div className="stat-card accent-blue">
           <span>Tài liệu điện tử</span>
           <strong>{docs == null ? '…' : docs}</strong>
-          <Link to={ROUTES.adminDocuments}>Mở tài liệu</Link>
+          <Link className="link-btn" to={ROUTES.adminDocuments}>Mở tài liệu</Link>
         </div>
         <div className="stat-card accent-teal">
           <span>Thủ tục đang dùng</span>
           <strong>{active == null ? '…' : active}</strong>
-          <Link to={ROUTES.adminProcedures}>Mở thủ tục</Link>
+          <Link className="link-btn" to={ROUTES.adminProcedures}>Mở thủ tục</Link>
         </div>
       </div>
 
-      <p className="cas-side-section">Luồng làm việc</p>
+      <p className="page-section-label">Luồng làm việc</p>
       <div className="home-grid admin-flow">
         {STEPS.map((card) => (
           <Link key={card.title} to={card.to} className="home-card">

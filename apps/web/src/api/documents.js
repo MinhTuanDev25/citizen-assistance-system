@@ -30,7 +30,7 @@ export function uploadErrorMessage(status) {
     case 401:
       return 'Phiên đăng nhập hết hạn.'
     case 403:
-      return 'Bạn không có quyền admin.'
+      return 'Bạn không có quyền cán bộ.'
     case 409:
       return 'Tài liệu đã tồn tại (trùng nội dung).'
     case 413:
