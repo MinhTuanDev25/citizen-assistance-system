@@ -143,6 +143,10 @@ func EvaluateCoverage(definition []byte, evidence []EvidenceItem, excerpts []Exc
 			adminKept[k] = adminKept[k] || v
 		}
 	}
+	sourced := map[string]bool{}
+	for id := range covered {
+		sourced[id] = true
+	}
 	for _, prop := range proposals {
 		if !covered[prop.ID] && adminKept[proposalContentKey(prop)] {
 			covered[prop.ID] = true
@@ -164,12 +168,51 @@ func EvaluateCoverage(definition []byte, evidence []EvidenceItem, excerpts []Exc
 			})
 		}
 	}
+	supersedeKeptQuotes(&out, known, sourced, adminKept)
 	out.CoveredCount = len(covered)
 	out.QuotesVerified = out.Invalid == 0 && out.Unknown == 0 && out.Duplicates == 0 && out.Stale == 0
 	// Vacuous completeness: zero material proposals → coverage complete.
 	out.CoverageComplete = out.Missing == 0 && out.Unknown == 0 && out.Duplicates == 0 && out.Stale == 0
 	out.GroundingVerified = out.QuotesVerified && out.CoverageComplete
 	return out
+}
+
+// supersedeKeptQuotes: an Admin kept a proposal the source does not state, so
+// a citation that failed verification no longer supports anything. It stays
+// visible as a warning instead of blocking approval. Proposals with a valid
+// citation of their own keep the error: there the bad quote is a real defect.
+func supersedeKeptQuotes(out *CoverageResult, known map[string]MaterialProposal, sourced, adminKept map[string]bool) {
+	superseded := map[string]bool{}
+	for i := range out.Evidence {
+		item := &out.Evidence[i]
+		prop, ok := known[item.ProposalID]
+		if !ok || item.QuoteValid || sourced[prop.ID] || !adminKept[proposalContentKey(prop)] {
+			continue
+		}
+		if item.Status != "quotation_not_found" && item.Status != "source_reference_invalid" {
+			continue
+		}
+		item.ReviewWarning = "citation not found in the source; superseded by an Admin decision"
+		superseded[item.ProposalID] = true
+		superseded[item.RawProposalID] = true
+		out.Invalid--
+	}
+	if len(superseded) == 0 {
+		return
+	}
+	for i := range out.Issues {
+		is := &out.Issues[i]
+		if is.Severity == "error" && superseded[is.ProposalID] && quoteErrorCodes[is.Code] {
+			is.Code = "QUOTE_SUPERSEDED_BY_ADMIN_DECISION"
+			is.Severity = "warning"
+			is.Message = "the cited quotation is not in the source; the proposal is kept by an Admin decision"
+		}
+	}
+}
+
+var quoteErrorCodes = map[string]bool{
+	"QUOTATION_NOT_FOUND": true, "INVALID_PAGE": true, "UNKNOWN_EXCERPT_ID": true,
+	"SOURCE_DOCUMENT_MISMATCH": true, "SOURCE_GENERATION_MISMATCH": true, "INVALID_SOURCE_HASH": true,
 }
 
 type quoteCheck struct {

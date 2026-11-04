@@ -1,6 +1,9 @@
 package decision
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func khaiSinhDef() Definition {
 	def, err := ParseDefinition([]byte(`{
@@ -228,5 +231,63 @@ func TestCustomPolicyOverridesThresholds(t *testing.T) {
 	}
 	if p.Band(0.3) != IntentNone {
 		t.Fatalf("0.3 should be none under custom policy")
+	}
+}
+
+func TestHedgedEnumAnswerIsExplainedThenTakenWhenConfirmed(t *testing.T) {
+	def, err := ParseDefinition([]byte(`{
+		"procedure_code": "khai_sinh_v1", "name": "Đăng ký khai sinh",
+		"slots": {
+			"hinh_thuc_nop": {"type": "enum", "question": "Bạn dự kiến nộp hồ sơ theo hình thức nào?", "enum_values": ["truc_tiep", "truc_tuyen", "buu_chinh"], "enum_labels": ["Trực tiếp", "Trực tuyến", "Dịch vụ bưu chính"]},
+			"truong_hop_tre": {"type": "enum", "question": "Trường hợp của trẻ?", "enum_values": ["tre_sinh_thuong", "tre_bi_bo_roi"], "enum_labels": ["Trẻ sinh bình thường", "Trẻ bị bỏ rơi"]}
+		},
+		"required_slots": ["hinh_thuc_nop", "truong_hop_tre"],
+		"guidance": {"summary": "s", "checklist": ["Tờ khai"]}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The choice is the citizen's: a soft hedge still picks it.
+	soft := Decide(TurnInput{Definition: def, Prior: map[string]SlotValue{}, HadPriorState: true, Message: "chắc là tôi sẽ nộp trực tiếp"})
+	if soft.SlotState["hinh_thuc_nop"].Value != "truc_tiep" {
+		t.Fatalf("a leaning answer to a choice must be taken, got %#v", soft.SlotState["hinh_thuc_nop"])
+	}
+	if strings.Contains(soft.ReplyText, "chưa chắc chắn") {
+		t.Fatalf("no hedge note for a taken choice:\n%s", soft.ReplyText)
+	}
+
+	out := Decide(TurnInput{Definition: def, Prior: map[string]SlotValue{}, HadPriorState: true, Message: "tôi chưa chắc nộp trực tiếp"})
+	if out.SlotState["hinh_thuc_nop"].Filled() {
+		t.Fatalf("a hedged answer must stay unrecorded, got %#v", out.SlotState["hinh_thuc_nop"])
+	}
+	if !strings.HasPrefix(out.ReplyText, "Mình chưa ghi «Trực tiếp» vì câu trả lời còn chưa chắc chắn.") {
+		t.Fatalf("reply must say why it was not taken:\n%s", out.ReplyText)
+	}
+	if !strings.Contains(out.ReplyText, "1) Bạn dự kiến nộp hồ sơ") {
+		t.Fatalf("questions must still follow:\n%s", out.ReplyText)
+	}
+
+	out = Decide(TurnInput{Definition: def, Prior: out.SlotState, HadPriorState: true, Message: "trực tiếp"})
+	if out.SlotState["hinh_thuc_nop"].Value != "truc_tiep" {
+		t.Fatalf("a plain confirmation must be taken, got %#v", out.SlotState["hinh_thuc_nop"])
+	}
+	if strings.Contains(out.ReplyText, "chưa chắc chắn") {
+		t.Fatalf("no hedge note after a plain answer:\n%s", out.ReplyText)
+	}
+}
+
+func TestHedgeNoteForUncertainBooleanWithoutOption(t *testing.T) {
+	def := khaiSinh()
+	prior := map[string]SlotValue{
+		"noi_sinh":           {Value: "Bệnh viện huyện Chư Sê", Status: StatusKnown},
+		"co_giay_chung_sinh": {Value: true, Status: StatusKnown},
+		"nguoi_di_dang_ky":   {Value: "me", Status: StatusKnown},
+	}
+	out := Decide(TurnInput{Definition: def, Prior: prior, HadPriorState: true, Message: "Hình như cha mẹ đã đăng ký kết hôn."})
+	if out.SlotState["da_ket_hon"].Filled() {
+		t.Fatalf("uncertain must not fill, got %#v", out.SlotState["da_ket_hon"])
+	}
+	if !strings.HasPrefix(out.ReplyText, "Mình chưa ghi nhận câu trả lời vì còn chưa chắc chắn.") {
+		t.Fatalf("reply:\n%s", out.ReplyText)
 	}
 }

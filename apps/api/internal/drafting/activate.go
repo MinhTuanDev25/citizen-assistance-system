@@ -2,7 +2,6 @@ package drafting
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -123,7 +122,9 @@ func (s *Service) Activate(ctx context.Context, actor, requestID, draftID uuid.U
 		PageRange:          pageRange,
 		ActorUserID:        actor,
 		RequestID:          linkID,
-	}); err != nil {
+	}); err != nil && !errors.Is(err, index.ErrDuplicate) {
+		// ErrDuplicate: the Admin already linked the document to the target
+		// version; its index state decides below.
 		out.Phase = PhaseVersionCreated
 		out.BlockedReason = "DOCUMENT_LINK_FAILED"
 		out.Reasons = []string{err.Error()}
@@ -310,15 +311,16 @@ func (s *Service) ensureVersion(ctx context.Context, actor, draftID uuid.UUID, r
 		out.Phase = PhaseVersionCreated
 		return *view.PublishedVersionID, nil
 	}
+	// An empty label lets CreateVersion take the next n.n.n after the procedure's
+	// existing versions (1.0.1 -> 1.0.2); a target version keeps its own label.
+	// Retries stay idempotent through the stable request id and source_draft_id.
 	label := strings.TrimSpace(req.Version)
-	if label == "" {
-		label = stableVersionLabel(draftID)
-	}
 	created, err := s.Activation.CreateVersion(ctx, actor, draftOpID(draftID, "create-version"), view.ProcedureID, activation.CreateVersionRequest{
-		Version:       label,
-		Definition:    view.Definition,
-		Confirm:       true,
-		SourceDraftID: &draftID,
+		Version:         label,
+		Definition:      view.Definition,
+		Confirm:         true,
+		SourceDraftID:   &draftID,
+		TargetVersionID: req.TargetVersionID,
 	})
 	if err != nil {
 		return uuid.Nil, err
@@ -446,12 +448,6 @@ func (s *Service) publishDraft(ctx context.Context, actor, draftID uuid.UUID, ro
 
 func draftOpID(draftID uuid.UUID, op string) uuid.UUID {
 	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("cas.phase45.draft."+op+"."+draftID.String()))
-}
-
-func stableVersionLabel(draftID uuid.UUID) string {
-	n := binary.BigEndian.Uint32(draftID[:4])%90000 + 10000
-	m := binary.BigEndian.Uint16(draftID[4:6]) % 1000
-	return fmt.Sprintf("8.%d.%d", n, m)
 }
 
 func sourceIndexState(summary activation.VersionSummary) string {

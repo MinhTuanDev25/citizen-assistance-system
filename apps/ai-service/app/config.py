@@ -35,8 +35,12 @@ DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_GEMINI_DEFINITION_MODEL = "gemini-3.8-flash"
 DEFAULT_MOCK_MODEL = "mock-extract-v1"
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
-DEFAULT_DRAFT_MAX_OUTPUT_TOKENS = 8192
+# Thinking models spend part of maxOutputTokens on reasoning before the JSON
+# (a 40-excerpt batch used ~7.9k of 8192 thinking, leaving 317 for the answer),
+# so drafting gets far more headroom than the citizen extract.
+DEFAULT_DRAFT_MAX_OUTPUT_TOKENS = 32768
 MAX_OUTPUT_TOKENS_LIMIT = 8192
+DRAFT_MAX_OUTPUT_TOKENS_LIMIT = 65536
 DEFAULT_DRAFT_TIMEOUT_S = 45.0
 # A ~10-page legal source (60-80 excerpts) can take Gemini 1-3 minutes.
 MAX_DRAFT_TIMEOUT_S = 300.0
@@ -239,7 +243,7 @@ def load_settings() -> Settings:
         "LLM_DRAFT_MAX_OUTPUT_TOKENS",
         DEFAULT_DRAFT_MAX_OUTPUT_TOKENS,
         1,
-        MAX_OUTPUT_TOKENS_LIMIT,
+        DRAFT_MAX_OUTPUT_TOKENS_LIMIT,
     )
 
     rate_per_minute = _bounded_int("EXTRACT_RATE_PER_MINUTE", 60, 1, 10000)

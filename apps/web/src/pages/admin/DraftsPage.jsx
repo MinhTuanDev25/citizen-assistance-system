@@ -31,6 +31,7 @@ function pill(status) {
 const JOB_POLL_MS = 3000
 
 const JOB_STATUS = { QUEUED: 'Đang chờ', RUNNING: 'Đang soạn', SUCCEEDED: 'Hoàn tất', FAILED: 'Lỗi' }
+const VERSION_STATUS = { ACTIVE: 'đang dùng', APPROVED: 'đã duyệt', ARCHIVED: 'lưu trữ', DRAFT: 'nháp' }
 const BATCH_STATUS = { PENDING: 'chờ', RUNNING: 'đang chạy', SUCCEEDED: 'xong', FAILED: 'lỗi' }
 const DRAFT_STATUS_LABEL = {
   DRAFT: 'Bản nháp',
@@ -58,6 +59,11 @@ const BATCH_ERROR = {
   AI_INVALID_OUTPUT: 'Dịch vụ trí tuệ nhân tạo trả kết quả sai định dạng',
   SOURCE_CHANGED: 'Nguồn đã thay đổi',
   SOURCE_UNAVAILABLE: 'Không đọc được nguồn',
+  ATTEMPTS_EXHAUSTED: 'Đã hết số lần thử',
+  CANCELLED: 'Tiến trình bị dừng',
+  PLAN_INVALID: 'Kế hoạch soạn không còn hợp lệ',
+  BATCH_FAILED: 'Có đợt xử lý bị lỗi',
+  AGGREGATION_FAILED: 'Không gộp được kết quả các đợt',
 }
 
 export function planBlockedMessage(reason) {
@@ -65,7 +71,7 @@ export function planBlockedMessage(reason) {
 }
 
 export function batchErrorMessage(code) {
-  return BATCH_ERROR[code] || code || ''
+  return BATCH_ERROR[code] || (code ? 'Lỗi xử lý' : '')
 }
 
 /** Request body shared by plan preview and job creation (they must match). */
@@ -90,7 +96,7 @@ export function validateManualRange(start, end, source) {
 }
 
 export function draftErrorMessage(err) {
-  if (err?.code === 'PLAN_BLOCKED') return planBlockedMessage(err.message)
+  if (err?.code === 'PLAN_BLOCKED') return planBlockedMessage(err.serverMessage ?? err.message)
   if (err?.code === 'IDEMPOTENCY_CONFLICT') return 'Yêu cầu này đã được gửi với nội dung khác. Phân tích lại phạm vi rồi thử lại.'
   return err?.message || 'Không tạo được bản nháp tự động'
 }
@@ -124,7 +130,7 @@ function JobCard({ job, onRetry, busy }) {
       {job.batches?.length ? (
         <ul className="dj-batches">
           {job.batches.map((b) => (
-            <li key={b.batch_index} className={`dj-batch dj-b-${String(b.status).toLowerCase()}`} title={b.error_message || ''}>
+            <li key={b.batch_index} className={`dj-batch dj-b-${String(b.status).toLowerCase()}`} title={b.error_code ? batchErrorMessage(b.error_code) : ''}>
               Đợt {b.batch_index + 1} · tr {b.page_start}–{b.page_end} · {BATCH_STATUS[b.status] || b.status}
               {b.attempts > 1 ? ` · lần ${b.attempts}` : ''}
               {b.error_code ? ` · ${batchErrorMessage(b.error_code)}` : ''}
@@ -134,7 +140,7 @@ function JobCard({ job, onRetry, busy }) {
       ) : null}
       {job.status === 'FAILED' ? (
         <p className="form-error">
-          {job.error_message || 'Tiến trình gặp lỗi.'} Kết quả các đợt đã xong được giữ lại; chưa tạo bản nháp từ một phần nguồn.
+          {job.error_code ? `${batchErrorMessage(job.error_code)}.` : 'Tiến trình gặp lỗi.'} Kết quả các đợt đã xong được giữ lại; chưa tạo bản nháp từ một phần nguồn.
         </p>
       ) : null}
       <div className="dj-actions">
@@ -143,7 +149,7 @@ function JobCard({ job, onRetry, busy }) {
             Thử lại các đợt lỗi
           </button>
         ) : null}
-        {job.status === 'SUCCEEDED' && job.draft_id ? <Link to={adminDraftPath(job.draft_id)}>Mở bản nháp gộp →</Link> : null}
+        {job.status === 'SUCCEEDED' && job.draft_id ? <Link className="link-btn link-btn-primary" to={adminDraftPath(job.draft_id)}>Mở bản nháp gộp →</Link> : null}
       </div>
     </div>
   )
@@ -353,7 +359,7 @@ export default function DraftsPage() {
             {sources.length === 0 ? <option value="">Chưa có nguồn đã xử lý sẵn sàng</option> : null}
             {sources.map((item) => (
               <option key={`${item.document_id}:${item.generation_id}`} value={`${item.document_id}:${item.generation_id}`}>
-                {item.title || item.document_id} · {item.version_status === 'SOURCE' ? 'phiên nguồn' : `v${item.version} (${item.version_status})`} · trang {item.suggested_page_start}–{item.suggested_page_end}
+                {item.title || item.document_id} · {item.version_status === 'SOURCE' ? 'phiên nguồn' : `v${item.version} (${VERSION_STATUS[item.version_status] || item.version_status})`} · trang {item.suggested_page_start}–{item.suggested_page_end}
               </option>
             ))}
           </select>
@@ -515,7 +521,7 @@ export default function DraftsPage() {
                   <td>{item.model || '—'}</td>
                   <td>{formatWhen(item.updated_at)}</td>
                   <td>
-                    <Link to={adminDraftPath(item.id)}>Duyệt</Link>
+                    <Link className="link-btn" to={adminDraftPath(item.id)}>Duyệt</Link>
                   </td>
                 </tr>
               ))}
@@ -524,7 +530,7 @@ export default function DraftsPage() {
         ) : null}
       </div>
       <p>
-        <Link to={ROUTES.adminProcedures}>← Thủ tục</Link>
+        <Link className="link-btn" to={ROUTES.adminProcedures}>← Thủ tục</Link>
       </p>
     </div>
   )

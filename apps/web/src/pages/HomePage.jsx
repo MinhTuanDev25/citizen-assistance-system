@@ -74,7 +74,7 @@ export default function HomePage() {
           </Link>
         ))}
       </div>
-      <p className="cas-side-section">Thủ tục hay dùng</p>
+      <p className="page-section-label">Thủ tục hay dùng</p>
       <div className="quick-row">
         {items.map((p) => (
           <button

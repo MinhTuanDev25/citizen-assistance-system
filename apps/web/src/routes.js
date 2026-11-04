@@ -6,6 +6,7 @@ export const ROUTES = Object.freeze({
   procedures: '/procedures',
   commune: '/commune',
   login: '/login',
+  register: '/register',
   admin: '/admin',
   adminDocuments: '/admin/documents',
   adminProcedures: '/admin/procedures',

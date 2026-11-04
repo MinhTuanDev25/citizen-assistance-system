@@ -332,6 +332,23 @@ def test_draft_timeout_is_independent_of_extract_cap(monkeypatch):
     assert settings.draft_max_output_tokens == 8192
 
 
+def test_draft_output_tokens_default_leaves_room_for_thinking(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    monkeypatch.setenv("AI_SERVICE_TOKEN", "test-service-token")
+    monkeypatch.delenv("LLM_DRAFT_MAX_OUTPUT_TOKENS", raising=False)
+    assert load_settings().draft_max_output_tokens == 32768
+    monkeypatch.setenv("LLM_DRAFT_MAX_OUTPUT_TOKENS", "65536")
+    assert load_settings().draft_max_output_tokens == 65536
+    monkeypatch.setenv("LLM_DRAFT_MAX_OUTPUT_TOKENS", "65537")
+    with pytest.raises(ConfigError):
+        load_settings()
+    # The citizen extract keeps its own 8192 cap.
+    monkeypatch.delenv("LLM_DRAFT_MAX_OUTPUT_TOKENS")
+    monkeypatch.setenv("LLM_MAX_OUTPUT_TOKENS", "8193")
+    with pytest.raises(ConfigError):
+        load_settings()
+
+
 def test_draft_timeout_rejects_unbounded_value(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
     monkeypatch.setenv("AI_SERVICE_TOKEN", "test-service-token")

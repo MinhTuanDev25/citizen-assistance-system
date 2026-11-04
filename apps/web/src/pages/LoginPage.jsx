@@ -142,6 +142,7 @@ export default function LoginPage() {
                 Chế độ đăng nhập dùng thử đang được bật và không xuất hiện trên hệ thống chính thức.
               </p>
             ) : null}
+            {mode === 'citizen' ? <Link to={ROUTES.register}>Chưa có tài khoản? Đăng ký</Link> : null}
             <Link to={ROUTES.home}>Tiếp tục hỏi thủ tục (khách)</Link>
           </div>
         </form>

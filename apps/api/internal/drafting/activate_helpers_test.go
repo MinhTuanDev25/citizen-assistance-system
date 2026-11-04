@@ -12,19 +12,6 @@ import (
 	"github.com/MinhTuanDev25/citizen-assistance-system/apps/api/internal/repository"
 )
 
-func TestStableVersionLabelIsDeterministic(t *testing.T) {
-	id := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-	first := stableVersionLabel(id)
-	second := stableVersionLabel(id)
-	if first != second {
-		t.Fatal("label must be stable")
-	}
-	other := uuid.MustParse("11111111-2222-3333-4444-555555555555")
-	if stableVersionLabel(id) == stableVersionLabel(other) {
-		t.Fatal("different drafts must not share a label")
-	}
-}
-
 func TestDraftOpIDIsStablePerOperation(t *testing.T) {
 	id := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 	first := draftOpID(id, "index")
@@ -155,5 +142,43 @@ func TestEmptyDefinitionBlocksApproval(t *testing.T) {
 	}
 	if err := approvalGate(view); err == nil {
 		t.Fatal("empty def must not be approved")
+	}
+}
+
+type getOnlyDrafts struct {
+	DraftRepository
+	row repository.ProcedureDraft
+}
+
+func (g getOnlyDrafts) Get(context.Context, string, uuid.UUID) (repository.ProcedureDraft, error) {
+	return g.row, nil
+}
+
+func TestValidateKeepsRecordedApproval(t *testing.T) {
+	admin := uuid.New()
+	payload, err := json.Marshal(storedPayload{
+		Definition: json.RawMessage(`{"procedure_code":"khai_sinh_v1","name":"Đăng ký khai sinh"}`),
+		ApprovedBy: &admin,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		status string
+		want   bool
+	}{
+		{repository.DraftStatusApproved, true},
+		{repository.DraftStatusPublished, true},
+		{repository.DraftStatusDraft, false},
+	} {
+		row := repository.ProcedureDraft{ID: uuid.New(), ProcedureCode: "khai_sinh_v1", Status: tc.status, DraftDefinition: payload}
+		svc := &Service{Source: &fakeSource{}, Drafts: getOnlyDrafts{row: row}}
+		view, err := svc.Validate(context.Background(), row.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if view.Validation.SemanticApproved != tc.want {
+			t.Fatalf("%s: semantic_approved=%v, want %v", tc.status, view.Validation.SemanticApproved, tc.want)
+		}
 	}
 }

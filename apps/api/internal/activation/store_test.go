@@ -24,6 +24,13 @@ func TestNextVersionLabelIncrement(t *testing.T) {
 	if got := bumpVersion([]string{"1.0.0", "2.1.9"}); got != "2.1.10" {
 		t.Fatal(got)
 	}
+	// Labels the old draft activation derived from the draft id do not set the sequence.
+	if got := bumpVersion([]string{"1.0.0", "8.56948.589", "1.0.1"}); got != "1.0.2" {
+		t.Fatal(got)
+	}
+	if got := bumpVersion([]string{"8.56948.589"}); got != "1.0.0" {
+		t.Fatal(got)
+	}
 }
 
 func TestActivePointerMismatch(t *testing.T) {

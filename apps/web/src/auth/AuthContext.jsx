@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useState } from 'react'
-import { loginRequest, logoutRequest } from '../api/auth.js'
+import { loginRequest, logoutRequest, registerRequest } from '../api/auth.js'
 import { clearChatSession } from '../api/session.js'
 import { loadAuth, saveAuth } from './auth.js'
 
@@ -18,6 +18,13 @@ export function AuthProvider({ children }) {
         saveAuth(next)
         setUser(next)
         // New auth identity → fresh chat session next time
+        clearChatSession()
+        return next
+      },
+      async register({ fullName, email, password }) {
+        const next = await registerRequest({ fullName, email, password })
+        saveAuth(next)
+        setUser(next)
         clearChatSession()
         return next
       },

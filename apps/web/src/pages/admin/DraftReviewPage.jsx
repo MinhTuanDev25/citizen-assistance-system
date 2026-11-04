@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   cloneDraft,
@@ -14,9 +14,25 @@ import {
   reviewDraft,
   validateDraft,
 } from '../../api/drafts.js'
-import { listAdminProcedures } from '../../api/catalog.js'
+import { listAdminProcedures, listProcedureVersions } from '../../api/catalog.js'
 import { citationLabel, mentionLabel, mentionPages, OUTSIDE_TITLE } from './draftSources.js'
 import { adminDocumentPath, adminDraftPath, adminDraftsPath } from '../../routes.js'
+import { reasonsText } from '../../lib/apiErrors.js'
+
+// While the source is being indexed, activation is retried on its own (the server
+// reuses the same version, link and index job, so a retry never duplicates work).
+export const ACTIVATE_POLL_MS = 5000
+const ACTIVATE_POLL_MAX = 120
+
+// Versions an Admin created for this draft (Thủ tục → Tạo phiên bản): never
+// activated, not filled from a draft, newer than the version in use. Newest first.
+export function fillableVersions(versions, activeId) {
+  const active = versions.find((v) => v.id === activeId)
+  return versions
+    .filter((v) => v.status === 'APPROVED' && !v.activated_at && !v.source_draft_id
+      && (!active || new Date(v.created_at) > new Date(active.created_at)))
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+}
 
 function formatWhen(iso) {
   const d = new Date(iso)
@@ -77,6 +93,35 @@ const ISSUE_LABEL = {
   OUTSIDE_SOURCES_UNREVIEWED: 'Có trang ngoài các mục thủ tục cần cán bộ xem xét',
   SECTION_BOUNDARY_UNCERTAIN: 'Ranh giới cuối mục chưa chắc chắn — cán bộ cần xác nhận',
   SOURCE_PARTIALLY_PROCESSED: 'Chưa xử lý hết phạm vi nguồn',
+  ADMIN_DECISION_NO_SOURCE: 'Giữ theo quyết định của cán bộ, văn bản không nêu',
+  AMBIGUOUS_PROPOSAL_ID: 'Một trích dẫn khớp nhiều đề xuất',
+  CITATION_SOURCE_CONFLICT: 'Các phần của nguồn ghi khác nhau về văn bản trích dẫn',
+  DUPLICATE_PROPOSAL_MAPPING: 'Một đề xuất có nhiều trích dẫn trùng',
+  ENUM_VALUES_REQUIRED: 'Câu hỏi lựa chọn chưa có đáp án',
+  FORBIDDEN_DEFINITION_KEY: 'Định nghĩa có trường không được phép',
+  INVALID_PAGE: 'Số trang của trích dẫn không hợp lệ',
+  INVALID_SLOT_TYPE: 'Kiểu câu hỏi không hợp lệ',
+  INVALID_SOURCE_HASH: 'Mã kiểm tra của đoạn nguồn không khớp',
+  MISSING_NAME: 'Thiếu tên thủ tục',
+  MISSING_SLOT_QUESTION: 'Câu hỏi chưa có nội dung',
+  SLOT_QUESTION_REQUIRED: 'Câu hỏi chưa có nội dung',
+  NO_CITIZEN_SLOT: 'Chưa có câu hỏi nào cho người dân',
+  NO_GUIDANCE_PATH: 'Chưa có hướng dẫn nào cho người dân',
+  PARSE_DEFINITION: 'Không đọc được dữ liệu định nghĩa',
+  PROCEDURE_CODE_LOCKED: 'Mã thủ tục đã được hệ thống giữ cố định',
+  PROCEDURE_CODE_MISMATCH: 'Sai mã thủ tục',
+  PROPOSAL_ID_NORMALIZED: 'Mã đề xuất đã được hệ thống chuẩn hóa',
+  QUOTATION_NOT_FOUND: 'Câu trích không có trong tài liệu',
+  QUOTE_SUPERSEDED_BY_ADMIN_DECISION: 'Câu trích không có trong tài liệu, đã thay bằng quyết định của cán bộ',
+  SEMANTIC_APPROVAL_RESERVED: 'Chỉ cán bộ mới được duyệt nội dung',
+  SOURCE_DOCUMENT_MISMATCH: 'Trích dẫn trỏ tới tài liệu khác',
+  SOURCE_GENERATION_MISMATCH: 'Trích dẫn thuộc lượt lập chỉ mục khác',
+  TOO_MANY_CITATIONS: 'Quá nhiều văn bản trích dẫn',
+  UNKNOWN_CONDITION_REQUIRE: 'Điều kiện hỏi thêm trỏ tới câu hỏi không tồn tại',
+  UNKNOWN_CONDITION_SLOT: 'Điều kiện trỏ tới câu hỏi không tồn tại',
+  UNKNOWN_EXCERPT_ID: 'Trích dẫn trỏ tới đoạn không có trong nguồn',
+  UNKNOWN_PROPOSAL_ID: 'Trích dẫn trỏ tới đề xuất không tồn tại',
+  UNKNOWN_REQUIRED_SLOT: 'Câu hỏi bắt buộc không tồn tại',
 }
 
 const TRUNCATED_LABEL = {
@@ -319,12 +364,28 @@ export default function DraftReviewPage() {
   const [confirmActivate, setConfirmActivate] = useState(false)
   // The ACTIVE version this activation will replace; undefined while loading.
   const [activeTarget, setActiveTarget] = useState(undefined)
+  // '' = a new version with the next label; otherwise an Admin-created version id.
+  const [targetVersionId, setTargetVersionId] = useState('')
   const [filter, setFilter] = useState('all')
   const [gapReasons, setGapReasons] = useState({})
   const [keepReplace, setKeepReplace] = useState({})
   const [askWhen, setAskWhen] = useState({})
   const [decisionReason, setDecisionReason] = useState({})
+  // Error of the last "keep on Admin decision", shown next to that proposal.
+  const [decisionError, setDecisionError] = useState({ id: '', text: '' })
+  const [activatePolling, setActivatePolling] = useState(false)
+  const pollRef = useRef({ timer: null, count: 0, alive: true })
+  const draftRef = useRef(null)
+  draftRef.current = draft
   const navigate = useNavigate()
+
+  useEffect(() => {
+    pollRef.current.alive = true
+    return () => {
+      pollRef.current.alive = false
+      clearTimeout(pollRef.current.timer)
+    }
+  }, [])
 
   async function load() {
     const view = await getDraft(draftId)
@@ -394,7 +455,7 @@ export default function DraftReviewPage() {
       definition: parsed,
       expected_updated_at: draft.updated_at,
     }))
-    setNotice('Đã lưu. Evidence cũ của đề xuất đã sửa bị đánh stale.')
+    setNotice('Đã lưu. Trích dẫn cũ của đề xuất đã sửa được đánh dấu cần kiểm tra lại.')
   }
 
   async function onResolveConflict(conflictId, choice) {
@@ -429,16 +490,23 @@ export default function DraftReviewPage() {
 
   async function onDecide(proposalId, remove = false) {
     const reason = (decisionReason[proposalId] || '').trim()
-    if (!remove && reason.length < 10) {
-      setError('Ghi lý do (ít nhất 10 ký tự) — vì sao giữ mục này dù văn bản không nêu.')
+    setDecisionError({ id: '', text: '' })
+    if (!remove && [...reason].length < 10) {
+      setDecisionError({ id: proposalId, text: 'Ghi lý do (ít nhất 10 ký tự) — vì sao giữ mục này dù văn bản không nêu.' })
       return
     }
-    await withBusy('decide', () => decideWithoutSource(draftId, {
-      expected_updated_at: draft.updated_at,
-      proposal_id: proposalId,
-      reason: remove ? '' : reason,
-      remove,
-    }))
+    try {
+      await withBusy('decide', () => decideWithoutSource(draftId, {
+        expected_updated_at: draft.updated_at,
+        proposal_id: proposalId,
+        reason: remove ? '' : reason,
+        remove,
+      }))
+    } catch (err) {
+      setError('')
+      setDecisionError({ id: proposalId, text: err?.message || 'Không lưu được quyết định.' })
+      return
+    }
     setDecisionReason({})
     setNotice(remove ? 'Đã huỷ quyết định — mục này lại cần nguồn.' : 'Đã giữ mục theo quyết định của cán bộ.')
   }
@@ -482,7 +550,7 @@ export default function DraftReviewPage() {
 
   async function onValidate() {
     await withBusy('validate', () => validateDraft(draftId))
-    setNotice('Đã chạy lại validation.')
+    setNotice('Đã kiểm tra lại.')
   }
 
   async function onReview(proposalId, decision) {
@@ -497,14 +565,14 @@ export default function DraftReviewPage() {
       .filter((item) => item.quote_valid && item.review_status !== 'stale')
       .map((item) => ({ proposal_id: item.proposal_id, decision: 'accepted' }))
     if (!decisions.length) {
-      setError('Không có evidence hợp lệ để chấp nhận.')
+      setError('Không có trích dẫn hợp lệ để chấp nhận.')
       return
     }
     await withBusy('review', () => reviewDraft(draftId, {
       expected_updated_at: draft.updated_at,
       decisions,
     }))
-    setNotice('Đã ghi nhận review. Đây không phải duyệt pháp lý.')
+    setNotice('Đã ghi nhận kết quả duyệt. Đây không phải duyệt pháp lý.')
   }
 
   async function onApprove() {
@@ -519,40 +587,72 @@ export default function DraftReviewPage() {
   async function openActivate() {
     setConfirmActivate(true)
     setActiveTarget(undefined)
+    setTargetVersionId('')
     try {
       const res = await listAdminProcedures()
       const proc = (res?.items || []).find((item) => item.id === draft.procedure_id)
-      if (!proc) throw new Error('procedure not found')
-      setActiveTarget({ id: proc.active_version_id || null, version: proc.active_version || '' })
+      if (!proc) throw new Error('Không tìm thấy thủ tục.')
+      let fillable = []
+      if (!draft.published_version_id) {
+        const ver = await listProcedureVersions(proc.id)
+        fillable = fillableVersions(ver?.items || [], proc.active_version_id)
+      }
+      setActiveTarget({ id: proc.active_version_id || null, version: proc.active_version || '', fillable })
+      setTargetVersionId(fillable[0]?.id || '')
     } catch {
       setActiveTarget({ error: true })
     }
   }
 
-  async function onActivate() {
+  function stopActivatePolling() {
+    clearTimeout(pollRef.current.timer)
+    pollRef.current.timer = null
+    pollRef.current.count = 0
+    setActivatePolling(false)
+  }
+
+  async function onActivate(expectedActiveId = activeTarget?.id ?? null, polled = false) {
+    if (!polled) stopActivatePolling()
+    const current = draftRef.current || draft
     let result
     try {
       result = await withBusy('activate', () => activateDraft(draftId, {
         confirm: true,
-        expected_updated_at: draft.updated_at,
-        expected_active_version_id: activeTarget?.id ?? null,
+        expected_updated_at: current.updated_at,
+        expected_active_version_id: expectedActiveId,
+        ...(targetVersionId && !polled ? { target_version_id: targetVersionId } : {}),
       }, crypto.randomUUID()))
     } catch (err) {
       setConfirmActivate(false)
+      stopActivatePolling()
       if (err?.code === 'STALE_ACTIVE_VERSION') {
         setError('Phiên bản đang dùng vừa thay đổi. Hãy bấm Kích hoạt lại để xem phiên bản sẽ bị thay thế.')
       }
       return
     }
     setConfirmActivate(false)
+    const label = result?.version?.version ? ` ${result.version.version}` : ''
+    if (!pollRef.current.alive) return
+    if (result?.indexing_pending) {
+      if (pollRef.current.count >= ACTIVATE_POLL_MAX) {
+        stopActivatePolling()
+        setNotice(`Phiên bản${label} đã tạo, tài liệu vẫn đang được lập chỉ mục. Bấm Kích hoạt / Tiếp tục sau ít phút; hệ thống sẽ không tạo lượt xử lý trùng.`)
+        return
+      }
+      pollRef.current.count += 1
+      setActivatePolling(true)
+      setNotice(`Đã tạo phiên bản${label}. Đang lập chỉ mục tài liệu nguồn — trang sẽ tự kích hoạt khi xong, không cần tải lại.`)
+      pollRef.current.timer = setTimeout(() => onActivate(expectedActiveId, true), ACTIVATE_POLL_MS)
+      return
+    }
+    stopActivatePolling()
     if (result?.activated && result?.reconciliation_required) {
-      setNotice('Phiên bản đã được kích hoạt nhưng trạng thái bản nháp chưa được đồng bộ. Hãy bấm Kích hoạt để hoàn tất; hệ thống sẽ không tạo thêm phiên bản mới.')
+      setNotice('Phiên bản đã được kích hoạt nhưng trạng thái bản nháp chưa được đồng bộ. Hãy bấm Kích hoạt / Tiếp tục để hoàn tất; hệ thống sẽ không tạo thêm phiên bản mới.')
     } else if (result?.activated) {
-      setNotice(`Đã kích hoạt phiên bản ${result.version?.version || ''}.`)
-    } else if (result?.indexing_pending) {
-      setNotice('Đang lập chỉ mục. Hãy bấm Kích hoạt lại sau khi xử lý xong; hệ thống sẽ không tạo lượt xử lý trùng.')
+      setNotice(`Đã kích hoạt phiên bản${label}. Người dân hỏi mới sẽ dùng phiên bản này.`)
     } else {
-      setNotice(`Chưa kích hoạt: ${result?.blocked_reason || (result?.reasons || []).join(', ') || 'chưa đủ điều kiện'}.`)
+      const why = reasonsText([result?.blocked_reason, ...(result?.reasons || [])])
+      setNotice(`Chưa kích hoạt: ${why || 'chưa đủ điều kiện kích hoạt.'}`)
     }
   }
 
@@ -596,7 +696,11 @@ export default function DraftReviewPage() {
   const boundaryPending = Boolean(coverage?.boundary_uncertain && !coverage?.boundary_reviewed)
   const scopeComplete = coverage ? (coverage.scope_complete ?? coverage.complete) : true
   const unsectioned = (coverage?.outside_mentions || []).filter((m) => !m.section)
-  const approveHint = approveReady
+  const approveHint = draft.status === 'PUBLISHED'
+    ? 'Bản nháp đã được kích hoạt. Muốn sửa, bấm "Tạo bản nháp để sửa".'
+    : draft.status === 'APPROVED'
+      ? (activatePolling ? 'Đang lập chỉ mục tài liệu nguồn — trang sẽ tự kích hoạt khi xong.' : 'Đã phê duyệt — bấm "Kích hoạt / Tiếp tục" để đưa vào sử dụng.')
+      : approveReady
     ? 'Đủ điều kiện phê duyệt.'
     : openConflicts.length
       ? `Còn ${openConflicts.length} mâu thuẫn nguồn — chọn giá trị đúng ở khung "Mâu thuẫn nguồn".`
@@ -651,7 +755,7 @@ export default function DraftReviewPage() {
       {error ? <p className="dr-alert dr-alert-bad" role="alert">{error}</p> : null}
       {notice ? <p className="dr-alert dr-alert-ok">{notice}</p> : null}
       {draft.identity_mismatch || v.identity_mismatch ? (
-        <p className="dr-alert dr-alert-bad">Gemini/editor đề xuất sai procedure identity. Server đã khóa mã thủ tục; không duyệt được.</p>
+        <p className="dr-alert dr-alert-bad">Bản soạn tự động ghi sai mã thủ tục. Hệ thống đã giữ đúng mã thủ tục; bản nháp này không duyệt được.</p>
       ) : null}
 
       <section className="dr-metrics">
@@ -867,7 +971,7 @@ export default function DraftReviewPage() {
                   </Chip>
                 </header>
                 {c.inactive ? (
-                  <p className="muted">Văn bản này hiện không có trong citations (bị cắt khi gộp hoặc đã gỡ). Nếu giữ lại văn bản, mâu thuẫn này phải được chọn trước khi duyệt.</p>
+                  <p className="muted">Văn bản này hiện không có trong danh sách trích dẫn (bị cắt khi gộp hoặc đã gỡ). Nếu giữ lại văn bản, mâu thuẫn này phải được chọn trước khi duyệt.</p>
                 ) : null}
                 {c.reopened && c.status !== 'RESOLVED' ? (
                   <p className="muted">Giá trị đã bị sửa sau lần chọn trước — hãy chọn lại hoặc giữ giá trị đang có trong dữ liệu cấu hình.</p>
@@ -1007,10 +1111,16 @@ export default function DraftReviewPage() {
                         placeholder="Lý do giữ (vd: quy định riêng của UBND xã, văn bản không nêu)"
                         value={decisionReason[prop.id] || ''}
                         disabled={!!busy || !editable}
-                        onChange={(e) => setDecisionReason({ ...decisionReason, [prop.id]: e.target.value })}
+                        aria-invalid={decisionError.id === prop.id ? 'true' : 'false'}
+                        onChange={(e) => {
+                          setDecisionReason({ ...decisionReason, [prop.id]: e.target.value })
+                          if (decisionError.id === prop.id) setDecisionError({ id: '', text: '' })
+                        }}
                       />
+                      <small className="dr-reason-count">{[...(decisionReason[prop.id] || '').trim()].length}/10 ký tự tối thiểu</small>
+                      {decisionError.id === prop.id ? <p className="dr-alert dr-alert-bad" role="alert">{decisionError.text}</p> : null}
                       <button type="button" className="dr-btn" disabled={!!busy || !editable} onClick={() => onDecide(prop.id)}>
-                        Giữ theo quyết định của cán bộ
+                        {busy === 'decide' ? 'Đang lưu…' : 'Giữ theo quyết định của cán bộ'}
                       </button>
                     </div>
                   ) : null}
@@ -1112,8 +1222,8 @@ export default function DraftReviewPage() {
                 {[...errorIssues, ...warningIssues].map((issue, idx) => {
                   const label = proposalLabel(issue.proposal_id)
                   return (
-                    <li key={`${issue.code}-${idx}`} className={issue.severity === 'error' ? 'is-error' : ''} title={`${issue.code}: ${issue.message}`}>
-                      <strong>{ISSUE_LABEL[issue.code] || issue.code}</strong>
+                    <li key={`${issue.code}-${idx}`} className={issue.severity === 'error' ? 'is-error' : ''} title={issue.code}>
+                      <strong>{ISSUE_LABEL[issue.code] || (issue.severity === 'error' ? 'Lỗi kiểm tra tự động' : 'Lưu ý kiểm tra tự động')}</strong>
                       {issue.proposal_id ? <span>{label.group}{label.name ? ` · ${label.name}` : ''}</span> : null}
                       {issue.code === 'UNREACHABLE_SLOT' && issue.proposal_id ? (() => {
                         const slotKey = issue.proposal_id.slice(5)
@@ -1166,8 +1276,8 @@ export default function DraftReviewPage() {
               {busy === 'clone' ? 'Đang tạo…' : 'Tạo bản nháp để sửa'}
             </button>
           ) : null}
-          <button type="button" className="dr-btn dr-btn-accent" disabled={!!busy || (draft.status !== 'APPROVED' && draft.status !== 'PUBLISHED')} onClick={openActivate}>
-            {busy === 'activate' ? 'Đang kích hoạt…' : 'Kích hoạt / Tiếp tục'}
+          <button type="button" className="dr-btn dr-btn-accent" disabled={!!busy || activatePolling || (draft.status !== 'APPROVED' && draft.status !== 'PUBLISHED')} onClick={openActivate}>
+            {busy === 'activate' || activatePolling ? 'Đang kích hoạt…' : 'Kích hoạt / Tiếp tục'}
           </button>
         </div>
       </footer>
@@ -1190,7 +1300,9 @@ export default function DraftReviewPage() {
           <div className="panel dr-modal" role="dialog" aria-modal="true">
             <h2>Kích hoạt phiên bản mới?</h2>
             <p>
-              Hệ thống sẽ tạo phiên bản thủ tục, gắn tài liệu rồi lập chỉ mục mới.
+              {targetVersionId
+                ? 'Nội dung bản nháp sẽ thay nội dung của phiên bản đã chọn; tài liệu đã gắn và chỉ mục của phiên bản đó được dùng lại.'
+                : 'Hệ thống sẽ tạo phiên bản thủ tục, gắn tài liệu rồi lập chỉ mục mới.'}
               Lịch sử vẫn được giữ nguyên và phiên bản đang dùng chỉ thay đổi khi đủ điều kiện.
             </p>
             <p className="dr-active-target">
@@ -1199,9 +1311,20 @@ export default function DraftReviewPage() {
                   : activeTarget.id ? `Sẽ thay thế phiên bản đang dùng: ${activeTarget.version || activeTarget.id} (bản cũ được lưu trữ, không bị xóa).`
                     : 'Thủ tục chưa có phiên bản đang dùng — đây sẽ là phiên bản đầu tiên.'}
             </p>
+            {activeTarget?.fillable?.length ? (
+              <label className="dr-target-version">
+                Đưa bản nháp vào phiên bản
+                <select value={targetVersionId} onChange={(e) => setTargetVersionId(e.target.value)}>
+                  {activeTarget.fillable.map((v) => (
+                    <option key={v.id} value={v.id}>{v.version} (đã tạo, chưa kích hoạt)</option>
+                  ))}
+                  <option value="">Tạo phiên bản mới</option>
+                </select>
+              </label>
+            ) : null}
             <div className="draft-actions">
               <button type="button" className="dr-btn" onClick={() => setConfirmActivate(false)}>Hủy</button>
-              <button type="button" className="dr-btn dr-btn-accent" disabled={activeTarget === undefined || activeTarget.error} onClick={onActivate}>Xác nhận kích hoạt</button>
+              <button type="button" className="dr-btn dr-btn-accent" disabled={activeTarget === undefined || activeTarget.error} onClick={() => onActivate()}>Xác nhận kích hoạt</button>
             </div>
           </div>
         </div>
