@@ -6,6 +6,8 @@ Monorepo for two tracks:
    procedure assistant for Chư Sê. Vietnamese chat with a Go Decision Engine,
    admin PDF ingestion and indexing, AI-drafted procedure definitions with human
    review, RAG citations, and Bahnar speech → Vietnamese via the thesis C0 model.
+   The demo deployment is one all-in-one image on a single RunPod GPU pod
+   ([`deploy/runpod/`](deploy/runpod/README.md)).
 2. **Bahnar → Vietnamese speech translation thesis (RQ1/RQ2)** under
    [`bahnar-s2tt-thesis/`](bahnar-s2tt-thesis/README.md). The application only
    uses its `src/c0_speech` inference API.
@@ -22,10 +24,13 @@ deploy/
   docker-compose.yml             local stack (main workflow)
   docker-compose.p4b-test.yml    isolated stack for CI storage tests
   docker-compose.production.yml  VPS reference (CI-validated, Speech off)
-  migrations/                    golang-migrate SQL (000001–000022)
+  migrations/                    golang-migrate SQL (000001–000025)
   scripts/                       up.sh, migrate.sh
   speech-tunnel/                 SSH tunnel sidecar to the RunPod Speech API
-docs/           STATUS, RUNPOD, SPEECH, p4b-runbook, phase-0 design + ADRs, archive/
+  contracts/                     shared object-store key contract
+  runpod/                        all-in-one RunPod image: Dockerfile, rootfs, staging kit, evaluation
+docs/           STATUS, RUNPOD, SPEECH, p4b-runbook, phase-0 design + ADRs, models/, archive/
+models/         local embedding and OCR models (not in Git; see docs/models/)
 scripts/        CI/ops helpers; runpod/ for scripts run on the GPU pod
 ```
 
@@ -37,7 +42,8 @@ Requires Docker. Configuration lives in `deploy/.env` (copy from
 Speech is off.
 
 ```bash
-make up      # build + start: postgres, migrate, api, web, ai-service, minio, qdrant, speech-tunnel
+make up      # build + start: postgres, migrate, api, web, ai-service, minio, qdrant
+             # (+ speech-tunnel when deploy/.env.speech.local exists)
 make logs
 make down    # stops containers, keeps data volumes
 ```
@@ -46,7 +52,9 @@ Open the web URL printed by `make up` (`http://127.0.0.1:5174` with the current
 `deploy/.env`). Admin screens need an ADMIN account.
 
 Tests: `go test ./...` in `apps/api`, `npm run test:ci` in `apps/web`,
-`pytest` in `apps/ai-service`. CI: [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+`pytest` in `apps/ai-service`. CI: [`.github/workflows/ci.yml`](.github/workflows/ci.yml);
+the RunPod image is built, tested and pushed to GHCR by
+[`.github/workflows/runpod-image.yml`](.github/workflows/runpod-image.yml) (on demand or `staging-*` tags).
 
 ## Documentation
 
@@ -55,6 +63,9 @@ Tests: `go test ./...` in `apps/api`, `npm run test:ci` in `apps/web`,
 | What is done, evidence level, what remains | [`docs/STATUS.md`](docs/STATUS.md) |
 | Bahnar Speech citizen flow | [`docs/SPEECH.md`](docs/SPEECH.md) |
 | RunPod: Speech API, tunnel, go-live plan | [`docs/RUNPOD.md`](docs/RUNPOD.md) |
+| All-in-one RunPod image: storage, restore, operations | [`deploy/runpod/README.md`](deploy/runpod/README.md) |
+| Switching the pod to the image, acceptance checks | [`deploy/runpod/staging/README.md`](deploy/runpod/staging/README.md) |
+| Retrieval evaluation on the production path | [`deploy/runpod/eval/README.md`](deploy/runpod/eval/README.md) |
 | PDF indexing models and pipeline | [`docs/p4b-runbook.md`](docs/p4b-runbook.md) |
 | Local database, Compose details | [`deploy/README.md`](deploy/README.md) |
 | VPS production reference | [`deploy/README.production.md`](deploy/README.production.md) |
